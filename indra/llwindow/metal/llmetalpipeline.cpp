@@ -77,6 +77,7 @@ namespace
         {
             case PixelFormat::bgra8_unorm:
             case PixelFormat::rgba8_unorm:
+            case PixelFormat::rgba8_unorm_srgb:
             case PixelFormat::rgba16_unorm:
             case PixelFormat::rgba16_float:
             case PixelFormat::rg11b10_float:

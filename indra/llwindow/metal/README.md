@@ -80,6 +80,11 @@ readbacks use a separate explicit byte budget. The caller owns the command
 buffer and queue; the batch never commits or waits, and resources or bytes are
 published only by the frame context's successful completion action.
 
+`PixelFormat::rgba8_unorm_srgb` is a four-byte color format backed by
+`MTLPixelFormatRGBA8Unorm_sRGB`. Transfers preserve its stored bytes exactly;
+gamma conversion occurs only through normal Metal render-target writes and
+texture sampling.
+
 `MetalSamplerCache` validates typed address, minification, magnification, mip,
 and anisotropy fields before creating immutable native states. Its explicit
 canonical key maps every mip filter to `not_mipmapped` for one-level textures,
@@ -124,9 +129,10 @@ cmake --build .build/metal-core --target \
   firestorm_metal_sampler_test \
   firestorm_metal_depth_raster_test \
   firestorm_metal_blend_pipeline_test \
-  firestorm_metal_render_pass_test
+  firestorm_metal_render_pass_test \
+  firestorm_metal_color_gamma_test
 (cd .build/metal-core && \
-  ctest -R '^firestorm_metal_(resource_layout|frame_context|resource_transfer|sampler|depth_raster|blend_pipeline|render_pass)$' \
+  ctest -R '^firestorm_metal_(resource_layout|frame_context|resource_transfer|sampler|depth_raster|blend_pipeline|render_pass|color_gamma)$' \
     --output-on-failure)
 ```
 
@@ -153,6 +159,17 @@ uses `Less` with depth writes disabled, and draws green at depth `0.25` then
 `0.75` into separate one-pixel scissors. Its asynchronous 256-byte-pitch
 readback must publish only on successful completion and begin with exact
 green-then-red RGBA bytes.
+
+The color/gamma test renders a linear RGBA8 constant, samples it into an sRGB
+attachment for automatic encoding, samples that attachment back into linear
+RGBA8 for automatic decoding, then performs the planned final-display sRGB
+conversion in a shader and writes BGRA8. All four private 1x1 resources are
+read back asynchronously through one transfer batch; callbacks must retain
+registration order and share one submission serial.
+
+The planned presentation policy is one manual final shader encode into a
+`BGRA8Unorm` drawable, paired later with an sRGB layer colorspace. The current
+`CAMetalLayer` is deliberately unchanged by this resource-contract slice.
 
 ## Firestorm build integration
 
@@ -183,7 +200,8 @@ cmake --build BUILD_DIR --target \
   firestorm_metal_sampler_test \
   firestorm_metal_depth_raster_test \
   firestorm_metal_blend_pipeline_test \
-  firestorm_metal_render_pass_test
+  firestorm_metal_render_pass_test \
+  firestorm_metal_color_gamma_test
 # Single-config executables:
 BUILD_DIR/llwindow/metal/firestorm_metal_frame_contracts_test
 BUILD_DIR/llwindow/metal/firestorm_metal_resource_layout_test
@@ -203,6 +221,9 @@ env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
 env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
   BUILD_DIR/llwindow/metal/firestorm_metal_render_pass_test \
     --metallib BUILD_DIR/llwindow/metal/generated/bootstrap.metallib
+env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
+  BUILD_DIR/llwindow/metal/firestorm_metal_color_gamma_test \
+    --metallib BUILD_DIR/llwindow/metal/generated/bootstrap.metallib
 # Multi-config generators such as Xcode:
 cmake --build BUILD_DIR --config CONFIG --target \
   firestorm_metal_frame_contracts_test \
@@ -212,7 +233,8 @@ cmake --build BUILD_DIR --config CONFIG --target \
   firestorm_metal_sampler_test \
   firestorm_metal_depth_raster_test \
   firestorm_metal_blend_pipeline_test \
-  firestorm_metal_render_pass_test
+  firestorm_metal_render_pass_test \
+  firestorm_metal_color_gamma_test
 BUILD_DIR/llwindow/metal/CONFIG/firestorm_metal_frame_contracts_test
 BUILD_DIR/llwindow/metal/CONFIG/firestorm_metal_resource_layout_test
 env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
@@ -230,5 +252,8 @@ env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
     --metallib BUILD_DIR/llwindow/metal/generated/bootstrap.metallib
 env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
   BUILD_DIR/llwindow/metal/CONFIG/firestorm_metal_render_pass_test \
+    --metallib BUILD_DIR/llwindow/metal/generated/bootstrap.metallib
+env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
+  BUILD_DIR/llwindow/metal/CONFIG/firestorm_metal_color_gamma_test \
     --metallib BUILD_DIR/llwindow/metal/generated/bootstrap.metallib
 ```

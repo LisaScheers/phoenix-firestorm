@@ -59,9 +59,10 @@ void testFormatInfo()
         std::size_t bytesPerBlock;
     };
 
-    constexpr std::array<Expectation, 6> expectations{ {
+    constexpr std::array<Expectation, 7> expectations{ {
         { PixelFormat::bgra8_unorm, 4 },
         { PixelFormat::rgba8_unorm, 4 },
+        { PixelFormat::rgba8_unorm_srgb, 4 },
         { PixelFormat::rgba16_unorm, 8 },
         { PixelFormat::rgba16_float, 8 },
         { PixelFormat::rg11b10_float, 4 },

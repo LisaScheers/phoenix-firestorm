@@ -36,6 +36,7 @@ enum class PixelFormat : std::uint8_t
 {
     bgra8_unorm,
     rgba8_unorm,
+    rgba8_unorm_srgb,
     rgba16_unorm,
     rgba16_float,
     rg11b10_float,

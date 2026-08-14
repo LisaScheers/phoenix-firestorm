@@ -197,3 +197,54 @@ fragment half4 firestorm_render_pass_fragment()
 {
     return half4(0.0h, 1.0h, 0.0h, 1.0h);
 }
+
+struct ColorGammaVertex
+{
+    float4 position [[position]];
+};
+
+vertex ColorGammaVertex firestorm_color_gamma_vertex(
+    uint vertex_id [[vertex_id]])
+{
+    constexpr float2 positions[] =
+    {
+        float2(-1.0f, -1.0f),
+        float2( 3.0f, -1.0f),
+        float2(-1.0f,  3.0f),
+    };
+
+    ColorGammaVertex output;
+    output.position = float4(positions[vertex_id], 0.0f, 1.0f);
+    return output;
+}
+
+fragment float4 firestorm_color_gamma_constant_fragment()
+{
+    return float4(17.0f, 13.0f, 7.0f, 191.0f) / 255.0f;
+}
+
+fragment float4 firestorm_color_gamma_copy_fragment(
+    texture2d<float, access::sample> source [[texture(0)]])
+{
+    constexpr sampler nearest_sampler(
+        coord::normalized,
+        address::clamp_to_edge,
+        filter::nearest);
+    return source.sample(nearest_sampler, float2(0.5f));
+}
+
+fragment float4 firestorm_color_gamma_final_fragment(
+    texture2d<float, access::sample> source [[texture(0)]])
+{
+    constexpr sampler nearest_sampler(
+        coord::normalized,
+        address::clamp_to_edge,
+        filter::nearest);
+    const float4 linear = source.sample(nearest_sampler, float2(0.5f));
+    const float3 linear_rgb = clamp(linear.rgb, 0.0f, 1.0f);
+    const float3 encoded = select(
+        12.92f * linear_rgb,
+        1.055f * powr(linear_rgb, float3(1.0f / 2.4f)) - 0.055f,
+        linear_rgb > 0.0031308f);
+    return float4(encoded, linear.a);
+}

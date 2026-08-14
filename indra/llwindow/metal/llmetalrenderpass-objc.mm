@@ -48,6 +48,7 @@ constexpr bool isColorFormat(PixelFormat format) noexcept
     {
         case PixelFormat::bgra8_unorm:
         case PixelFormat::rgba8_unorm:
+        case PixelFormat::rgba8_unorm_srgb:
         case PixelFormat::rgba16_unorm:
         case PixelFormat::rgba16_float:
         case PixelFormat::rg11b10_float:
@@ -66,6 +67,7 @@ constexpr bool isDepthFormat(PixelFormat format) noexcept
             return true;
         case PixelFormat::bgra8_unorm:
         case PixelFormat::rgba8_unorm:
+        case PixelFormat::rgba8_unorm_srgb:
         case PixelFormat::rgba16_unorm:
         case PixelFormat::rgba16_float:
         case PixelFormat::rg11b10_float:
@@ -82,6 +84,8 @@ std::optional<MTLPixelFormat> nativePixelFormat(PixelFormat format) noexcept
             return MTLPixelFormatBGRA8Unorm;
         case PixelFormat::rgba8_unorm:
             return MTLPixelFormatRGBA8Unorm;
+        case PixelFormat::rgba8_unorm_srgb:
+            return MTLPixelFormatRGBA8Unorm_sRGB;
         case PixelFormat::rgba16_unorm:
             return MTLPixelFormatRGBA16Unorm;
         case PixelFormat::rgba16_float:

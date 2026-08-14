@@ -50,6 +50,8 @@ std::optional<MTLPixelFormat> nativePixelFormat(PixelFormat format) noexcept
             return MTLPixelFormatBGRA8Unorm;
         case PixelFormat::rgba8_unorm:
             return MTLPixelFormatRGBA8Unorm;
+        case PixelFormat::rgba8_unorm_srgb:
+            return MTLPixelFormatRGBA8Unorm_sRGB;
         case PixelFormat::rgba16_unorm:
             return MTLPixelFormatRGBA16Unorm;
         case PixelFormat::rgba16_float:

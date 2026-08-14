@@ -96,6 +96,7 @@ std::optional<FormatInfo> formatInfo(PixelFormat format) noexcept
     {
         case PixelFormat::bgra8_unorm:
         case PixelFormat::rgba8_unorm:
+        case PixelFormat::rgba8_unorm_srgb:
         case PixelFormat::rg11b10_float:
         case PixelFormat::depth32_float:
             return FormatInfo{ 1, 1, 4 };
