@@ -61,16 +61,16 @@ using firestorm::metal::MetalByteView;
 using firestorm::metal::MetalFrameContext;
 using firestorm::metal::MetalFrameLease;
 using firestorm::metal::MetalPrivateBuffer;
-using firestorm::metal::MetalPrivateTexture2D;
-using firestorm::metal::MetalTexture2DDescriptor;
+using firestorm::metal::MetalPrivateTexture;
+using firestorm::metal::MetalTextureDescriptor;
 using firestorm::metal::MetalTextureReadback;
 using firestorm::metal::MetalTextureRegion;
-using firestorm::metal::MetalTextureUpload2D;
+using firestorm::metal::MetalTextureSubresourceUpload;
 using firestorm::metal::MetalTextureUsage;
 using firestorm::metal::MetalTransferBatch;
 using firestorm::metal::MetalTransferStatus;
 using firestorm::metal::PixelFormat;
-using firestorm::metal::createPrivateTexture2D;
+using firestorm::metal::createPrivateTexture;
 using firestorm::metal::hasUsage;
 
 constexpr std::size_t TEXTURE_WIDTH            = 2;
@@ -174,19 +174,19 @@ void expectBytes(const std::vector<std::byte>& actual,
 
 struct UploadedResources
 {
-    MetalPrivateBuffer    buffer;
-    MetalPrivateTexture2D texture;
-    std::uint64_t         submissionSerial = 0;
+    MetalPrivateBuffer  buffer;
+    MetalPrivateTexture texture;
+    std::uint64_t       submissionSerial = 0;
 };
 
 struct UploadPublications
 {
-    std::mutex                             mutex;
-    std::optional<MetalPrivateBuffer>      buffer;
-    std::optional<MetalPrivateTexture2D>   texture;
-    std::vector<std::string>               order;
-    std::vector<std::uint64_t>             serials;
-    dispatch_semaphore_t                   done = dispatch_semaphore_create(0);
+    std::mutex                           mutex;
+    std::optional<MetalPrivateBuffer>    buffer;
+    std::optional<MetalPrivateTexture>   texture;
+    std::vector<std::string>             order;
+    std::vector<std::uint64_t>           serials;
+    dispatch_semaphore_t                 done = dispatch_semaphore_create(0);
 };
 
 std::size_t publicationCount(UploadPublications& publications)
@@ -242,7 +242,7 @@ std::optional<UploadedResources> uploadResources(id<MTLDevice> device,
         });
     EXPECT(buffer_status == MetalTransferStatus::encoded);
 
-    MetalTexture2DDescriptor texture_descriptor;
+    MetalTextureDescriptor texture_descriptor;
     texture_descriptor.format    = PixelFormat::rgba8_unorm;
     texture_descriptor.width     = static_cast<std::uint32_t>(TEXTURE_WIDTH);
     texture_descriptor.height    = static_cast<std::uint32_t>(TEXTURE_HEIGHT);
@@ -250,14 +250,18 @@ std::optional<UploadedResources> uploadResources(id<MTLDevice> device,
     texture_descriptor.usage     = MetalTextureUsage::shader_read;
     texture_descriptor.label     = "Firestorm exact private texture";
 
-    const MetalTextureUpload2D texture_upload{
-        byteView(TEXTURE_SOURCE.data(), TEXTURE_SOURCE.size()),
-        SOURCE_TEXTURE_ROW_BYTES,
+    const std::vector<MetalTextureSubresourceUpload> texture_uploads{
+        MetalTextureSubresourceUpload{
+            0,
+            0,
+            byteView(TEXTURE_SOURCE.data(), TEXTURE_SOURCE.size()),
+            SOURCE_TEXTURE_ROW_BYTES,
+        },
     };
-    const MetalTransferStatus texture_status = batch.uploadPrivateTexture2D(
+    const MetalTransferStatus texture_status = batch.uploadPrivateTexture(
         texture_descriptor,
-        texture_upload,
-        [&](std::uint64_t serial, MetalPrivateTexture2D texture) {
+        texture_uploads,
+        [&](std::uint64_t serial, MetalPrivateTexture texture) {
             bool finished = false;
             {
                 std::lock_guard<std::mutex> lock(publications.mutex);
@@ -426,7 +430,7 @@ void readbackResources(id<MTLDevice> device,
         0,
         0,
     };
-    const MetalTransferStatus texture_status = batch.readbackTexture2D(
+    const MetalTransferStatus texture_status = batch.readbackTexture(
         resources.texture,
         region,
         [&](std::uint64_t serial, MetalTextureReadback readback) {
@@ -492,7 +496,7 @@ void readbackResources(id<MTLDevice> device,
 
 void testConcreteResourceDescriptors(id<MTLDevice> device)
 {
-    MetalTexture2DDescriptor color_descriptor;
+    MetalTextureDescriptor color_descriptor;
     color_descriptor.format    = PixelFormat::rgba8_unorm;
     color_descriptor.width     = 3;
     color_descriptor.height    = 2;
@@ -501,8 +505,8 @@ void testConcreteResourceDescriptors(id<MTLDevice> device)
                              MetalTextureUsage::shader_read;
     color_descriptor.label = "Firestorm empty color attachment";
 
-    const auto color = createPrivateTexture2D((__bridge void*)device,
-                                              color_descriptor);
+    const auto color = createPrivateTexture((__bridge void*)device,
+                                            color_descriptor);
     EXPECT(color.has_value());
     if (color)
     {
@@ -522,7 +526,7 @@ void testConcreteResourceDescriptors(id<MTLDevice> device)
         EXPECT((native.usage & MTLTextureUsageShaderRead) != 0);
     }
 
-    MetalTexture2DDescriptor depth_descriptor;
+    MetalTextureDescriptor depth_descriptor;
     depth_descriptor.format    = PixelFormat::depth32_float;
     depth_descriptor.width     = 3;
     depth_descriptor.height    = 2;
@@ -530,8 +534,8 @@ void testConcreteResourceDescriptors(id<MTLDevice> device)
     depth_descriptor.usage     = MetalTextureUsage::render_target;
     depth_descriptor.label     = "Firestorm empty depth attachment";
 
-    const auto depth = createPrivateTexture2D((__bridge void*)device,
-                                              depth_descriptor);
+    const auto depth = createPrivateTexture((__bridge void*)device,
+                                            depth_descriptor);
     EXPECT(depth.has_value());
     if (depth)
     {
@@ -546,9 +550,9 @@ void testConcreteResourceDescriptors(id<MTLDevice> device)
         EXPECT((native.usage & MTLTextureUsageRenderTarget) != 0);
     }
 
-    EXPECT(!createPrivateTexture2D(nullptr, color_descriptor).has_value());
+    EXPECT(!createPrivateTexture(nullptr, color_descriptor).has_value());
     NSObject* not_a_device = [[NSObject alloc] init];
-    EXPECT(!createPrivateTexture2D((__bridge void*)not_a_device,
+    EXPECT(!createPrivateTexture((__bridge void*)not_a_device,
                                   color_descriptor).has_value());
 }
 
@@ -601,7 +605,7 @@ void testInvalidArguments(id<MTLDevice> device,
         0,
         0,
     };
-    EXPECT(batch.readbackTexture2D(
+    EXPECT(batch.readbackTexture(
                resources.texture,
                out_of_bounds,
                [&](std::uint64_t, MetalTextureReadback) { ++callbacks; }) ==
@@ -615,7 +619,7 @@ void testInvalidArguments(id<MTLDevice> device,
         0,
         1,
     };
-    EXPECT(batch.readbackTexture2D(
+    EXPECT(batch.readbackTexture(
                resources.texture,
                wrong_slice,
                [&](std::uint64_t, MetalTextureReadback) { ++callbacks; }) ==

@@ -65,8 +65,8 @@ using firestorm::metal::MetalDepthStateCache;
 using firestorm::metal::MetalDepthStateHandle;
 using firestorm::metal::MetalFrameContext;
 using firestorm::metal::MetalFrameLease;
-using firestorm::metal::MetalPrivateTexture2D;
-using firestorm::metal::MetalTexture2DDescriptor;
+using firestorm::metal::MetalPrivateTexture;
+using firestorm::metal::MetalTextureDescriptor;
 using firestorm::metal::MetalTextureReadback;
 using firestorm::metal::MetalTextureRegion;
 using firestorm::metal::MetalTextureUsage;
@@ -75,7 +75,7 @@ using firestorm::metal::MetalTransferStatus;
 using firestorm::metal::PixelFormat;
 using firestorm::metal::RasterStateDesc;
 using firestorm::metal::applyRasterState;
-using firestorm::metal::createPrivateTexture2D;
+using firestorm::metal::createPrivateTexture;
 using firestorm::metal::makeDepthStateKey;
 
 constexpr std::uint32_t WIDTH  = 4;
@@ -261,19 +261,19 @@ void testInvalidNativeInputs()
                              RasterStateDesc{}));
 }
 
-std::optional<MetalPrivateTexture2D>
+std::optional<MetalPrivateTexture>
 createTarget(id<MTLDevice> device,
              PixelFormat format,
              const char* label)
 {
-    MetalTexture2DDescriptor descriptor;
+    MetalTextureDescriptor descriptor;
     descriptor.format    = format;
     descriptor.width     = WIDTH;
     descriptor.height    = HEIGHT;
     descriptor.mipLevels = 1;
     descriptor.usage     = MetalTextureUsage::render_target;
     descriptor.label     = label;
-    return createPrivateTexture2D((__bridge void*)device, descriptor);
+    return createPrivateTexture((__bridge void*)device, descriptor);
 }
 
 bool encodeDraw(MetalFrameContext&         frames,
@@ -521,7 +521,7 @@ void runDepthRasterGpuTest(id<MTLDevice> device,
                              256);
     EXPECT(batch.valid());
     const MetalTextureRegion region{ 0, 0, WIDTH, HEIGHT, 0, 0 };
-    EXPECT(batch.readbackTexture2D(
+    EXPECT(batch.readbackTexture(
                *color,
                region,
                [&](std::uint64_t serial, MetalTextureReadback readback) {

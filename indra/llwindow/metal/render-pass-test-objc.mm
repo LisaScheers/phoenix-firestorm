@@ -68,14 +68,15 @@ using firestorm::metal::MetalDepthAttachmentDesc;
 using firestorm::metal::MetalDepthStateCache;
 using firestorm::metal::MetalFrameContext;
 using firestorm::metal::MetalFrameLease;
-using firestorm::metal::MetalPrivateTexture2D;
+using firestorm::metal::MetalPrivateTexture;
 using firestorm::metal::MetalRenderPass;
 using firestorm::metal::MetalRenderPassDesc;
 using firestorm::metal::MetalRenderPipelineFamilyCache;
 using firestorm::metal::MetalRenderPipelineFamilyDesc;
 using firestorm::metal::MetalRenderPipelineHandle;
 using firestorm::metal::MetalRenderTarget;
-using firestorm::metal::MetalTexture2DDescriptor;
+using firestorm::metal::MetalTextureDescriptor;
+using firestorm::metal::MetalTextureKind;
 using firestorm::metal::MetalTextureReadback;
 using firestorm::metal::MetalTextureRegion;
 using firestorm::metal::MetalTextureUsage;
@@ -83,7 +84,7 @@ using firestorm::metal::MetalTransferBatch;
 using firestorm::metal::MetalTransferStatus;
 using firestorm::metal::PixelFormat;
 using firestorm::metal::beginRenderPass;
-using firestorm::metal::createPrivateTexture2D;
+using firestorm::metal::createPrivateTexture;
 using firestorm::metal::makeRenderTarget;
 
 constexpr std::uint32_t WIDTH  = 2;
@@ -113,8 +114,8 @@ static_assert(sizeof(RenderPassDraw) == 16,
 
 struct TargetResources
 {
-    MetalPrivateTexture2D color;
-    MetalPrivateTexture2D depth;
+    MetalPrivateTexture color;
+    MetalPrivateTexture depth;
     MetalRenderTarget target;
 };
 
@@ -205,7 +206,7 @@ id<MTLLibrary> loadLibrary(id<MTLDevice> device, const std::string& path)
     return library;
 }
 
-std::optional<MetalPrivateTexture2D>
+std::optional<MetalPrivateTexture>
 createTexture(id<MTLDevice> device,
               PixelFormat format,
               std::uint32_t width,
@@ -214,14 +215,14 @@ createTexture(id<MTLDevice> device,
               MetalTextureUsage usage,
               const std::string& label)
 {
-    MetalTexture2DDescriptor descriptor;
+    MetalTextureDescriptor descriptor;
     descriptor.format = format;
     descriptor.width = width;
     descriptor.height = height;
     descriptor.mipLevels = mip_levels;
     descriptor.usage = usage;
     descriptor.label = label;
-    return createPrivateTexture2D((__bridge void*)device, descriptor);
+    return createPrivateTexture((__bridge void*)device, descriptor);
 }
 
 std::optional<TargetResources> createTarget(id<MTLDevice> device)
@@ -279,7 +280,7 @@ void testTargetContract(id<MTLDevice> device)
     EXPECT(!empty.depthFormat().has_value());
     EXPECT(!empty.colorTexture().valid());
     EXPECT(!empty.depthTexture().has_value());
-    EXPECT(!makeRenderTarget(MetalPrivateTexture2D{}).has_value());
+    EXPECT(!makeRenderTarget(MetalPrivateTexture{}).has_value());
 
     const auto color = createTexture(device,
                                      PixelFormat::rgba8_unorm,
@@ -378,6 +379,23 @@ void testTargetContract(id<MTLDevice> device)
     if (mipmapped_color)
     {
         EXPECT(!makeRenderTarget(*mipmapped_color).has_value());
+    }
+
+    MetalTextureDescriptor cube_descriptor;
+    cube_descriptor.kind = MetalTextureKind::cube;
+    cube_descriptor.format = PixelFormat::rgba8_unorm;
+    cube_descriptor.width = WIDTH;
+    cube_descriptor.height = WIDTH;
+    cube_descriptor.mipLevels = 1;
+    cube_descriptor.arrayCount = 1;
+    cube_descriptor.usage = MetalTextureUsage::render_target;
+    cube_descriptor.label = "Firestorm invalid cube attachment";
+    const auto cube_color = createPrivateTexture((__bridge void*)device,
+                                                 cube_descriptor);
+    EXPECT(cube_color.has_value());
+    if (cube_color)
+    {
+        EXPECT(!makeRenderTarget(*cube_color).has_value());
     }
 
     for (id<MTLDevice> other_device in MTLCopyAllDevices())
@@ -834,7 +852,7 @@ void runGpuOracle(id<MTLDevice> device,
                              READBACK_BYTES_PER_ROW);
     EXPECT(batch.valid());
     const MetalTextureRegion region{ 0, 0, WIDTH, HEIGHT, 0, 0 };
-    const auto readback_status = batch.readbackTexture2D(
+    const auto readback_status = batch.readbackTexture(
         resources->color,
         region,
         [&](std::uint64_t serial, MetalTextureReadback readback) {

@@ -64,18 +64,18 @@ using firestorm::metal::BlendOperation;
 using firestorm::metal::ColorWriteMask;
 using firestorm::metal::MetalFrameContext;
 using firestorm::metal::MetalFrameLease;
-using firestorm::metal::MetalPrivateTexture2D;
+using firestorm::metal::MetalPrivateTexture;
 using firestorm::metal::MetalRenderPipelineFamilyCache;
 using firestorm::metal::MetalRenderPipelineFamilyDesc;
 using firestorm::metal::MetalRenderPipelineHandle;
-using firestorm::metal::MetalTexture2DDescriptor;
+using firestorm::metal::MetalTextureDescriptor;
 using firestorm::metal::MetalTextureReadback;
 using firestorm::metal::MetalTextureRegion;
 using firestorm::metal::MetalTextureUsage;
 using firestorm::metal::MetalTransferBatch;
 using firestorm::metal::MetalTransferStatus;
 using firestorm::metal::PixelFormat;
-using firestorm::metal::createPrivateTexture2D;
+using firestorm::metal::createPrivateTexture;
 using firestorm::metal::hasColorWrite;
 using firestorm::metal::makeBlendAttachmentKey;
 
@@ -754,16 +754,16 @@ PipelineSet preparePipelines(MetalRenderPipelineFamilyCache& cache)
     return result;
 }
 
-std::optional<MetalPrivateTexture2D> createTarget(id<MTLDevice> device)
+std::optional<MetalPrivateTexture> createTarget(id<MTLDevice> device)
 {
-    MetalTexture2DDescriptor descriptor;
+    MetalTextureDescriptor descriptor;
     descriptor.format = PixelFormat::rgba8_unorm;
     descriptor.width = WIDTH;
     descriptor.height = HEIGHT;
     descriptor.mipLevels = 1;
     descriptor.usage = MetalTextureUsage::render_target;
     descriptor.label = "Firestorm blend/pipeline 9x1 target";
-    return createPrivateTexture2D((__bridge void*)device, descriptor);
+    return createPrivateTexture((__bridge void*)device, descriptor);
 }
 
 bool encodeColorDraw(MetalFrameContext&           frames,
@@ -928,7 +928,7 @@ void runGpuTest(id<MTLDevice> device,
         return;
     }
     const MetalTextureRegion region{ 0, 0, WIDTH, HEIGHT, 0, 0 };
-    const auto readback_status = batch.readbackTexture2D(
+    const auto readback_status = batch.readbackTexture(
         *target,
         region,
         [&](std::uint64_t serial, MetalTextureReadback readback) {

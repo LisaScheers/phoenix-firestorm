@@ -74,9 +74,23 @@ submission serial only after cleanup makes the slot available again. The
 runtime path does not wait for GPU completion; bounded waits exist only in the
 focused test.
 
+`MetalPrivateTexture` strongly owns exactly one private 2D, cube, or cube-array
+resource behind the Objective-C-free boundary. Cube faces use physical slice
+order `+X, -X, +Y, -Y, +Z, -Z`; cube-array slice identity is
+`cubeIndex * 6 + face`. Empty resources are supported, while immutable uploads
+must supply every `(mip, slice)` exactly once. The transfer path validates the
+complete descriptor, identities, source rows, and bounds before allocation,
+then repacks all rows without flipping into one 256-byte-aligned staging range.
+The deliberately portable descriptor subset limits texture edges to 16,384 and
+cube arrays to 341 cubes (2,046 physical slices).
+Mip generation, partial updates, texture views, 1D/3D/MSAA resources, sparse or
+heap allocation, compressed formats, additional sRGB formats, and GL conversion
+stay deferred.
+
 `MetalTransferBatch` records bounded uploads into immutable private buffers and
-2D textures using only the current frame lease's shared arena. Asynchronous
-readbacks use a separate explicit byte budget. The caller owns the command
+textures using only the current frame lease's shared arena. Asynchronous
+readbacks accept any in-bounds physical slice and mip and return explicit row
+and image pitches under a separate byte budget. The caller owns the command
 buffer and queue; the batch never commits or waits, and resources or bytes are
 published only by the frame context's successful completion action.
 
@@ -126,13 +140,14 @@ cmake --build .build/metal-core --target \
   firestorm_metal_resource_layout_test \
   firestorm_metal_frame_context_test \
   firestorm_metal_resource_transfer_test \
+  firestorm_metal_texture_subresources_test \
   firestorm_metal_sampler_test \
   firestorm_metal_depth_raster_test \
   firestorm_metal_blend_pipeline_test \
   firestorm_metal_render_pass_test \
   firestorm_metal_color_gamma_test
 (cd .build/metal-core && \
-  ctest -R '^firestorm_metal_(resource_layout|frame_context|resource_transfer|sampler|depth_raster|blend_pipeline|render_pass|color_gamma)$' \
+  ctest -R '^firestorm_metal_(resource_layout|frame_context|resource_transfer|texture_subresources|sampler|depth_raster|blend_pipeline|render_pass|color_gamma)$' \
     --output-on-failure)
 ```
 
@@ -140,6 +155,14 @@ The sampler test uploads a private 2x1 RGBA8 texture, samples one out-of-range
 coordinate with repeat and clamp states, and reads back exact distinct pixels
 through the asynchronous frame-context transfer path. The registered test runs
 with Metal API and GPU validation enabled.
+
+The texture-subresource test uploads all two mips of a private RGBA8 cube array
+with two cubes. It blits the four mip-zero corners and mip-one center from all
+12 physical slices into an exact 12x5 atlas, then checks that atlas plus direct
+slice-11/mip-zero and slice-2/mip-one readbacks byte for byte. It also covers
+duplicate and missing identities, invalid faces/slices/mips, aggregate staging
+limits, success-only publication, out-of-order completion, and strong wrapper
+lifetime.
 
 The depth/raster test renders one private 4x1 RGBA8 target with a private
 Depth32Float attachment and reads it back asynchronously. Its four exact cells
@@ -197,6 +220,7 @@ cmake --build BUILD_DIR --target \
   firestorm_metal_resource_layout_test \
   firestorm_metal_frame_context_test \
   firestorm_metal_resource_transfer_test \
+  firestorm_metal_texture_subresources_test \
   firestorm_metal_sampler_test \
   firestorm_metal_depth_raster_test \
   firestorm_metal_blend_pipeline_test \
@@ -209,6 +233,8 @@ env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
   BUILD_DIR/llwindow/metal/firestorm_metal_frame_context_test
 env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
   BUILD_DIR/llwindow/metal/firestorm_metal_resource_transfer_test
+env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
+  BUILD_DIR/llwindow/metal/firestorm_metal_texture_subresources_test
 env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
   BUILD_DIR/llwindow/metal/firestorm_metal_sampler_test \
     --metallib BUILD_DIR/llwindow/metal/generated/bootstrap.metallib
@@ -230,6 +256,7 @@ cmake --build BUILD_DIR --config CONFIG --target \
   firestorm_metal_resource_layout_test \
   firestorm_metal_frame_context_test \
   firestorm_metal_resource_transfer_test \
+  firestorm_metal_texture_subresources_test \
   firestorm_metal_sampler_test \
   firestorm_metal_depth_raster_test \
   firestorm_metal_blend_pipeline_test \
@@ -241,6 +268,8 @@ env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
   BUILD_DIR/llwindow/metal/CONFIG/firestorm_metal_frame_context_test
 env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
   BUILD_DIR/llwindow/metal/CONFIG/firestorm_metal_resource_transfer_test
+env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
+  BUILD_DIR/llwindow/metal/CONFIG/firestorm_metal_texture_subresources_test
 env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
   BUILD_DIR/llwindow/metal/CONFIG/firestorm_metal_sampler_test \
     --metallib BUILD_DIR/llwindow/metal/generated/bootstrap.metallib

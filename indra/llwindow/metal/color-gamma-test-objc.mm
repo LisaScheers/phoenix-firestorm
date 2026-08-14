@@ -60,13 +60,13 @@ using firestorm::metal::AttachmentLoadAction;
 using firestorm::metal::AttachmentStoreAction;
 using firestorm::metal::BlendAttachmentDesc;
 using firestorm::metal::MetalFrameContext;
-using firestorm::metal::MetalPrivateTexture2D;
+using firestorm::metal::MetalPrivateTexture;
 using firestorm::metal::MetalRenderPassDesc;
 using firestorm::metal::MetalRenderPipelineFamilyCache;
 using firestorm::metal::MetalRenderPipelineFamilyDesc;
 using firestorm::metal::MetalRenderPipelineHandle;
 using firestorm::metal::MetalRenderTarget;
-using firestorm::metal::MetalTexture2DDescriptor;
+using firestorm::metal::MetalTextureDescriptor;
 using firestorm::metal::MetalTextureReadback;
 using firestorm::metal::MetalTextureRegion;
 using firestorm::metal::MetalTextureUsage;
@@ -74,7 +74,7 @@ using firestorm::metal::MetalTransferBatch;
 using firestorm::metal::MetalTransferStatus;
 using firestorm::metal::PixelFormat;
 using firestorm::metal::beginRenderPass;
-using firestorm::metal::createPrivateTexture2D;
+using firestorm::metal::createPrivateTexture;
 using firestorm::metal::makeRenderTarget;
 
 constexpr std::size_t RESOURCE_COUNT = 4;
@@ -167,20 +167,20 @@ id<MTLLibrary> loadLibrary(id<MTLDevice> device, const std::string& path)
     return library;
 }
 
-std::optional<MetalPrivateTexture2D>
+std::optional<MetalPrivateTexture>
 createColorTexture(id<MTLDevice> device,
                    PixelFormat format,
                    MetalTextureUsage usage,
                    const std::string& label)
 {
-    MetalTexture2DDescriptor descriptor;
+    MetalTextureDescriptor descriptor;
     descriptor.format = format;
     descriptor.width = 1;
     descriptor.height = 1;
     descriptor.mipLevels = 1;
     descriptor.usage = usage;
     descriptor.label = label;
-    return createPrivateTexture2D((__bridge void*)device, descriptor);
+    return createPrivateTexture((__bridge void*)device, descriptor);
 }
 
 MetalRenderPipelineFamilyDesc
@@ -196,7 +196,7 @@ pipelineDescriptor(const char* fragment_function, PixelFormat format)
 bool encodePass(id<MTLCommandBuffer> command_buffer,
                 const MetalRenderTarget& target,
                 MetalRenderPipelineHandle pipeline,
-                const MetalPrivateTexture2D* source,
+                const MetalPrivateTexture* source,
                 const char* label)
 {
     MetalRenderPassDesc descriptor;
@@ -428,12 +428,12 @@ void runColorGammaOracle(id<MTLDevice> device,
                              READBACK_BUDGET);
     EXPECT(batch.valid());
     const MetalTextureRegion region{ 0, 0, 1, 1, 0, 0 };
-    const std::array<MetalPrivateTexture2D, RESOURCE_COUNT> textures{
+    const std::array<MetalPrivateTexture, RESOURCE_COUNT> textures{
         *linear, *srgb, *decoded, *display
     };
     for (std::size_t index = 0; index < textures.size(); ++index)
     {
-        const auto status = batch.readbackTexture2D(
+        const auto status = batch.readbackTexture(
             textures[index],
             region,
             [&, index](std::uint64_t serial, MetalTextureReadback readback) {

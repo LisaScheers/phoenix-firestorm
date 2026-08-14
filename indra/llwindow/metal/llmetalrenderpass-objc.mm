@@ -144,7 +144,7 @@ bool isPreCommit(MTLCommandBufferStatus status) noexcept
 }
 
 bool validNativeTexture(id<MTLTexture> texture,
-                        const MetalPrivateTexture2D& wrapper,
+                        const MetalPrivateTexture& wrapper,
                         MTLPixelFormat expected_format) noexcept
 {
     return texture != nil && texture.storageMode == MTLStorageModePrivate &&
@@ -159,15 +159,15 @@ bool validNativeTexture(id<MTLTexture> texture,
 
 struct MetalRenderTarget::Impl
 {
-    Impl(MetalPrivateTexture2D native_color,
-         std::optional<MetalPrivateTexture2D> native_depth) :
+    Impl(MetalPrivateTexture native_color,
+         std::optional<MetalPrivateTexture> native_depth) :
         color(std::move(native_color)),
         depth(std::move(native_depth))
     {
     }
 
-    MetalPrivateTexture2D color;
-    std::optional<MetalPrivateTexture2D> depth;
+    MetalPrivateTexture color;
+    std::optional<MetalPrivateTexture> depth;
 };
 
 MetalRenderTarget::MetalRenderTarget(std::shared_ptr<const Impl> impl) noexcept :
@@ -208,22 +208,24 @@ std::optional<PixelFormat> MetalRenderTarget::depthFormat() const noexcept
         : std::nullopt;
 }
 
-MetalPrivateTexture2D MetalRenderTarget::colorTexture() const noexcept
+MetalPrivateTexture MetalRenderTarget::colorTexture() const noexcept
 {
-    return valid() ? mImpl->color : MetalPrivateTexture2D{};
+    return valid() ? mImpl->color : MetalPrivateTexture{};
 }
 
-std::optional<MetalPrivateTexture2D>
+std::optional<MetalPrivateTexture>
 MetalRenderTarget::depthTexture() const noexcept
 {
     return valid() ? mImpl->depth : std::nullopt;
 }
 
 std::optional<MetalRenderTarget>
-makeRenderTarget(MetalPrivateTexture2D color,
-                 std::optional<MetalPrivateTexture2D> depth)
+makeRenderTarget(MetalPrivateTexture color,
+                 std::optional<MetalPrivateTexture> depth)
 {
     if (!color.valid() || !isColorFormat(color.format()) ||
+        color.kind() != MetalTextureKind::texture_2d ||
+        color.arrayCount() != 1 || color.sliceCount() != 1 ||
         !hasUsage(color.usage(), MetalTextureUsage::render_target) ||
         color.mipLevels() != 1)
     {
@@ -247,6 +249,8 @@ makeRenderTarget(MetalPrivateTexture2D color,
     if (depth)
     {
         if (!depth->valid() || !isDepthFormat(depth->format()) ||
+            depth->kind() != MetalTextureKind::texture_2d ||
+            depth->arrayCount() != 1 || depth->sliceCount() != 1 ||
             !hasUsage(depth->usage(), MetalTextureUsage::render_target) ||
             depth->mipLevels() != 1 || depth->width() != color.width() ||
             depth->height() != color.height())
@@ -384,7 +388,7 @@ beginRenderPass(MetalCommandBufferHandle command_buffer_handle,
 
     id<MTLCommandBuffer> command_buffer =
         (__bridge id<MTLCommandBuffer>)command_buffer_handle;
-    MetalPrivateTexture2D color = target.colorTexture();
+    MetalPrivateTexture color = target.colorTexture();
     if (!color.valid() || !isPreCommit(command_buffer.status))
     {
         return std::nullopt;
@@ -397,7 +401,7 @@ beginRenderPass(MetalCommandBufferHandle command_buffer_handle,
         return std::nullopt;
     }
 
-    std::optional<MetalPrivateTexture2D> depth = target.depthTexture();
+    std::optional<MetalPrivateTexture> depth = target.depthTexture();
     id<MTLTexture> native_depth = depth
         ? (__bridge id<MTLTexture>)depth->nativeHandle()
         : nil;

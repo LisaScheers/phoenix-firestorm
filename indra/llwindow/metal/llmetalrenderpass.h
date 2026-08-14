@@ -92,8 +92,8 @@ public:
     std::optional<PixelFormat> depthFormat() const noexcept;
 
     /** Returned values are additional strong owners of the attachments. */
-    MetalPrivateTexture2D colorTexture() const noexcept;
-    std::optional<MetalPrivateTexture2D> depthTexture() const noexcept;
+    MetalPrivateTexture colorTexture() const noexcept;
+    std::optional<MetalPrivateTexture> depthTexture() const noexcept;
 
 private:
     struct Impl;
@@ -103,8 +103,8 @@ private:
     std::shared_ptr<const Impl> mImpl;
 
     friend std::optional<MetalRenderTarget>
-    makeRenderTarget(MetalPrivateTexture2D,
-                     std::optional<MetalPrivateTexture2D>);
+    makeRenderTarget(MetalPrivateTexture,
+                     std::optional<MetalPrivateTexture>);
 };
 
 /**
@@ -113,8 +113,8 @@ private:
  * mip-zero, single-sample 2D resources on one device and with one extent.
  */
 std::optional<MetalRenderTarget>
-makeRenderTarget(MetalPrivateTexture2D color,
-                 std::optional<MetalPrivateTexture2D> depth = std::nullopt);
+makeRenderTarget(MetalPrivateTexture color,
+                 std::optional<MetalPrivateTexture> depth = std::nullopt);
 
 struct MetalRenderPassDesc
 {

@@ -99,55 +99,143 @@ constexpr std::uint8_t kKnownTextureUsage =
     static_cast<std::uint8_t>(MetalTextureUsage::shader_write) |
     static_cast<std::uint8_t>(MetalTextureUsage::render_target);
 
-bool validTextureDescriptor(const MetalTexture2DDescriptor& descriptor) noexcept
+std::uint32_t textureSliceCount(const MetalTextureDescriptor& descriptor) noexcept
+{
+    switch (descriptor.kind)
+    {
+        case MetalTextureKind::texture_2d:
+            return descriptor.arrayCount == 1 ? 1U : 0U;
+        case MetalTextureKind::cube:
+            return descriptor.arrayCount == 1 && descriptor.width == descriptor.height
+                ? 6U
+                : 0U;
+        case MetalTextureKind::cube_array:
+            return descriptor.arrayCount != 0 &&
+                   descriptor.width == descriptor.height &&
+                   descriptor.arrayCount <= kMaximumCubeArrayCount
+                ? descriptor.arrayCount * 6U
+                : 0U;
+    }
+
+    return 0;
+}
+
+bool validUtf8(const std::string& value)
+{
+    if (value.empty())
+    {
+        return true;
+    }
+    return [[NSString alloc] initWithBytes:value.data()
+                                   length:value.size()
+                                 encoding:NSUTF8StringEncoding] != nil;
+}
+
+bool validTextureDescriptor(const MetalTextureDescriptor& descriptor)
 {
     const std::uint8_t usage = static_cast<std::uint8_t>(descriptor.usage);
     return formatInfo(descriptor.format).has_value() && descriptor.width != 0 &&
-           descriptor.height != 0 && descriptor.mipLevels != 0 &&
+           descriptor.width <= kMaximumTextureDimension && descriptor.height != 0 &&
+           descriptor.height <= kMaximumTextureDimension && descriptor.mipLevels != 0 &&
            descriptor.mipLevels <= maximumMipLevels(descriptor.width, descriptor.height) &&
+           textureSliceCount(descriptor) != 0 && validUtf8(descriptor.label) &&
            usage != 0 && (usage & static_cast<std::uint8_t>(~kKnownTextureUsage)) == 0 &&
            !(descriptor.format == PixelFormat::depth32_float &&
              hasUsage(descriptor.usage, MetalTextureUsage::shader_write));
 }
 
-bool validTextureSource(const MetalTexture2DDescriptor& descriptor,
-                        MetalTextureUpload2D             source,
-                        SubresourceLayout&               tight_layout,
-                        SubresourceLayout&               staging_layout) noexcept
+struct PreparedTextureUpload
 {
-    if (!validTextureDescriptor(descriptor) || source.bytes.data == nullptr ||
-        source.bytesPerRow == 0)
+    const MetalTextureSubresourceUpload* source = nullptr;
+    SubresourceLayout tightLayout;
+    SubresourceLayout stagingLayout;
+    std::uint32_t width  = 0;
+    std::uint32_t height = 0;
+    std::size_t stagingOffset = 0;
+};
+
+bool prepareTextureUpload(
+    const MetalTextureDescriptor& descriptor,
+    const std::vector<MetalTextureSubresourceUpload>& subresources,
+    std::vector<PreparedTextureUpload>& prepared,
+    std::size_t& staging_bytes)
+{
+    const std::uint32_t slice_count = textureSliceCount(descriptor);
+    std::size_t expected_count = 0;
+    if (!validTextureDescriptor(descriptor) ||
+        !checkedMultiply(static_cast<std::size_t>(slice_count),
+                         static_cast<std::size_t>(descriptor.mipLevels),
+                         expected_count) ||
+        subresources.size() != expected_count)
     {
         return false;
     }
 
-    const auto tight = makeSubresourceLayout(descriptor.format,
-                                             descriptor.width,
-                                             descriptor.height,
-                                             1);
-    const auto staging = makeSubresourceLayout(descriptor.format,
-                                               descriptor.width,
-                                               descriptor.height,
-                                               kTextureCopyAlignment);
-    if (!tight || !staging || source.bytesPerRow < tight->bytesPerRow)
+    std::vector<bool> seen(expected_count, false);
+    prepared.clear();
+    prepared.reserve(expected_count);
+    staging_bytes = 0;
+
+    for (const MetalTextureSubresourceUpload& source : subresources)
     {
-        return false;
+        if (source.slice >= slice_count || source.mipLevel >= descriptor.mipLevels ||
+            source.bytes.data == nullptr || source.bytesPerRow == 0)
+        {
+            return false;
+        }
+
+        std::size_t identity = 0;
+        if (!checkedMultiply(static_cast<std::size_t>(source.slice),
+                             static_cast<std::size_t>(descriptor.mipLevels),
+                             identity) ||
+            !checkedAdd(identity,
+                        static_cast<std::size_t>(source.mipLevel),
+                        identity) ||
+            identity >= seen.size() || seen[identity])
+        {
+            return false;
+        }
+        seen[identity] = true;
+
+        const std::uint32_t width = mipExtent(descriptor.width, source.mipLevel);
+        const std::uint32_t height = mipExtent(descriptor.height, source.mipLevel);
+        const auto tight = makeSubresourceLayout(descriptor.format, width, height, 1);
+        const auto staging = makeSubresourceLayout(descriptor.format,
+                                                   width,
+                                                   height,
+                                                   kTextureCopyAlignment);
+        if (!tight || !staging || source.bytesPerRow < tight->bytesPerRow)
+        {
+            return false;
+        }
+
+        std::size_t preceding_rows = 0;
+        std::size_t required_bytes = 0;
+        if (!checkedMultiply(source.bytesPerRow,
+                             static_cast<std::size_t>(height - 1U),
+                             preceding_rows) ||
+            !checkedAdd(preceding_rows, tight->bytesPerRow, required_bytes) ||
+            source.bytes.size < required_bytes)
+        {
+            return false;
+        }
+
+        const std::size_t offset = staging_bytes;
+        if (!checkedAdd(staging_bytes, staging->bytesPerImage, staging_bytes))
+        {
+            return false;
+        }
+        prepared.push_back(PreparedTextureUpload{
+            &source,
+            *tight,
+            *staging,
+            width,
+            height,
+            offset,
+        });
     }
 
-    std::size_t preceding_rows = 0;
-    std::size_t required_bytes = 0;
-    if (!checkedMultiply(source.bytesPerRow,
-                         static_cast<std::size_t>(descriptor.height - 1U),
-                         preceding_rows) ||
-        !checkedAdd(preceding_rows, tight->bytesPerRow, required_bytes) ||
-        source.bytes.size < required_bytes)
-    {
-        return false;
-    }
-
-    tight_layout   = *tight;
-    staging_layout = *staging;
-    return true;
+    return staging_bytes != 0;
 }
 
 struct SharedReadback
@@ -268,12 +356,11 @@ struct MetalTransferBatch::Impl
         return MetalTransferStatus::encoded;
     }
 
-    MetalTransferStatus uploadTexture(const MetalTexture2DDescriptor& descriptor,
-                                      MetalTextureUpload2D             source,
-                                      const SubresourceLayout&         tight_layout,
-                                      const SubresourceLayout&         staging_layout,
-                                      MetalPrivateTexture2D            texture,
-                                      PublishTexture                   publish)
+    MetalTransferStatus uploadTexture(
+        const std::vector<PreparedTextureUpload>& prepared,
+        std::size_t staging_bytes,
+        MetalPrivateTexture texture,
+        PublishTexture publish)
     {
         if (!valid())
         {
@@ -287,24 +374,30 @@ struct MetalTransferBatch::Impl
         }
 
         const auto staging = mFrames->allocate(mLease.token,
-                                               staging_layout.bytesPerImage,
+                                               staging_bytes,
                                                kTextureCopyAlignment);
         if (!staging)
         {
             return MetalTransferStatus::staging_full;
         }
 
-        std::memset(staging->bytes, 0, staging_layout.bytesPerImage);
+        std::memset(staging->bytes, 0, staging_bytes);
         auto* destination_bytes = static_cast<std::byte*>(staging->bytes);
-        for (std::uint32_t row = 0; row < descriptor.height; ++row)
+        for (const PreparedTextureUpload& subresource : prepared)
         {
-            const std::size_t destination_offset =
-                static_cast<std::size_t>(row) * staging_layout.bytesPerRow;
-            const std::size_t source_offset =
-                static_cast<std::size_t>(row) * source.bytesPerRow;
-            std::memcpy(destination_bytes + destination_offset,
-                        source.bytes.data + source_offset,
-                        tight_layout.bytesPerRow);
+            for (std::uint32_t row = 0; row < subresource.height; ++row)
+            {
+                const std::size_t destination_offset =
+                    subresource.stagingOffset +
+                    static_cast<std::size_t>(row) *
+                        subresource.stagingLayout.bytesPerRow;
+                const std::size_t source_offset =
+                    static_cast<std::size_t>(row) *
+                    subresource.source->bytesPerRow;
+                std::memcpy(destination_bytes + destination_offset,
+                            subresource.source->bytes.data + source_offset,
+                            subresource.tightLayout.bytesPerRow);
+            }
         }
 
         id<MTLBlitCommandEncoder> encoder = ensureEncoder();
@@ -318,15 +411,20 @@ struct MetalTransferBatch::Impl
         }
 
         id<MTLTexture> destination = (__bridge id<MTLTexture>)texture.nativeHandle();
-        [encoder copyFromBuffer:mStagingBuffer
-                   sourceOffset:staging->offset
-              sourceBytesPerRow:staging_layout.bytesPerRow
-            sourceBytesPerImage:staging_layout.bytesPerImage
-                     sourceSize:MTLSizeMake(descriptor.width, descriptor.height, 1)
-                      toTexture:destination
-               destinationSlice:0
-               destinationLevel:0
-              destinationOrigin:MTLOriginMake(0, 0, 0)];
+        for (const PreparedTextureUpload& subresource : prepared)
+        {
+            [encoder copyFromBuffer:mStagingBuffer
+                       sourceOffset:staging->offset + subresource.stagingOffset
+                  sourceBytesPerRow:subresource.stagingLayout.bytesPerRow
+                sourceBytesPerImage:subresource.stagingLayout.bytesPerImage
+                         sourceSize:MTLSizeMake(subresource.width,
+                                                subresource.height,
+                                                1)
+                          toTexture:destination
+                   destinationSlice:subresource.source->slice
+                   destinationLevel:subresource.source->mipLevel
+                  destinationOrigin:MTLOriginMake(0, 0, 0)];
+        }
 
         mActions.emplace_back(
             [texture = std::move(texture), publish = std::move(publish)](
@@ -410,9 +508,9 @@ struct MetalTransferBatch::Impl
         return MetalTransferStatus::encoded;
     }
 
-    MetalTransferStatus readbackTexture(const MetalPrivateTexture2D& source,
-                                        MetalTextureRegion            region,
-                                        PublishTextureReadback        publish)
+    MetalTransferStatus readbackTexture(const MetalPrivateTexture& source,
+                                        MetalTextureRegion region,
+                                        PublishTextureReadback publish)
     {
         if (!valid())
         {
@@ -420,7 +518,8 @@ struct MetalTransferBatch::Impl
         }
         if (!source.valid() || !publish ||
             !resourceBelongsToDevice(source.nativeHandle(), @protocol(MTLTexture)) ||
-            region.slice != 0 || region.mipLevel >= source.mipLevels() ||
+            region.slice >= source.sliceCount() ||
+            region.mipLevel >= source.mipLevels() ||
             region.width == 0 || region.height == 0)
         {
             return MetalTransferStatus::invalid_argument;
@@ -654,35 +753,33 @@ MetalTransferStatus MetalTransferBatch::uploadPrivateBuffer(MetalByteView source
     return mImpl->uploadBuffer(source, std::move(*buffer), std::move(publish));
 }
 
-MetalTransferStatus MetalTransferBatch::uploadPrivateTexture2D(
-    const MetalTexture2DDescriptor& descriptor,
-    MetalTextureUpload2D             source,
-    PublishTexture                   publish)
+MetalTransferStatus MetalTransferBatch::uploadPrivateTexture(
+    const MetalTextureDescriptor& descriptor,
+    const std::vector<MetalTextureSubresourceUpload>& subresources,
+    PublishTexture publish)
 {
     if (!valid())
     {
         return MetalTransferStatus::invalid_state;
     }
 
-    SubresourceLayout tight_layout;
-    SubresourceLayout staging_layout;
-    if (!publish || !validTextureSource(descriptor,
-                                        source,
-                                        tight_layout,
-                                        staging_layout))
+    std::vector<PreparedTextureUpload> prepared;
+    std::size_t staging_bytes = 0;
+    if (!publish || !prepareTextureUpload(descriptor,
+                                          subresources,
+                                          prepared,
+                                          staging_bytes))
     {
         return MetalTransferStatus::invalid_argument;
     }
 
-    auto texture = createPrivateTexture2D(mImpl->deviceHandle(), descriptor);
+    auto texture = createPrivateTexture(mImpl->deviceHandle(), descriptor);
     if (!texture)
     {
         return MetalTransferStatus::resource_allocation_failed;
     }
-    return mImpl->uploadTexture(descriptor,
-                                source,
-                                tight_layout,
-                                staging_layout,
+    return mImpl->uploadTexture(prepared,
+                                staging_bytes,
                                 std::move(*texture),
                                 std::move(publish));
 }
@@ -697,10 +794,10 @@ MetalTransferStatus MetalTransferBatch::readbackBuffer(const MetalPrivateBuffer&
                : mImpl->readbackBuffer(source, offset, size, std::move(publish));
 }
 
-MetalTransferStatus MetalTransferBatch::readbackTexture2D(
-    const MetalPrivateTexture2D& source,
-    MetalTextureRegion            region,
-    PublishTextureReadback        publish)
+MetalTransferStatus MetalTransferBatch::readbackTexture(
+    const MetalPrivateTexture& source,
+    MetalTextureRegion region,
+    PublishTextureReadback publish)
 {
     return mImpl == nullptr
                ? MetalTransferStatus::invalid_state

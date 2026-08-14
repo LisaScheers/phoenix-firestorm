@@ -62,13 +62,40 @@ constexpr bool hasUsage(MetalTextureUsage value, MetalTextureUsage usage) noexce
     return (value & usage) == usage;
 }
 
-struct MetalTexture2DDescriptor
+enum class MetalTextureKind : std::uint8_t
 {
-    PixelFormat       format    = PixelFormat::rgba8_unorm;
-    std::uint32_t     width     = 0;
-    std::uint32_t     height    = 0;
-    std::uint32_t     mipLevels = 1;
-    MetalTextureUsage usage     = MetalTextureUsage::none;
+    texture_2d,
+    cube,
+    cube_array,
+};
+
+/** Portable 2D/cube edge limit across the supported Metal families. */
+inline constexpr std::uint32_t kMaximumTextureDimension = 16'384;
+
+/** Metal cube arrays contain at most 2,046 physical face slices. */
+inline constexpr std::uint32_t kMaximumCubeArrayCount = 341;
+
+/** Cube faces use Metal's physical slice order. */
+enum class MetalCubeFace : std::uint8_t
+{
+    positive_x,
+    negative_x,
+    positive_y,
+    negative_y,
+    positive_z,
+    negative_z,
+};
+
+struct MetalTextureDescriptor
+{
+    MetalTextureKind  kind       = MetalTextureKind::texture_2d;
+    PixelFormat       format     = PixelFormat::rgba8_unorm;
+    std::uint32_t     width      = 0;
+    std::uint32_t     height     = 0;
+    std::uint32_t     mipLevels  = 1;
+    /** Logical elements: one for 2D/cube, at most 341 for cube_array. */
+    std::uint32_t     arrayCount = 1;
+    MetalTextureUsage usage      = MetalTextureUsage::none;
     std::string       label;
 };
 
@@ -101,22 +128,29 @@ private:
     friend class MetalTransferBatch;
 };
 
-/** A copyable strong owner of one concrete private, single-slice 2D texture. */
-class MetalPrivateTexture2D final
+/** A copyable strong owner of one concrete private 2D, cube, or cube-array texture. */
+class MetalPrivateTexture final
 {
 public:
-    MetalPrivateTexture2D()                                                 = default;
-    MetalPrivateTexture2D(const MetalPrivateTexture2D&) noexcept            = default;
-    MetalPrivateTexture2D& operator=(const MetalPrivateTexture2D&) noexcept = default;
-    MetalPrivateTexture2D(MetalPrivateTexture2D&&) noexcept                 = default;
-    MetalPrivateTexture2D& operator=(MetalPrivateTexture2D&&) noexcept      = default;
+    MetalPrivateTexture()                                               = default;
+    MetalPrivateTexture(const MetalPrivateTexture&) noexcept            = default;
+    MetalPrivateTexture& operator=(const MetalPrivateTexture&) noexcept = default;
+    MetalPrivateTexture(MetalPrivateTexture&&) noexcept                 = default;
+    MetalPrivateTexture& operator=(MetalPrivateTexture&&) noexcept      = default;
 
     bool              valid() const noexcept;
+    MetalTextureKind  kind() const noexcept;
     PixelFormat       format() const noexcept;
     std::uint32_t     width() const noexcept;
     std::uint32_t     height() const noexcept;
     std::uint32_t     mipLevels() const noexcept;
+    std::uint32_t     arrayCount() const noexcept;
+    std::uint32_t     sliceCount() const noexcept;
     MetalTextureUsage usage() const noexcept;
+
+    /** Returns cubeIndex * 6 + face for cube/cube-array resources. */
+    std::optional<std::uint32_t> sliceForCubeFace(std::uint32_t cube_index,
+                                                  MetalCubeFace face) const noexcept;
 
     /** The unretained handle remains valid while any copy of this object lives. */
     MetalTextureHandle nativeHandle() const noexcept;
@@ -124,20 +158,23 @@ public:
 private:
     struct Impl;
 
-    explicit MetalPrivateTexture2D(std::shared_ptr<const Impl> impl) noexcept;
+    explicit MetalPrivateTexture(std::shared_ptr<const Impl> impl) noexcept;
 
     std::shared_ptr<const Impl> mImpl;
 
-    friend std::optional<MetalPrivateTexture2D> createPrivateTexture2D(MetalDeviceHandle               device,
-                                                                       const MetalTexture2DDescriptor& descriptor);
+    friend std::optional<MetalPrivateTexture>
+    createPrivateTexture(MetalDeviceHandle, const MetalTextureDescriptor&);
 };
 
 /**
- * Creates an empty private 2D texture with undefined contents.
+ * Creates an empty private 2D, cube, or cube-array texture with undefined contents.
  *
- * The usage mask must be explicit and non-empty. The texture has one array
- * slice and one sample. Depth32Float is supported, except with shader_write.
+ * The usage mask must be explicit and non-empty. Cube resources must be square.
+ * Edges use the portable 16,384 limit and all resources are single-sample.
+ * Depth32Float is supported, except with shader_write.
  */
-std::optional<MetalPrivateTexture2D> createPrivateTexture2D(MetalDeviceHandle device, const MetalTexture2DDescriptor& descriptor);
+std::optional<MetalPrivateTexture>
+createPrivateTexture(MetalDeviceHandle device,
+                     const MetalTextureDescriptor& descriptor);
 
 } // namespace firestorm::metal

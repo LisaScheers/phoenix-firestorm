@@ -57,13 +57,13 @@ void expect(bool condition, const char* expression, int line)
 #define EXPECT(expression) expect(static_cast<bool>(expression), #expression, __LINE__)
 
 using firestorm::metal::MetalFrameContext;
-using firestorm::metal::MetalPrivateTexture2D;
+using firestorm::metal::MetalPrivateTexture;
 using firestorm::metal::MetalSamplerCache;
 using firestorm::metal::MetalSamplerHandle;
-using firestorm::metal::MetalTexture2DDescriptor;
+using firestorm::metal::MetalTextureDescriptor;
 using firestorm::metal::MetalTextureReadback;
 using firestorm::metal::MetalTextureRegion;
-using firestorm::metal::MetalTextureUpload2D;
+using firestorm::metal::MetalTextureSubresourceUpload;
 using firestorm::metal::MetalTextureUsage;
 using firestorm::metal::MetalTransferBatch;
 using firestorm::metal::MetalTransferStatus;
@@ -73,7 +73,7 @@ using firestorm::metal::SamplerDesc;
 using firestorm::metal::SamplerFilter;
 using firestorm::metal::SamplerKeyHash;
 using firestorm::metal::SamplerMipFilter;
-using firestorm::metal::createPrivateTexture2D;
+using firestorm::metal::createPrivateTexture;
 using firestorm::metal::makeSamplerKey;
 
 constexpr std::uint32_t WIDTH  = 2;
@@ -232,7 +232,7 @@ void testKeyContract()
     EXPECT(!makeSamplerKey(invalid, 1).has_value());
 }
 
-std::optional<MetalPrivateTexture2D>
+std::optional<MetalPrivateTexture>
 uploadSourceTexture(id<MTLDevice> device,
                     id<MTLCommandQueue> queue,
                     MetalFrameContext& frames)
@@ -254,7 +254,7 @@ uploadSourceTexture(id<MTLDevice> device,
     command_buffer.label = @"Firestorm sampler source upload";
 
     std::mutex publication_mutex;
-    std::optional<MetalPrivateTexture2D> published_texture;
+    std::optional<MetalPrivateTexture> published_texture;
     dispatch_semaphore_t published = dispatch_semaphore_create(0);
 
     MetalTransferBatch batch((__bridge void*)device,
@@ -264,7 +264,7 @@ uploadSourceTexture(id<MTLDevice> device,
                              0);
     EXPECT(batch.valid());
 
-    MetalTexture2DDescriptor descriptor;
+    MetalTextureDescriptor descriptor;
     descriptor.format    = PixelFormat::rgba8_unorm;
     descriptor.width     = WIDTH;
     descriptor.height    = HEIGHT;
@@ -272,15 +272,19 @@ uploadSourceTexture(id<MTLDevice> device,
     descriptor.usage     = MetalTextureUsage::shader_read;
     descriptor.label     = "Firestorm sampler 2x1 private source";
 
-    const MetalTextureUpload2D upload{
-        { reinterpret_cast<const std::byte*>(SOURCE_PIXELS.data()),
-          SOURCE_PIXELS.size() },
-        ACTIVE_ROW_BYTES,
+    const std::vector<MetalTextureSubresourceUpload> uploads{
+        MetalTextureSubresourceUpload{
+            0,
+            0,
+            { reinterpret_cast<const std::byte*>(SOURCE_PIXELS.data()),
+              SOURCE_PIXELS.size() },
+            ACTIVE_ROW_BYTES,
+        },
     };
-    EXPECT(batch.uploadPrivateTexture2D(
+    EXPECT(batch.uploadPrivateTexture(
                descriptor,
-               upload,
-               [&](std::uint64_t, MetalPrivateTexture2D texture) {
+               uploads,
+               [&](std::uint64_t, MetalPrivateTexture texture) {
                    {
                        std::lock_guard<std::mutex> lock(publication_mutex);
                        published_texture = std::move(texture);
@@ -339,18 +343,18 @@ void runSamplerGpuTest(id<MTLDevice> device,
                        id<MTLCommandQueue> queue,
                        id<MTLComputePipelineState> pipeline,
                        MetalFrameContext& frames,
-                       const MetalPrivateTexture2D& source,
+                       const MetalPrivateTexture& source,
                        const CachedSamplers& samplers)
 {
-    MetalTexture2DDescriptor output_descriptor;
+    MetalTextureDescriptor output_descriptor;
     output_descriptor.format    = PixelFormat::rgba8_unorm;
     output_descriptor.width     = WIDTH;
     output_descriptor.height    = HEIGHT;
     output_descriptor.mipLevels = 1;
     output_descriptor.usage     = MetalTextureUsage::shader_write;
     output_descriptor.label     = "Firestorm sampler 2x1 private output";
-    const auto output = createPrivateTexture2D((__bridge void*)device,
-                                                output_descriptor);
+    const auto output = createPrivateTexture((__bridge void*)device,
+                                             output_descriptor);
     EXPECT(output.has_value());
     if (!output)
     {
@@ -401,7 +405,7 @@ void runSamplerGpuTest(id<MTLDevice> device,
                              256);
     EXPECT(batch.valid());
     const MetalTextureRegion region{ 0, 0, WIDTH, HEIGHT, 0, 0 };
-    EXPECT(batch.readbackTexture2D(
+    EXPECT(batch.readbackTexture(
                *output,
                region,
                [&](std::uint64_t, MetalTextureReadback readback) {

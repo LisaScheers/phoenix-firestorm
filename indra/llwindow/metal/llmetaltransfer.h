@@ -43,9 +43,11 @@ struct MetalByteView
     std::size_t      size = 0;
 };
 
-/** Full mip-zero, slice-zero source rows. No orientation conversion occurs. */
-struct MetalTextureUpload2D
+/** One complete texture subresource. Rows remain in caller/Metal order. */
+struct MetalTextureSubresourceUpload
 {
+    std::uint32_t mipLevel = 0;
+    std::uint32_t slice    = 0;
     MetalByteView bytes;
     std::size_t   bytesPerRow = 0;
 };
@@ -104,7 +106,7 @@ class MetalTransferBatch final
 {
 public:
     using PublishBuffer          = std::function<void(std::uint64_t submission_serial, MetalPrivateBuffer buffer)>;
-    using PublishTexture         = std::function<void(std::uint64_t submission_serial, MetalPrivateTexture2D texture)>;
+    using PublishTexture         = std::function<void(std::uint64_t submission_serial, MetalPrivateTexture texture)>;
     using PublishBufferReadback  = std::function<void(std::uint64_t submission_serial, MetalBufferReadback readback)>;
     using PublishTextureReadback = std::function<void(std::uint64_t submission_serial, MetalTextureReadback readback)>;
 
@@ -124,10 +126,16 @@ public:
 
     MetalTransferStatus uploadPrivateBuffer(MetalByteView source, std::string label, PublishBuffer publish);
 
-    /** Creates a texture and uploads mip zero. Higher mip levels remain undefined. */
-    MetalTransferStatus uploadPrivateTexture2D(const MetalTexture2DDescriptor& descriptor,
-                                               MetalTextureUpload2D            source,
-                                               PublishTexture                  publish);
+    /**
+     * Creates an immutable texture from every physical (mip, slice) exactly
+     * once. All caller-controlled descriptor, identity, and byte bounds are
+     * validated before native texture or arena allocation. The upload uses one
+     * aggregate 256-byte-aligned staging range.
+     */
+    MetalTransferStatus uploadPrivateTexture(
+        const MetalTextureDescriptor& descriptor,
+        const std::vector<MetalTextureSubresourceUpload>& subresources,
+        PublishTexture publish);
 
     MetalTransferStatus readbackBuffer(const MetalPrivateBuffer& source,
                                        std::size_t               offset,
@@ -135,11 +143,13 @@ public:
                                        PublishBufferReadback     publish);
 
     /**
-     * Reads one in-bounds region. Current resources are 2D and single-slice, so
-     * slice must be zero. Returned row zero is Metal y=region.y; no flip occurs.
-     * Returned rows use bytesPerRow, which may exceed the tight row size.
+     * Reads one in-bounds physical slice/mip region. Returned row zero is
+     * Metal y=region.y; no flip occurs. Returned rows use bytesPerRow, which
+     * may exceed the tight row size.
      */
-    MetalTransferStatus readbackTexture2D(const MetalPrivateTexture2D& source, MetalTextureRegion region, PublishTextureReadback publish);
+    MetalTransferStatus readbackTexture(const MetalPrivateTexture& source,
+                                        MetalTextureRegion region,
+                                        PublishTextureReadback publish);
 
     /**
      * Ends encoding and transfers all success-only publications exactly once.

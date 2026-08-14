@@ -94,6 +94,21 @@ std::optional<MTLTextureUsage> nativeTextureUsage(MetalTextureUsage usage) noexc
     return native;
 }
 
+std::optional<MTLTextureType> nativeTextureType(MetalTextureKind kind) noexcept
+{
+    switch (kind)
+    {
+        case MetalTextureKind::texture_2d:
+            return MTLTextureType2D;
+        case MetalTextureKind::cube:
+            return MTLTextureTypeCube;
+        case MetalTextureKind::cube_array:
+            return MTLTextureTypeCubeArray;
+    }
+
+    return std::nullopt;
+}
+
 std::uint32_t maximumMipLevels(std::uint32_t width, std::uint32_t height) noexcept
 {
     std::uint32_t dimension = std::max(width, height);
@@ -116,6 +131,47 @@ NSString* nativeLabel(const std::string& label)
     return [[NSString alloc] initWithBytes:label.data()
                                     length:label.size()
                                   encoding:NSUTF8StringEncoding];
+}
+
+bool validTextureShape(const MetalTextureDescriptor& descriptor) noexcept
+{
+    if (descriptor.width == 0 || descriptor.width > kMaximumTextureDimension ||
+        descriptor.height == 0 || descriptor.height > kMaximumTextureDimension ||
+        descriptor.mipLevels == 0 ||
+        descriptor.mipLevels > maximumMipLevels(descriptor.width,
+                                                descriptor.height))
+    {
+        return false;
+    }
+
+    switch (descriptor.kind)
+    {
+        case MetalTextureKind::texture_2d:
+            return descriptor.arrayCount == 1;
+        case MetalTextureKind::cube:
+            return descriptor.width == descriptor.height &&
+                   descriptor.arrayCount == 1;
+        case MetalTextureKind::cube_array:
+            return descriptor.width == descriptor.height &&
+                   descriptor.arrayCount != 0 &&
+                   descriptor.arrayCount <= kMaximumCubeArrayCount;
+    }
+
+    return false;
+}
+
+std::uint32_t physicalSliceCount(const MetalTextureDescriptor& descriptor) noexcept
+{
+    switch (descriptor.kind)
+    {
+        case MetalTextureKind::texture_2d:
+            return 1;
+        case MetalTextureKind::cube:
+        case MetalTextureKind::cube_array:
+            return descriptor.arrayCount * 6U;
+    }
+
+    return 0;
 }
 
 } // namespace
@@ -185,71 +241,120 @@ MetalBufferHandle MetalPrivateBuffer::nativeHandle() const noexcept
     return valid() ? (__bridge void*)mImpl->buffer : nullptr;
 }
 
-struct MetalPrivateTexture2D::Impl
+struct MetalPrivateTexture::Impl
 {
-    Impl(id<MTLTexture> native_texture, MetalTexture2DDescriptor texture_descriptor) :
+    Impl(id<MTLTexture> native_texture, MetalTextureDescriptor texture_descriptor) :
         texture(native_texture),
         descriptor(std::move(texture_descriptor))
     {
     }
 
     __strong id<MTLTexture>   texture;
-    MetalTexture2DDescriptor descriptor;
+    MetalTextureDescriptor descriptor;
 };
 
-MetalPrivateTexture2D::MetalPrivateTexture2D(std::shared_ptr<const Impl> impl) noexcept :
+MetalPrivateTexture::MetalPrivateTexture(std::shared_ptr<const Impl> impl) noexcept :
     mImpl(std::move(impl))
 {
 }
 
-bool MetalPrivateTexture2D::valid() const noexcept
+bool MetalPrivateTexture::valid() const noexcept
 {
-    return mImpl != nullptr && mImpl->texture != nil &&
+    if (mImpl == nullptr || mImpl->texture == nil)
+    {
+        return false;
+    }
+
+    const auto native_type = nativeTextureType(mImpl->descriptor.kind);
+    const auto native_format = nativePixelFormat(mImpl->descriptor.format);
+    const auto native_usage = nativeTextureUsage(mImpl->descriptor.usage);
+    return native_type && native_format && native_usage &&
+           validTextureShape(mImpl->descriptor) &&
            mImpl->texture.storageMode == MTLStorageModePrivate &&
-           mImpl->texture.textureType == MTLTextureType2D &&
-           mImpl->texture.arrayLength == 1;
+           mImpl->texture.textureType == *native_type &&
+           mImpl->texture.pixelFormat == *native_format &&
+           mImpl->texture.width == mImpl->descriptor.width &&
+           mImpl->texture.height == mImpl->descriptor.height &&
+           mImpl->texture.depth == 1 && mImpl->texture.sampleCount == 1 &&
+           mImpl->texture.mipmapLevelCount == mImpl->descriptor.mipLevels &&
+           mImpl->texture.arrayLength == mImpl->descriptor.arrayCount &&
+           (mImpl->texture.usage & *native_usage) == *native_usage;
 }
 
-PixelFormat MetalPrivateTexture2D::format() const noexcept
+MetalTextureKind MetalPrivateTexture::kind() const noexcept
+{
+    return valid() ? mImpl->descriptor.kind : MetalTextureKind::texture_2d;
+}
+
+PixelFormat MetalPrivateTexture::format() const noexcept
 {
     return valid() ? mImpl->descriptor.format : PixelFormat::rgba8_unorm;
 }
 
-std::uint32_t MetalPrivateTexture2D::width() const noexcept
+std::uint32_t MetalPrivateTexture::width() const noexcept
 {
     return valid() ? mImpl->descriptor.width : 0;
 }
 
-std::uint32_t MetalPrivateTexture2D::height() const noexcept
+std::uint32_t MetalPrivateTexture::height() const noexcept
 {
     return valid() ? mImpl->descriptor.height : 0;
 }
 
-std::uint32_t MetalPrivateTexture2D::mipLevels() const noexcept
+std::uint32_t MetalPrivateTexture::mipLevels() const noexcept
 {
     return valid() ? mImpl->descriptor.mipLevels : 0;
 }
 
-MetalTextureUsage MetalPrivateTexture2D::usage() const noexcept
+std::uint32_t MetalPrivateTexture::arrayCount() const noexcept
+{
+    return valid() ? mImpl->descriptor.arrayCount : 0;
+}
+
+std::uint32_t MetalPrivateTexture::sliceCount() const noexcept
+{
+    return valid() ? physicalSliceCount(mImpl->descriptor) : 0;
+}
+
+MetalTextureUsage MetalPrivateTexture::usage() const noexcept
 {
     return valid() ? mImpl->descriptor.usage : MetalTextureUsage::none;
 }
 
-MetalTextureHandle MetalPrivateTexture2D::nativeHandle() const noexcept
+std::optional<std::uint32_t>
+MetalPrivateTexture::sliceForCubeFace(std::uint32_t cube_index,
+                                      MetalCubeFace face) const noexcept
+{
+    if (!valid() || kind() == MetalTextureKind::texture_2d ||
+        cube_index >= arrayCount())
+    {
+        return std::nullopt;
+    }
+
+    const auto face_index = static_cast<std::uint8_t>(face);
+    if (face_index > static_cast<std::uint8_t>(MetalCubeFace::negative_z))
+    {
+        return std::nullopt;
+    }
+    return cube_index * 6U + face_index;
+}
+
+MetalTextureHandle MetalPrivateTexture::nativeHandle() const noexcept
 {
     return valid() ? (__bridge void*)mImpl->texture : nullptr;
 }
 
-std::optional<MetalPrivateTexture2D>
-createPrivateTexture2D(MetalDeviceHandle                 device_handle,
-                       const MetalTexture2DDescriptor& descriptor)
+std::optional<MetalPrivateTexture>
+createPrivateTexture(MetalDeviceHandle              device_handle,
+                     const MetalTextureDescriptor& descriptor)
 {
     const auto pixel_format = nativePixelFormat(descriptor.format);
     const auto usage        = nativeTextureUsage(descriptor.usage);
+    const auto texture_type = nativeTextureType(descriptor.kind);
+    NSString* converted_label = nativeLabel(descriptor.label);
     if (!conformsToMetalProtocol(device_handle, @protocol(MTLDevice)) || !pixel_format ||
-        !usage || descriptor.width == 0 || descriptor.height == 0 ||
-        descriptor.mipLevels == 0 ||
-        descriptor.mipLevels > maximumMipLevels(descriptor.width, descriptor.height) ||
+        !usage || !texture_type || !validTextureShape(descriptor) ||
+        (!descriptor.label.empty() && converted_label == nil) ||
         (descriptor.format == PixelFormat::depth32_float &&
          hasUsage(descriptor.usage, MetalTextureUsage::shader_write)))
     {
@@ -257,14 +362,14 @@ createPrivateTexture2D(MetalDeviceHandle                 device_handle,
     }
 
     MTLTextureDescriptor* native_descriptor = [[MTLTextureDescriptor alloc] init];
-    native_descriptor.textureType         = MTLTextureType2D;
+    native_descriptor.textureType         = *texture_type;
     native_descriptor.pixelFormat         = *pixel_format;
     native_descriptor.width               = descriptor.width;
     native_descriptor.height              = descriptor.height;
     native_descriptor.depth               = 1;
     native_descriptor.mipmapLevelCount    = descriptor.mipLevels;
     native_descriptor.sampleCount         = 1;
-    native_descriptor.arrayLength         = 1;
+    native_descriptor.arrayLength         = descriptor.arrayCount;
     native_descriptor.storageMode         = MTLStorageModePrivate;
     native_descriptor.hazardTrackingMode  = MTLHazardTrackingModeDefault;
     native_descriptor.usage               = *usage;
@@ -276,14 +381,13 @@ createPrivateTexture2D(MetalDeviceHandle                 device_handle,
         return std::nullopt;
     }
 
-    NSString* converted_label = nativeLabel(descriptor.label);
     if (converted_label != nil)
     {
         texture.label = converted_label;
     }
 
-    return MetalPrivateTexture2D(
-        std::make_shared<const MetalPrivateTexture2D::Impl>(texture, descriptor));
+    return MetalPrivateTexture(
+        std::make_shared<const MetalPrivateTexture::Impl>(texture, descriptor));
 }
 
 } // namespace firestorm::metal
