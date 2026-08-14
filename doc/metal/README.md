@@ -26,8 +26,8 @@ The feature ownership and parity state live in `feature-ledger.csv`.
 
 ## Shader feasibility gate
 
-`shader-spike.json` captures 13 representative recipes across the ten required
-shader families: 11 runtime contracts, a depth-writing FXAA capability probe,
+`shader-spike.json` captures 14 representative recipes across the ten required
+shader families: 12 runtime contracts, a depth-writing FXAA capability probe,
 and a separate 16-channel indexed-texture stress case. The spike reconstructs
 Firestorm's class fallback, shader-object preprocessing environments, feature
 order, defines, settings overrides, and indexed-texture lookup before
@@ -42,9 +42,11 @@ Cross-stage locations are assigned through SPIR-V instructions and entry-point
 interfaces, not by rewriting GLSL or generated MSL. Every recipe must create a
 real Metal render pipeline with the manifest's source-backed attachment and
 SoA vertex contracts. Metal reflection must also match the complete expected
-binding set, typed textures, and recursive uniform-buffer layout. Inputs are
-captured once before translation, and a normal run compares 91 generated
-artifacts across two distinct output roots.
+binding set, typed textures, and recursive uniform-buffer layout. Recipes that
+require depth-comparison textures must retain both SPIR-V comparison samples
+and generated MSL `.sample_compare` calls. Inputs are captured once before
+translation, and a normal run compares 98 generated artifacts across two
+distinct output roots.
 
 Run its focused tests and the complete Apple compiler path with:
 

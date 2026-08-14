@@ -70,6 +70,7 @@ REQUIRED_PROGRAM_IDS: Final = {
     "pbr_opaque",
     "reflection_probe",
     "shadow_alpha_mask",
+    "shadow_alpha_receiver",
     "terrain",
     "ui_font",
 }
@@ -1435,6 +1436,27 @@ def count_comparison_sample_instructions(module: bytes) -> int:
     return count
 
 
+def count_msl_sample_compare_calls(source: str) -> int:
+    return source.count(".sample_compare(")
+
+
+def comparison_sample_errors(
+    required: bool, spirv_samples: int, msl_sample_compare_calls: int
+) -> list[str]:
+    if not required:
+        return []
+    errors = []
+    if spirv_samples == 0:
+        errors.append(
+            "required depth-comparison texture has no SPIR-V comparison sample"
+        )
+    if msl_sample_compare_calls == 0:
+        errors.append(
+            "required depth-comparison texture has no generated MSL sample_compare call"
+        )
+    return errors
+
+
 def _manifest_vertex_contract(
     recipe: ProgramRecipe, vertex_reflection: dict[str, object]
 ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
@@ -1965,6 +1987,7 @@ def translate_program(
                 "spirv-opt",
                 "-O",
                 "--remove-unused-interface-variables",
+                "--eliminate-dead-code-aggressive",
                 linked_spirv.name,
                 "-o",
                 raw_spirv.name,
@@ -2129,6 +2152,11 @@ def translate_program(
                     frontend_ok = False
                     continue
 
+                msl_sample_compare_calls = count_msl_sample_compare_calls(
+                    msl_path.read_text(encoding="utf-8")
+                )
+                stage_result["msl_sample_compare_calls"] = msl_sample_compare_calls
+
                 final_reflections[stage] = _active_interface_reflection(
                     _load_reflection(reflection_path),
                     inspect_entry_point_interfaces(spirv_path.read_bytes()),
@@ -2136,10 +2164,13 @@ def translate_program(
                 reflection_errors = validate_reflection(
                     reflection_path, recipe.required_reflection.get(stage, ())
                 )
-                if comparison_required and comparison_samples == 0:
-                    reflection_errors.append(
-                        "required depth-comparison texture has no SPIR-V comparison sample"
+                reflection_errors.extend(
+                    comparison_sample_errors(
+                        comparison_required,
+                        comparison_samples,
+                        msl_sample_compare_calls,
                     )
+                )
                 stage_result["reflection_requirements"] = (
                     reflection_errors if reflection_errors else "passed"
                 )

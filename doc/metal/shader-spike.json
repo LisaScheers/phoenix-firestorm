@@ -648,6 +648,103 @@
       }
     },
     {
+      "id": "shadow_alpha_receiver",
+      "family": "Shadow alpha mask",
+      "recipe_kind": "runtime",
+      "settings_overrides": {"RenderShadowDetail": 1},
+      "semantic_parity": "not_run",
+      "source_reference": "indra/newview/llviewershadermgr.cpp:1796",
+      "source_symbol": "gDeferredAlphaProgram",
+      "shader_class": 2,
+      "defines": {
+        "HAS_ALPHA_MASK": "1",
+        "HAS_SUN_SHADOW": "1",
+        "USE_INDEXED_TEX": "1",
+        "USE_VERTEX_COLOR": "1"
+      },
+      "indexed_texture_channels": 4,
+      "required_reflection": {
+        "fragment": [
+          {
+            "group": "textures",
+            "name": "shadowMap0",
+            "type": "sampler2DShadow"
+          },
+          {
+            "group": "textures",
+            "name": "shadowMap1",
+            "type": "sampler2DShadow"
+          },
+          {
+            "group": "textures",
+            "name": "shadowMap2",
+            "type": "sampler2DShadow"
+          },
+          {
+            "group": "textures",
+            "name": "shadowMap3",
+            "type": "sampler2DShadow"
+          },
+          {"group": "textures", "name": "tex3", "type": "sampler2D"}
+        ]
+      },
+      "pipeline": {
+        "color_formats": ["rgba16float"],
+        "depth_format": "depth32float",
+        "sample_count": 1,
+        "vertex_contract": "indexed",
+        "source_evidence": [
+          {
+            "path": "indra/newview/pipeline.cpp",
+            "contains": "mRT->screen.allocate(resX, resY, GL_RGBA16F)"
+          },
+          {
+            "path": "indra/newview/pipeline.cpp",
+            "contains": "mRT->deferredScreen.shareDepthBuffer(mRT->screen)"
+          },
+          {
+            "path": "indra/newview/llviewershadermgr.cpp",
+            "contains": "shader->mFeatures.hasGamma = true;\n            shader->mFeatures.hasShadows = use_sun_shadow;\n            shader->mFeatures.hasReflectionProbes = true;\n            shader->mFeatures.mIndexedTextureChannels = LLGLSLShader::sIndexedTextureChannels;\n\n            shader->mShaderFiles.clear();\n            shader->mShaderFiles.push_back(make_pair(\"deferred/alphaV.glsl\", GL_VERTEX_SHADER));\n            shader->mShaderFiles.push_back(make_pair(\"deferred/alphaF.glsl\", GL_FRAGMENT_SHADER));"
+          },
+          {
+            "path": "indra/newview/llviewershadermgr.cpp",
+            "contains": "shader->addPermutation(\"USE_VERTEX_COLOR\", \"1\");\n            shader->addPermutation(\"HAS_ALPHA_MASK\", \"1\");\n            shader->addPermutation(\"USE_INDEXED_TEX\", \"1\");\n            if (use_sun_shadow)\n            {\n                shader->addPermutation(\"HAS_SUN_SHADOW\", \"1\");\n            }"
+          },
+          {
+            "path": "indra/llrender/llshadermgr.cpp",
+            "contains": "if (!shader->attachFragmentObject(\"deferred/shadowUtil.glsl\"))"
+          }
+        ]
+      },
+      "stages": {
+        "vertex": [
+          "deferred/alphaV.glsl",
+          "windlight/atmosphericsVarsV.glsl",
+          "windlight/atmosphericsHelpersV.glsl",
+          "environment/srgbF.glsl",
+          "windlight/atmosphericsFuncs.glsl",
+          "windlight/atmosphericsV.glsl",
+          "deferred/textureUtilV.glsl",
+          "objects/indexedTextureV.glsl"
+        ],
+        "fragment": [
+          "deferred/alphaF.glsl",
+          "deferred/globalF.glsl",
+          "environment/srgbF.glsl",
+          "windlight/atmosphericsVarsF.glsl",
+          "windlight/atmosphericsHelpersF.glsl",
+          "deferred/deferredUtil.glsl",
+          "deferred/screenSpaceReflUtil.glsl",
+          "deferred/shadowUtil.glsl",
+          "deferred/reflectionProbeF.glsl",
+          "windlight/gammaF.glsl",
+          "windlight/atmosphericsFuncs.glsl",
+          "windlight/atmosphericsF.glsl",
+          "environment/waterFogF.glsl"
+        ]
+      }
+    },
+    {
       "id": "reflection_probe",
       "family": "Reflection probe",
       "recipe_kind": "runtime",

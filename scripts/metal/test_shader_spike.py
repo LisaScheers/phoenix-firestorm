@@ -45,9 +45,10 @@ class ShaderSpikeTest(unittest.TestCase):
         )
         return directory
 
-    def test_manifest_is_exact_thirteen_recipe_ten_family_contract(self) -> None:
+    def test_manifest_is_exact_fourteen_recipe_ten_family_contract(self) -> None:
         source_root, programs = self._programs()
         shader_spike.validate_sources(source_root, programs)
+        self.assertEqual(14, len(programs))
         self.assertEqual(
             shader_spike.REQUIRED_PROGRAM_IDS, {item.program_id for item in programs}
         )
@@ -66,9 +67,15 @@ class ShaderSpikeTest(unittest.TestCase):
         shadow = next(
             item for item in programs if item.program_id == "shadow_alpha_mask"
         )
+        shadow_receiver = next(
+            item for item in programs if item.program_id == "shadow_alpha_receiver"
+        )
         pbr_alpha = next(item for item in programs if item.program_id == "pbr_alpha")
         fxaa = next(item for item in programs if item.program_id == "fxaa")
         self.assertEqual({"RenderShadowDetail": 2}, shadow.settings_overrides)
+        self.assertEqual({"RenderShadowDetail": 1}, shadow_receiver.settings_overrides)
+        self.assertEqual("1", shadow_receiver.global_defines["SUN_SHADOW"])
+        self.assertNotIn("SPOT_SHADOW", shadow_receiver.global_defines)
         self.assertEqual({"RenderShadowDetail": 1}, pbr_alpha.settings_overrides)
         self.assertEqual("1", pbr_alpha.global_defines["SUN_SHADOW"])
         self.assertNotIn("SPOT_SHADOW", pbr_alpha.global_defines)
@@ -92,6 +99,9 @@ class ShaderSpikeTest(unittest.TestCase):
             self.assertEqual(gbuffer, actual[program_id])
         self.assertEqual((("rgba16float",), "depth32float"), actual["pbr_alpha"])
         self.assertEqual(((), "depth32float"), actual["shadow_alpha_mask"])
+        self.assertEqual(
+            (("rgba16float",), "depth32float"), actual["shadow_alpha_receiver"]
+        )
         self.assertEqual((("rg11b10float",), None), actual["reflection_probe"])
         self.assertEqual((("rgba16float",), "depth32float"), actual["depth_copy"])
         self.assertEqual((("rgba8unorm",), None), actual["fxaa"])
@@ -122,6 +132,70 @@ class ShaderSpikeTest(unittest.TestCase):
         for index in range(4):
             self.assertIn((f"shadowMap{index}", "sampler2DShadow"), required)
 
+    def test_shadow_alpha_receiver_matches_real_indexed_program(self) -> None:
+        _, programs = self._programs()
+        recipe = next(
+            item for item in programs if item.program_id == "shadow_alpha_receiver"
+        )
+        self.assertEqual("Shadow alpha mask", recipe.family)
+        self.assertEqual("gDeferredAlphaProgram", recipe.source_symbol)
+        self.assertEqual(
+            {
+                "HAS_ALPHA_MASK": "1",
+                "HAS_SUN_SHADOW": "1",
+                "USE_INDEXED_TEX": "1",
+                "USE_VERTEX_COLOR": "1",
+            },
+            recipe.defines,
+        )
+        self.assertEqual("1", recipe.global_defines["SUN_SHADOW"])
+        self.assertEqual(4, recipe.indexed_texture_channels)
+        self.assertEqual(
+            (
+                "deferred/alphaV.glsl",
+                "windlight/atmosphericsVarsV.glsl",
+                "windlight/atmosphericsHelpersV.glsl",
+                "environment/srgbF.glsl",
+                "windlight/atmosphericsFuncs.glsl",
+                "windlight/atmosphericsV.glsl",
+                "deferred/textureUtilV.glsl",
+                "objects/indexedTextureV.glsl",
+            ),
+            recipe.stages["vertex"],
+        )
+        self.assertEqual(
+            (
+                "deferred/alphaF.glsl",
+                "deferred/globalF.glsl",
+                "environment/srgbF.glsl",
+                "windlight/atmosphericsVarsF.glsl",
+                "windlight/atmosphericsHelpersF.glsl",
+                "deferred/deferredUtil.glsl",
+                "deferred/screenSpaceReflUtil.glsl",
+                "deferred/shadowUtil.glsl",
+                "deferred/reflectionProbeF.glsl",
+                "windlight/gammaF.glsl",
+                "windlight/atmosphericsFuncs.glsl",
+                "windlight/atmosphericsF.glsl",
+                "environment/waterFogF.glsl",
+            ),
+            recipe.stages["fragment"],
+        )
+        required = {
+            (item.name, item.resource_type)
+            for item in recipe.required_reflection["fragment"]
+        }
+        self.assertEqual(
+            {
+                ("shadowMap0", "sampler2DShadow"),
+                ("shadowMap1", "sampler2DShadow"),
+                ("shadowMap2", "sampler2DShadow"),
+                ("shadowMap3", "sampler2DShadow"),
+                ("tex3", "sampler2D"),
+            },
+            required,
+        )
+
     def test_spirv_comparison_sampling_is_machine_counted(self) -> None:
         def module(opcode: int, word_count: int = 1) -> bytes:
             words = [shader_spike.SPIRV_MAGIC, 0x00010600, 0, 1, 0]
@@ -137,6 +211,25 @@ class ShaderSpikeTest(unittest.TestCase):
         )
         with self.assertRaisesRegex(shader_spike.ManifestError, "malformed"):
             shader_spike.count_comparison_sample_instructions(module(89, 0))
+
+    def test_msl_comparison_sampling_is_machine_counted_and_required(self) -> None:
+        source = "a.sample_compare(x);\nb.sample_compare(y);\nc.sample(z);\n"
+        self.assertEqual(2, shader_spike.count_msl_sample_compare_calls(source))
+        self.assertEqual(0, shader_spike.count_msl_sample_compare_calls("a.sample(x);"))
+        self.assertEqual(
+            [
+                "required depth-comparison texture has no SPIR-V comparison sample",
+                "required depth-comparison texture has no generated MSL sample_compare call",
+            ],
+            shader_spike.comparison_sample_errors(True, 0, 0),
+        )
+        self.assertEqual(
+            [
+                "required depth-comparison texture has no generated MSL sample_compare call"
+            ],
+            shader_spike.comparison_sample_errors(True, 1, 0),
+        )
+        self.assertEqual([], shader_spike.comparison_sample_errors(False, 0, 0))
 
     def test_manifest_owns_soa_storage_and_position_index_alias(self) -> None:
         _, programs = self._programs()

@@ -3,13 +3,13 @@
 Translation feasibility: **accepted on the pinned baseline**. Mandatory family
 semantic parity: **not run**.
 
-All 13 recipes pass the complete build-time path: compiler-linked GLSL objects,
+All 14 recipes pass the complete build-time path: compiler-linked GLSL objects,
 SPIR-V validation and reflection, cross-stage interface validation,
 SPIRV-Cross, Apple's Metal compiler, per-program `.metallib` linking, and real
 `MTLRenderPipelineState` creation under Metal API validation. The set contains
-11 runtime contracts, a depth-writing FXAA capability probe, and a separate
+12 runtime contracts, a depth-writing FXAA capability probe, and a separate
 16-channel indexed-texture stress case, covering all ten required families. A
-second build root reproduced all 91 checked artifacts byte for byte.
+second build root reproduced all 98 checked artifacts byte for byte.
 
 | Program | Required family | Recipe | Metal PSO | Metal warnings |
 | --- | --- | --- | ---: | ---: |
@@ -22,12 +22,13 @@ second build root reproduced all 91 checked artifacts byte for byte.
 | `terrain` | Terrain | runtime | pass | 0 |
 | `avatar_skinning` | Avatar skinning | runtime | pass | 1 |
 | `shadow_alpha_mask` | Shadow alpha mask | runtime | pass | 0 |
+| `shadow_alpha_receiver` | Shadow alpha mask | runtime, 4 channels | pass | 2 |
 | `reflection_probe` | Reflection probe | runtime | pass | 0 |
 | `depth_copy` | Depth write and copy | runtime | pass | 0 |
 | `fxaa` | SMAA or FXAA | runtime, depthless | pass | 1 |
 | `fxaa_depth_write` | SMAA or FXAA | capability | pass | 1 |
 
-The five warnings are unused generated constant declarations. The gate rejects
+The seven warnings are unused generated constant declarations. The gate rejects
 possibly-uninitialized diagnostics; none remain. Full output is retained in
 the local report. Compilation success does not waive semantic checks or make
 the remaining warnings accepted renderer behavior.
@@ -49,9 +50,13 @@ the remaining warnings accepted renderer behavior.
   formats and `LLVertexBuffer` SoA streams, including normalized byte colors,
   scalar avatar weights, and the indexed-texture value stored in
   `position.w`.
-- The shadow coverage includes both the depth-only alpha-mask producer and a
-  real sun-shadow consumer. The latter contains 20 SPIR-V comparison-sample
-  operations and reflects four Metal depth-texture bindings.
+- The shadow family includes the depth-only alpha-mask producer and the real,
+  indexed `gDeferredAlphaProgram` receiver. Its `HAS_SUN_SHADOW` entry shader
+  links the `SUN_SHADOW` form of `shadowUtil.glsl`; the generated fragment stage
+  contains 20 SPIR-V comparison-sample operations, 20 MSL `.sample_compare`
+  calls, and four reflected Metal depth-texture bindings. The gate requires
+  both instruction counts to remain positive for every declared shadow sampler
+  contract.
 - Metal defines `FXAA_NO_DEPTH_WRITE` for the real depthless post target. The
   source-controlled default depth-writing form remains covered by the separate
   capability recipe; it is not presented as a runtime Metal path.
@@ -60,7 +65,7 @@ the remaining warnings accepted renderer behavior.
   must exactly match stage bindings, buffer sizes and recursive member layouts,
   and texture access, dimension, scalar type, array length, and depth usage.
 - Entry-point names are stable program ID plus stage names.
-- The manifest and all 50 source/provenance inputs are captured once; source
+- The manifest and all 53 source/provenance inputs are captured once; source
   validation, both build roots, and report hashes use those same immutable
   bytes.
 - Metal compilation uses stable relative inputs and reproducibility flags; the
