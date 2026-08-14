@@ -53,6 +53,9 @@
 #include "llimagepng.h"
 #include "llmachineid.h"
 #include "llmemory.h"
+#if LL_OPENGL_ORACLE_CAPTURE
+#include "lloraclecapture.h"
+#endif
 #include "llparcel.h"
 #include "llperfstats.h"
 #include "llpostprocess.h"
@@ -137,6 +140,30 @@ bool gCubeSnapshot = false;
 bool gSnapshotNoPost = false;
 bool gShaderProfileFrame = false;
 
+#if LL_OPENGL_ORACLE_CAPTURE
+class LLOracleDisplayGuard final
+{
+public:
+    explicit LLOracleDisplayGuard(bool eligible)
+    :   mActive(eligible && LLOracleCapture::enabled() && LLOracleCapture::beginDisplay())
+    {
+    }
+
+    ~LLOracleDisplayGuard()
+    {
+        if (mActive)
+        {
+            LLOracleCapture::cancelDisplay();
+        }
+    }
+
+    bool active() const { return mActive; }
+
+private:
+    bool mActive;
+};
+#endif
+
 // This is how long the sim will try to teleport you before giving up.
 constexpr F32 TELEPORT_EXPIRY = 15.0f;
 // Additional time (in seconds) to wait per attachment
@@ -168,6 +195,10 @@ void display_startup()
     {
         return;
     }
+
+#if LL_OPENGL_ORACLE_CAPTURE
+    LLOracleDisplayGuard oracle_display(true);
+#endif
 
     gPipeline.updateGL();
 
@@ -212,7 +243,27 @@ void display_startup()
     LLGLState::checkStates();
 
     if (gViewerWindow && gViewerWindow->getWindow())
-    gViewerWindow->getWindow()->swapBuffers();
+    {
+#if LL_OPENGL_ORACLE_CAPTURE
+        if (!oracle_display.active())
+        {
+            gViewerWindow->getWindow()->swapBuffers();
+        }
+        else if (LLOracleCapture::beforePresent())
+        {
+            if (gViewerWindow->getWindow()->swapBuffersWithStatus())
+            {
+                LLOracleCapture::didPresent();
+            }
+            else
+            {
+                LLOracleCapture::presentationFailed();
+            }
+        }
+#else
+        gViewerWindow->getWindow()->swapBuffers();
+#endif
+    }
 
     glClear(GL_DEPTH_BUFFER_BIT);
 }
@@ -491,6 +542,14 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
 
     LLPerfStats::RecordSceneTime T (LLPerfStats::StatType_t::RENDER_DISPLAY); // render time capture - This is the main stat for overall rendering.
 
+#if LL_OPENGL_ORACLE_CAPTURE
+    LLOracleDisplayGuard oracle_display(
+        !for_snapshot && !gWindowResized && !gHeadlessClient && !gNonInteractive &&
+        LLStartUp::getStartupState() >= STATE_STARTED && gViewerWindow &&
+        gViewerWindow->getWindow() && gViewerWindow->getActive() &&
+        gViewerWindow->getWindow()->getVisible() && !gViewerWindow->getWindow()->getMinimized());
+#endif
+
     LLViewerCamera& camera = LLViewerCamera::instance(); // <FS:Ansariel> Factor out calls to getInstance
 
     if (gWindowResized)
@@ -625,7 +684,6 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         return;
     }
 
-
     //
     // Bail out if we're in the startup state and don't want to try to
     // render the world.
@@ -639,7 +697,6 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         display_startup();
         return;
     }
-
 
     if (gShaderProfileFrame)
     {
@@ -1219,6 +1276,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
             LL_INFOS() << "(also dumped to " << std::quoted(report_name) << ")" << LL_ENDL;
         }
     }
+
 }
 
 void getProfileStatsContext(boost::json::object& stats)
@@ -1718,7 +1776,26 @@ void swap()
     LL_PROFILE_GPU_ZONE("swap");
     if (gDisplaySwapBuffers)
     {
+#if LL_OPENGL_ORACLE_CAPTURE
+        const bool oracle_present = LLOracleCapture::displayActive();
+        if (!oracle_present)
+        {
+            gViewerWindow->getWindow()->swapBuffers();
+        }
+        else if (LLOracleCapture::beforePresent())
+        {
+            if (gViewerWindow->getWindow()->swapBuffersWithStatus())
+            {
+                LLOracleCapture::didPresent();
+            }
+            else
+            {
+                LLOracleCapture::presentationFailed();
+            }
+        }
+#else
         gViewerWindow->getWindow()->swapBuffers();
+#endif
     }
     gDisplaySwapBuffers = true;
 }

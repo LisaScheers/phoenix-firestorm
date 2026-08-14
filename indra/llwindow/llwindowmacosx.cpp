@@ -1101,7 +1101,12 @@ bool LLWindowMacOSX::setSizeImpl(const LLCoordWindow size)
 
 void LLWindowMacOSX::swapBuffers()
 {
-    CGLFlushDrawable(mContext);
+    (void)swapBuffersWithStatus();
+}
+
+bool LLWindowMacOSX::swapBuffersWithStatus()
+{
+    return CGLFlushDrawable(mContext) == kCGLNoError;
 }
 
 void LLWindowMacOSX::restoreGLContext()

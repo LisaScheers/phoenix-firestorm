@@ -87,6 +87,7 @@ public:
     void gatherInput() override;
     void delayInputProcessing() override {};
     void swapBuffers() override;
+    bool swapBuffersWithStatus() override;
 
     // handy coordinate space conversion routines
     bool convertCoords(LLCoordScreen from, LLCoordWindow *to) override;
