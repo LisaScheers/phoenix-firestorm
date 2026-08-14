@@ -434,6 +434,53 @@ bool data_type(NSString* name, MTLDataType* result)
     return true;
 }
 
+bool matrix_shape(NSString* name, NSUInteger* columns, NSUInteger* rows)
+{
+    NSDictionary<NSString*, NSArray<NSNumber*>*>* shapes = @{
+        @"mat2": @[@2, @2],
+        @"mat2x2": @[@2, @2],
+        @"mat2x3": @[@2, @3],
+        @"mat2x4": @[@2, @4],
+        @"mat3x2": @[@3, @2],
+        @"mat3": @[@3, @3],
+        @"mat3x3": @[@3, @3],
+        @"mat3x4": @[@3, @4],
+        @"mat4x2": @[@4, @2],
+        @"mat4x3": @[@4, @3],
+        @"mat4": @[@4, @4],
+        @"mat4x4": @[@4, @4],
+    };
+    NSArray<NSNumber*>* shape = shapes[name];
+    if (shape == nil)
+    {
+        return false;
+    }
+    *columns = shape[0].unsignedIntegerValue;
+    *rows = shape[1].unsignedIntegerValue;
+    return true;
+}
+
+bool canonical_member_type(NSString* name)
+{
+    return [@[
+        @"bool",
+        @"float",
+        @"int",
+        @"uint",
+        @"vec2",
+        @"vec3",
+        @"vec4",
+        @"ivec2",
+        @"ivec3",
+        @"ivec4",
+        @"uvec2",
+        @"uvec3",
+        @"uvec4",
+        @"mat3",
+        @"mat4",
+    ] containsObject:name];
+}
+
 NSString* data_type_name(MTLDataType type)
 {
     switch (type)
@@ -608,6 +655,8 @@ bool validate_type_descriptor(NSDictionary* descriptor,
         @"array_stride",
         @"element",
         @"members",
+        @"matrix_stride",
+        @"matrix_major",
     ];
     if (!validate_keys(descriptor, common_required, all_fields, path, error))
     {
@@ -685,12 +734,56 @@ bool validate_type_descriptor(NSDictionary* descriptor,
                                      error);
     }
 
-    if (!validate_keys(descriptor, common_required, common_required, path, error))
+    NSUInteger columns = 0;
+    NSUInteger rows = 0;
+    if (matrix_shape(type_name, &columns, &rows))
+    {
+        if (![type_name isEqualToString:@"mat3"]
+            && ![type_name isEqualToString:@"mat4"])
+        {
+            return reject(error,
+                          [NSString stringWithFormat:
+                                        @"%@.type is unsupported by the v1 matrix layout",
+                                        path]);
+        }
+        NSMutableArray<NSString*>* required = [common_required mutableCopy];
+        [required addObjectsFromArray:@[@"matrix_stride", @"matrix_major"]];
+        if (!validate_keys(descriptor, required, required, path, error))
+        {
+            return false;
+        }
+        NSUInteger stride = 0;
+        if (!require_unsigned_integer(descriptor,
+                                      @"matrix_stride",
+                                      path,
+                                      &stride,
+                                      error))
+        {
+            return false;
+        }
+        NSString* major = require_string(descriptor, @"matrix_major", path, error);
+        if (major == nil || ![major isEqualToString:@"column"])
+        {
+            return reject(error,
+                          [NSString stringWithFormat:
+                                        @"%@.matrix_major must be column for the v1 matrix layout",
+                                        path]);
+        }
+        if (stride != 16)
+        {
+            return reject(error,
+                          [NSString stringWithFormat:
+                                        @"%@.matrix_stride must be 16 for the v1 matrix layout",
+                                        path]);
+        }
+    }
+    else if (!validate_keys(descriptor, common_required, common_required, path, error))
     {
         return false;
     }
     MTLDataType unused = MTLDataTypeNone;
-    if (!data_type(type_name, &unused)
+    if (!canonical_member_type(type_name)
+        || !data_type(type_name, &unused)
         || unused == MTLDataTypeArray
         || unused == MTLDataTypeStruct)
     {
@@ -722,6 +815,7 @@ bool validate_expected_arguments(NSDictionary* expected,
             return false;
         }
         NSMutableSet<NSString*>* keys = [NSMutableSet set];
+        NSMutableSet<NSString*>* metal_names = [NSMutableSet set];
         for (NSUInteger index = 0; index < arguments.count; ++index)
         {
             NSString* path = [NSString stringWithFormat:@"expected_arguments.%@[%lu]",
@@ -734,8 +828,9 @@ bool validate_expected_arguments(NSDictionary* expected,
             }
             NSDictionary* argument = value;
             if (!validate_keys(argument,
-                               @[@"name", @"kind", @"index"],
+                               @[@"name", @"metal_name", @"kind", @"index"],
                                @[@"name",
+                                 @"metal_name",
                                  @"kind",
                                  @"index",
                                  @"access",
@@ -755,6 +850,23 @@ bool validate_expected_arguments(NSDictionary* expected,
             {
                 return false;
             }
+            NSString* metal_name = require_string(argument,
+                                                  @"metal_name",
+                                                  path,
+                                                  error);
+            if (metal_name == nil)
+            {
+                return false;
+            }
+            if ([metal_names containsObject:metal_name])
+            {
+                return reject(error,
+                              [NSString stringWithFormat:
+                                            @"%@ duplicates native Metal name %@",
+                                            path,
+                                            metal_name]);
+            }
+            [metal_names addObject:metal_name];
             NSString* kind = require_string(argument, @"kind", path, error);
             MTLBindingType type = MTLBindingTypeBuffer;
             if (kind == nil)
@@ -806,6 +918,7 @@ bool validate_expected_arguments(NSDictionary* expected,
             {
                 if (!validate_keys(argument,
                                    @[@"name",
+                                     @"metal_name",
                                      @"kind",
                                      @"index",
                                      @"access",
@@ -813,6 +926,7 @@ bool validate_expected_arguments(NSDictionary* expected,
                                      @"buffer_alignment",
                                      @"members"],
                                    @[@"name",
+                                     @"metal_name",
                                      @"kind",
                                      @"index",
                                      @"access",
@@ -876,6 +990,7 @@ bool validate_expected_arguments(NSDictionary* expected,
             {
                 NSArray<NSString*>* texture_fields = @[
                     @"name",
+                    @"metal_name",
                     @"kind",
                     @"index",
                     @"access",
@@ -969,8 +1084,8 @@ bool validate_expected_arguments(NSDictionary* expected,
                 }
             }
             else if (!validate_keys(argument,
-                                    @[@"name", @"kind", @"index"],
-                                    @[@"name", @"kind", @"index"],
+                                    @[@"name", @"metal_name", @"kind", @"index"],
+                                    @[@"name", @"metal_name", @"kind", @"index"],
                                     path,
                                     error))
             {
@@ -1008,9 +1123,9 @@ bool validate_spec(NSDictionary* spec, NSString* __autoreleasing* error)
     {
         return false;
     }
-    if (schema != 2)
+    if (schema != 4)
     {
-        return reject(error, @"pipeline spec.schema must be 2");
+        return reject(error, @"pipeline spec.schema must be 4");
     }
     for (NSString* key in @[@"id", @"metallib", @"vertex_function", @"fragment_function"])
     {
@@ -1742,6 +1857,15 @@ void validate_stage_arguments(NSArray<NSDictionary*>* expected,
             continue;
         }
         [matched addObject:key];
+        if (![binding.name isEqualToString:argument[@"metal_name"]])
+        {
+            [errors addObject:[NSString stringWithFormat:
+                                          @"%@ argument %@ expected Metal name %@, matched Metal name %@",
+                                          stage,
+                                          argument[@"name"],
+                                          argument[@"metal_name"],
+                                          binding.name]];
+        }
         if (!binding.isUsed)
         {
             [errors addObject:[NSString stringWithFormat:
@@ -1857,14 +1981,18 @@ int main(int argc, const char* argv[])
 
         id<MTLFunction> vertex = [library newFunctionWithName:spec[@"vertex_function"]];
         id<MTLFunction> fragment = [library newFunctionWithName:spec[@"fragment_function"]];
-        if (vertex == nil || fragment == nil)
+        if (vertex == nil || fragment == nil ||
+            vertex.functionType != MTLFunctionTypeVertex ||
+            fragment.functionType != MTLFunctionTypeFragment)
         {
             print_error([NSString stringWithFormat:
-                                      @"pipeline functions are missing from the metallib (vertex %@: %@; fragment %@: %@)",
+                                      @"pipeline functions are missing or have the wrong stage (vertex %@: %@; fragment %@: %@)",
                                       spec[@"vertex_function"],
-                                      vertex == nil ? @"missing" : @"found",
+                                      vertex == nil ? @"missing" :
+                                          (vertex.functionType == MTLFunctionTypeVertex ? @"vertex" : @"wrong stage"),
                                       spec[@"fragment_function"],
-                                      fragment == nil ? @"missing" : @"found"]);
+                                      fragment == nil ? @"missing" :
+                                          (fragment.functionType == MTLFunctionTypeFragment ? @"fragment" : @"wrong stage")]);
             return 3;
         }
 

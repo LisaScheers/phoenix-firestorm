@@ -31,6 +31,20 @@ class ShaderSpikeTest(unittest.TestCase):
     def _programs(self) -> tuple[Path, list[shader_spike.ProgramRecipe]]:
         return shader_spike.load_manifest(self.manifest)
 
+    @staticmethod
+    def _stage_msl_sources(
+        vertex: dict[str, object], fragment: dict[str, object]
+    ) -> dict[str, str]:
+        result: dict[str, str] = {}
+        for stage, reflection in (("vertex", vertex), ("fragment", fragment)):
+            arguments = shader_spike._expected_arguments(reflection, stage)
+            result[stage] = ", ".join(
+                f"{argument['kind']}_{argument['index']} "
+                f"[[{argument['kind']}({argument['index']})]]"
+                for argument in arguments
+            )
+        return result
+
     def _mutated_manifest(self, mutation: object) -> tempfile.TemporaryDirectory[str]:
         document = json.loads(self.manifest.read_text(encoding="utf-8"))
         assert isinstance(mutation, tuple)
@@ -110,6 +124,10 @@ class ShaderSpikeTest(unittest.TestCase):
     def test_stress_and_semantic_states_are_honest(self) -> None:
         _, programs = self._programs()
         by_id = {item.program_id: item for item in programs}
+        self.assertEqual(
+            shader_spike.REQUIRED_RECIPE_KINDS,
+            {item.program_id: item.recipe_kind for item in programs},
+        )
         self.assertEqual("stress", by_id["indexed_material_stress_16"].recipe_kind)
         self.assertEqual(
             16, by_id["indexed_material_stress_16"].indexed_texture_channels
@@ -119,6 +137,30 @@ class ShaderSpikeTest(unittest.TestCase):
             "cpu_runtime_layout_open", by_id["avatar_skinning"].semantic_parity
         )
         self.assertTrue(all(item.semantic_parity != "passed" for item in programs))
+
+    def test_recipe_kind_relabel_cannot_swap_runtime_and_capability(self) -> None:
+        document = json.loads(self.manifest.read_text(encoding="utf-8"))
+        by_id = {item["id"]: item for item in document["programs"]}
+        by_id["fxaa"]["recipe_kind"] = "capability"
+        by_id["fxaa_depth_write"]["recipe_kind"] = "runtime"
+        with tempfile.TemporaryDirectory() as directory:
+            manifest = Path(directory, "manifest.json")
+            manifest.write_text(json.dumps(document), encoding="utf-8")
+            source_root, programs = shader_spike.load_manifest(manifest)
+            with self.assertRaisesRegex(shader_spike.ManifestError, "recipe inventory"):
+                shader_spike.validate_sources(source_root, programs)
+
+    def test_program_family_labels_cannot_be_swapped(self) -> None:
+        document = json.loads(self.manifest.read_text(encoding="utf-8"))
+        by_id = {item["id"]: item for item in document["programs"]}
+        by_id["avatar_skinning"]["family"] = "Terrain"
+        by_id["terrain"]["family"] = "Avatar skinning"
+        with tempfile.TemporaryDirectory() as directory:
+            manifest = Path(directory, "manifest.json")
+            manifest.write_text(json.dumps(document), encoding="utf-8")
+            source_root, programs = shader_spike.load_manifest(manifest)
+            with self.assertRaisesRegex(shader_spike.ManifestError, "recipe inventory"):
+                shader_spike.validate_sources(source_root, programs)
 
     def test_shadowed_pbr_recipe_requires_real_comparison_resources(self) -> None:
         _, programs = self._programs()
@@ -413,10 +455,15 @@ class ShaderSpikeTest(unittest.TestCase):
             root = Path(directory).resolve()
             spec_path = root / "pipeline.json"
             shader_spike.write_pipeline_spec(
-                ui, vertex, fragment, root / "ui.metallib", spec_path
+                ui,
+                vertex,
+                fragment,
+                self._stage_msl_sources(vertex, fragment),
+                root / "ui.metallib",
+                spec_path,
             )
             spec = json.loads(spec_path.read_text(encoding="utf-8"))
-        self.assertEqual(2, spec["schema"])
+        self.assertEqual(4, spec["schema"])
         self.assertEqual(
             [16, 18, 20], [item["buffer_index"] for item in spec["vertex_layouts"]]
         )
@@ -426,11 +473,53 @@ class ShaderSpikeTest(unittest.TestCase):
             if item["name"] == "diffuse_color"
         )
         self.assertEqual("uchar4normalized", color["format"])
+        uniform = spec["expected_arguments"]["vertex"][0]
+        self.assertEqual(
+            {
+                "name": "matrix",
+                "offset": 0,
+                "type": "mat4",
+                "matrix_stride": 16,
+                "matrix_major": "column",
+            },
+            uniform["members"][0],
+        )
         kinds = {
             (item["kind"], item["index"])
             for item in spec["expected_arguments"]["fragment"]
         }
         self.assertEqual({("texture", 0), ("sampler", 0)}, kinds)
+        self.assertEqual(
+            {"texture_0", "sampler_0"},
+            {item["metal_name"] for item in spec["expected_arguments"]["fragment"]},
+        )
+
+    def test_generated_msl_native_binding_names_are_exact_and_unique(self) -> None:
+        source = (
+            "constant Uniforms& _19 [[buffer(24)]], "
+            "texture2d<float> diffuseMap [[texture(0)]], "
+            "sampler diffuseMapSmplr [[sampler(0)]]"
+        )
+        self.assertEqual(
+            {
+                ("buffer", 24): "_19",
+                ("texture", 0): "diffuseMap",
+                ("sampler", 0): "diffuseMapSmplr",
+            },
+            shader_spike.extract_metal_binding_names(source, "fragment"),
+        )
+        with self.assertRaisesRegex(shader_spike.ManifestError, "duplicate native"):
+            shader_spike.extract_metal_binding_names(
+                "same [[texture(0)]], same [[sampler(0)]]", "fragment"
+            )
+
+    def test_native_validator_compares_exact_generated_metal_name(self) -> None:
+        source = (
+            Path(shader_spike.__file__)
+            .with_name("validate_metal_pipeline.mm")
+            .read_text(encoding="utf-8")
+        )
+        self.assertIn('binding.name isEqualToString:argument[@"metal_name"]', source)
 
     def test_pipeline_permits_fewer_conditional_color_attachments(self) -> None:
         _, programs = self._programs()
@@ -453,7 +542,12 @@ class ShaderSpikeTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory, "spec.json")
             shader_spike.write_pipeline_spec(
-                shadow, vertex, fragment, Path(directory, "x.metallib"), path
+                shadow,
+                vertex,
+                fragment,
+                self._stage_msl_sources(vertex, fragment),
+                Path(directory, "x.metallib"),
+                path,
             )
             self.assertEqual([], json.loads(path.read_text())["color_formats"])
 
@@ -493,6 +587,30 @@ class ShaderSpikeTest(unittest.TestCase):
         )
         self.assertEqual(8, arguments[0]["buffer_alignment"])
         self.assertEqual(16, arguments[0]["buffer_size"])
+
+        nested = shader_spike._expected_arguments(
+            {
+                "types": {
+                    "_inner": {
+                        "members": [{"name": "value", "type": "float", "offset": 0}]
+                    },
+                    "_outer": {
+                        "members": [{"name": "nested", "type": "_inner", "offset": 0}]
+                    },
+                },
+                "ubos": [
+                    {
+                        "name": "Nested",
+                        "type": "_outer",
+                        "binding": 24,
+                        "block_size": 4,
+                    }
+                ],
+            },
+            "vertex",
+        )
+        self.assertEqual(16, nested[0]["buffer_alignment"])
+        self.assertEqual(16, nested[0]["buffer_size"])
 
     def test_texture_contract_includes_typed_resource_metadata(self) -> None:
         cube = shader_spike._texture_metadata(
@@ -580,6 +698,70 @@ class ShaderSpikeTest(unittest.TestCase):
                 {"name": "U", "type": "_ubo"},
             )
 
+    def test_v1_matrix_layout_is_canonical_and_noncanonical_forms_reject(self) -> None:
+        members = shader_spike._buffer_members(
+            {
+                "types": {
+                    "_ubo": {
+                        "members": [
+                            {
+                                "name": "transform",
+                                "type": "mat3",
+                                "offset": 0,
+                                "matrix_stride": 16,
+                            }
+                        ]
+                    }
+                }
+            },
+            {"name": "U", "type": "_ubo"},
+        )
+        self.assertEqual("column", members[0]["matrix_major"])
+        self.assertEqual(16, members[0]["matrix_stride"])
+        for expected, mutation in (
+            ("column-major", {"row_major": True}),
+            ("stride 16", {"matrix_stride": 32}),
+            ("only mat3 and mat4", {"type": "mat2x3"}),
+            ("non-matrix.*matrix layout", {"type": "float4x4"}),
+        ):
+            member = {
+                "name": "transform",
+                "type": "mat4",
+                "offset": 0,
+                "matrix_stride": 16,
+                **mutation,
+            }
+            with (
+                self.subTest(mutation=mutation),
+                self.assertRaisesRegex(shader_spike.ManifestError, expected),
+            ):
+                shader_spike._buffer_members(
+                    {"types": {"_ubo": {"members": [member]}}},
+                    {"name": "U", "type": "_ubo"},
+                )
+
+        with self.assertRaisesRegex(shader_spike.ManifestError, "stride 16"):
+            shader_spike._expected_arguments(
+                {
+                    "types": {
+                        "_ubo": {
+                            "members": [
+                                {"name": "transform", "type": "mat4", "offset": 0}
+                            ]
+                        }
+                    },
+                    "ubos": [
+                        {
+                            "name": "U",
+                            "type": "_ubo",
+                            "binding": 24,
+                            "block_size": 64,
+                        }
+                    ],
+                },
+                "vertex",
+            )
+
     def test_std140_vec2_array_uses_metal_padded_element_type(self) -> None:
         members = shader_spike._buffer_members(
             {
@@ -632,6 +814,7 @@ class ShaderSpikeTest(unittest.TestCase):
                 recipe,
                 vertex,
                 fragment,
+                self._stage_msl_sources(vertex, fragment),
                 Path(directory, "x.metallib"),
                 Path(directory, "x.json"),
             )
@@ -678,6 +861,20 @@ class ShaderSpikeTest(unittest.TestCase):
             shader_spike._prepare_output(marked)
             self.assertFalse(Path(marked, "old").exists())
             self.assertTrue(Path(marked, shader_spike.OUTPUT_MARKER).is_file())
+
+    def test_build_system_may_supply_only_an_empty_output_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            output = root / "cmake-created"
+            output.mkdir()
+            Path(output, "nested-generated-parent").mkdir()
+            shader_spike._prepare_output(output, allow_empty=True)
+            self.assertTrue(Path(output, shader_spike.OUTPUT_MARKER).is_file())
+            nonempty = root / "nonempty"
+            nonempty.mkdir()
+            Path(nonempty, "foreign").write_text("do not remove")
+            with self.assertRaisesRegex(RuntimeError, "unmarked"):
+                shader_spike._prepare_output(nonempty, allow_empty=True)
 
     def test_output_refuses_repository_and_shader_source_roots(self) -> None:
         root = shader_spike.repository_root()

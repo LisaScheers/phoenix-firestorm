@@ -206,6 +206,59 @@ The planned presentation policy is one manual final shader encode into a
 `BGRA8Unorm` drawable, paired later with an sRGB layer colorspace. The current
 `CAMetalLayer` is deliberately unchanged by this resource-contract slice.
 
+## Declared program artifact bridge
+
+`FIRESTORM_BUILD_METAL_PROGRAM_ARTIFACTS` is default-off. When enabled, the
+explicit `firestorm_metal_declared_programs` target runs the frozen shader gate,
+then generates one path-free `firestorm-declared-programs.metallib` and an
+immutable C++17 catalog for the 12 representative `runtime` recipes. The
+capability and stress recipes remain build-time feasibility evidence and are
+excluded. This is not the complete viewer program inventory and makes no
+semantic-parity claim.
+
+The path-free JSON catalog owns stable string IDs, entry-point names, ordered
+color/depth and sample metadata, SoA vertex attributes/layouts, typed stage
+buffer/texture/sampler summaries, recursive members including matrix
+stride/major order, complete reflection/layout identity digests, the frozen
+source-manifest identity, and the explicit metallib resource basename. C++
+exposes the typed summaries and per-buffer/full-stage digests, not a duplicate
+recursive member tree. Logical binding names remain semantic authority;
+generated `metal_name` values are checked exactly against native reflection and
+are toolchain-owned diagnostic identity, not a persistence ABI. Artifact schema
+v1 accepts only `mat3` and `mat4`, column-major with stride 16;
+producer, catalog, and native schema validation reject other matrix forms, and
+Metal reflection checks the remaining data type. Generated `MetalProgramId`
+numeric values are lexical build ordinals, not a persistence or telemetry ABI.
+`MetalProgramLibrary` accepts an explicit path, strongly owns that native
+library and all declared entry functions, requires the exact function
+name/stage set, and exposes borrowed handles and immutable lookup. It performs
+no bundle lookup, JSON parsing, source compilation, function-constant
+selection, draw encoding, or hot reload.
+
+The exact shader toolchain must be available at configuration time. On Nix:
+
+```sh
+nix shell nixpkgs#cmake nixpkgs#ninja nixpkgs#glslang \
+  nixpkgs#spirv-cross nixpkgs#spirv-tools -c \
+  cmake -S indra/llwindow/metal -B .build/metal-programs -G Ninja \
+    -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON \
+    -DFIRESTORM_BUILD_METAL_PROGRAM_ARTIFACTS=ON
+nix shell nixpkgs#cmake nixpkgs#ninja nixpkgs#glslang \
+  nixpkgs#spirv-cross nixpkgs#spirv-tools -c \
+  cmake --build .build/metal-programs \
+    --target firestorm_metal_program_library_test
+nix shell nixpkgs#cmake -c \
+  ctest --test-dir .build/metal-programs \
+    -R '^firestorm_metal_program_library$' --output-on-failure
+```
+
+The focused test validates the ordinary C++ catalog, exact IDs and key vertex
+contracts, explicit-path strong ownership, lookup, and creation of all 12
+declared PSOs from the same combined metallib under Metal API validation. The
+default-off option changes neither target graph. When explicitly enabled, a
+standalone build includes and registers the focused test; an embedded viewer
+keeps both artifact targets out of `all` and registers no viewer CTest.
+
 ## Firestorm build integration
 
 The same CMake file can be included from `indra/llwindow/CMakeLists.txt` by

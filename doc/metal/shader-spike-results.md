@@ -7,9 +7,14 @@ All 14 recipes pass the complete build-time path: compiler-linked GLSL objects,
 SPIR-V validation and reflection, cross-stage interface validation,
 SPIRV-Cross, Apple's Metal compiler, per-program `.metallib` linking, and real
 `MTLRenderPipelineState` creation under Metal API validation. The set contains
-12 runtime contracts, a depth-writing FXAA capability probe, and a separate
-16-channel indexed-texture stress case, covering all ten required families. A
-second build root reproduced all 98 checked artifacts byte for byte.
+12 representative runtime contracts, a depth-writing FXAA capability probe,
+and a separate 16-channel indexed-texture stress case, covering all ten
+required families. The 12 runtime AIR pairs also link in lexical ID then
+vertex/fragment order into one path-free
+`firestorm-declared-programs.metallib`; every runtime PSO is recreated from
+that same library under Metal API validation. A second build root reproduced
+all 102 checked artifacts byte for byte: the prior 98 per-program artifacts
+plus the combined metallib and path-free JSON/C++ catalog.
 
 | Program | Required family | Recipe | Metal PSO | Metal warnings |
 | --- | --- | --- | ---: | ---: |
@@ -64,7 +69,22 @@ the remaining warnings accepted renderer behavior.
   pipeline, not merely by packaging AIR into a metallib. Pipeline reflection
   must exactly match stage bindings, buffer sizes and recursive member layouts,
   and texture access, dimension, scalar type, array length, and depth usage.
+  Artifact schema v1 admits only the matrix layouts present here: `mat3` and
+  `mat4`, column-major with stride 16. Producer, catalog, and native schema
+  validation reject other shapes, strides, or major orders, while native
+  reflection proves the remaining matrix data type.
 - Entry-point names are stable program ID plus stage names.
+- The runtime-only artifact has exactly the combined library's 24 expected
+  entry points. Its immutable C++17 descriptors use the existing renderer
+  `PixelFormat`, typed vertex layouts and stage buffer/texture/sampler
+  summaries, per-buffer layout digests, and full per-stage reflection digests.
+  The path-free JSON and canonical digests preserve recursive member layouts,
+  including the canonical v1 matrix stride and major order; C++ does not
+  duplicate that member tree. Logical binding names remain semantic authority,
+  while generated `metal_name` values are checked exactly against native
+  reflection and remain toolchain-owned diagnostic identity rather than a
+  persistence ABI. The catalog identifies its frozen source manifest and
+  explicit resource basename without embedding a host, build, or source path.
 - The manifest and all 53 source/provenance inputs are captured once; source
   validation, both build roots, and report hashes use those same immutable
   bytes.
@@ -79,8 +99,9 @@ become canonical.
 ## Scope and remaining gates
 
 This result proves that the selected translation architecture can build and
-link representative Firestorm programs into structurally valid Metal
-pipelines. It does not prove rendering equivalence. The mandatory family pass
+link 12 representative Firestorm runtime recipes into structurally valid Metal
+pipelines. It is not the complete viewer shader inventory and does not prove
+selection integration or rendering equivalence. The mandatory family pass
 conditions still need deterministic draws and readback for orientation,
 blending, G-buffer channels, terrain, shadows, probe faces and mips, depth
 reconstruction, and final gamma. Avatar CPU/runtime layout parity is also still

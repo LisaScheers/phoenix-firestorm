@@ -26,6 +26,9 @@ endif ()
 
 set(FIRESTORM_METAL_BOOTSTRAP_MIN_MACOS "13.0")
 set(FIRESTORM_METAL_BOOTSTRAP_METAL_STANDARD "2.3")
+option(FIRESTORM_BUILD_METAL_PROGRAM_ARTIFACTS
+       "Build the representative declared Metal program artifact and focused test"
+       OFF)
 
 # Nix's SDK compatibility shim is also named xcrun, but it cannot discover
 # Xcode's separately installed Metal toolchain. The system launcher respects
@@ -113,6 +116,7 @@ set_source_files_properties(
   llmetalbootstrap-objc.mm
   llmetalframecontext-objc.mm
   llmetalpipeline-objc.mm
+  llmetalprogram-objc.mm
   llmetalrenderpass-objc.mm
   llmetalresource-objc.mm
   llmetalsampler-objc.mm
@@ -121,6 +125,7 @@ set_source_files_properties(
   main-objc.mm
   mrt-test-objc.mm
   offscreen-test-objc.mm
+  program-library-test-objc.mm
   render-pass-test-objc.mm
   resource-transfer-test-objc.mm
   sampler-test-objc.mm
@@ -693,6 +698,172 @@ set_target_properties(firestorm_metal_color_gamma_test PROPERTIES
       "${FIRESTORM_METAL_BOOTSTRAP_MIN_MACOS}"
   )
 
+if (FIRESTORM_BUILD_METAL_PROGRAM_ARTIFACTS)
+  find_package(Python3 3.9 REQUIRED COMPONENTS Interpreter)
+  find_program(FIRESTORM_GLSLANG_EXECUTABLE glslangValidator)
+  find_program(FIRESTORM_SPIRV_CROSS_EXECUTABLE spirv-cross)
+  find_program(FIRESTORM_SPIRV_OPT_EXECUTABLE spirv-opt)
+  find_program(FIRESTORM_SPIRV_VAL_EXECUTABLE spirv-val)
+  foreach (FIRESTORM_METAL_PROGRAM_TOOL
+           FIRESTORM_GLSLANG_EXECUTABLE
+           FIRESTORM_SPIRV_CROSS_EXECUTABLE
+           FIRESTORM_SPIRV_OPT_EXECUTABLE
+           FIRESTORM_SPIRV_VAL_EXECUTABLE)
+    if (NOT ${FIRESTORM_METAL_PROGRAM_TOOL})
+      message(FATAL_ERROR
+              "FIRESTORM_BUILD_METAL_PROGRAM_ARTIFACTS requires ${FIRESTORM_METAL_PROGRAM_TOOL}")
+    endif ()
+  endforeach ()
+  foreach (FIRESTORM_APPLE_METAL_TOOL metal metallib)
+    execute_process(
+      COMMAND "${FIRESTORM_XCRUN_EXECUTABLE}" -sdk macosx -find
+              "${FIRESTORM_APPLE_METAL_TOOL}"
+      RESULT_VARIABLE FIRESTORM_APPLE_METAL_TOOL_RESULT
+      OUTPUT_QUIET
+      ERROR_VARIABLE FIRESTORM_APPLE_METAL_TOOL_ERROR
+      )
+    if (NOT FIRESTORM_APPLE_METAL_TOOL_RESULT EQUAL 0)
+      message(FATAL_ERROR
+              "The optional Apple Metal toolchain is missing ${FIRESTORM_APPLE_METAL_TOOL}: ${FIRESTORM_APPLE_METAL_TOOL_ERROR}")
+    endif ()
+  endforeach ()
+
+  set(FIRESTORM_REPOSITORY_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../..")
+  set(FIRESTORM_METAL_PROGRAM_SCRIPT_DIR
+      "${FIRESTORM_REPOSITORY_ROOT}/scripts/metal")
+  set(FIRESTORM_METAL_PROGRAM_MANIFEST
+      "${FIRESTORM_REPOSITORY_ROOT}/doc/metal/shader-spike.json")
+  set(FIRESTORM_METAL_PROGRAM_OUTPUT_DIR
+      "${CMAKE_CURRENT_BINARY_DIR}/declared-program-artifacts")
+  set(FIRESTORM_METAL_PROGRAM_CATALOG_DIR
+      "${FIRESTORM_METAL_PROGRAM_OUTPUT_DIR}/firestorm-declared-programs")
+  set(FIRESTORM_METAL_PROGRAM_LIBRARY
+      "${FIRESTORM_METAL_PROGRAM_CATALOG_DIR}/firestorm-declared-programs.metallib")
+  set(FIRESTORM_METAL_PROGRAM_JSON
+      "${FIRESTORM_METAL_PROGRAM_CATALOG_DIR}/firestorm-declared-programs.json")
+  set(FIRESTORM_METAL_PROGRAM_HEADER
+      "${FIRESTORM_METAL_PROGRAM_CATALOG_DIR}/firestorm-declared-programs.h")
+  set(FIRESTORM_METAL_PROGRAM_SOURCE
+      "${FIRESTORM_METAL_PROGRAM_CATALOG_DIR}/firestorm-declared-programs.cpp")
+
+  file(GLOB_RECURSE FIRESTORM_METAL_PROGRAM_SHADER_INPUTS CONFIGURE_DEPENDS
+       "${FIRESTORM_REPOSITORY_ROOT}/indra/newview/app_settings/shaders/*.glsl")
+  set(FIRESTORM_METAL_PROGRAM_SOURCE_CONTRACTS
+      "${FIRESTORM_REPOSITORY_ROOT}/indra/newview/pipeline.cpp"
+      "${FIRESTORM_REPOSITORY_ROOT}/indra/newview/llviewershadermgr.cpp"
+      "${FIRESTORM_REPOSITORY_ROOT}/indra/llrender/llvertexbuffer.cpp"
+      "${FIRESTORM_REPOSITORY_ROOT}/indra/llrender/llvertexbuffer.h"
+      "${FIRESTORM_REPOSITORY_ROOT}/indra/llrender/llshadermgr.cpp"
+      "${FIRESTORM_REPOSITORY_ROOT}/indra/llwindow/metal/llmetalbootstrap-objc.mm"
+      "${FIRESTORM_REPOSITORY_ROOT}/indra/newview/llreflectionmapmanager.cpp"
+      "${FIRESTORM_REPOSITORY_ROOT}/indra/newview/app_settings/settings.xml"
+      )
+  set(FIRESTORM_METAL_PROGRAM_TOOL_DIRS)
+  foreach (FIRESTORM_METAL_PROGRAM_TOOL_PATH
+           "${FIRESTORM_GLSLANG_EXECUTABLE}"
+           "${FIRESTORM_SPIRV_CROSS_EXECUTABLE}"
+           "${FIRESTORM_SPIRV_OPT_EXECUTABLE}"
+           "${FIRESTORM_SPIRV_VAL_EXECUTABLE}")
+    get_filename_component(FIRESTORM_METAL_PROGRAM_TOOL_DIR
+                           "${FIRESTORM_METAL_PROGRAM_TOOL_PATH}" DIRECTORY)
+    list(APPEND FIRESTORM_METAL_PROGRAM_TOOL_DIRS
+         "${FIRESTORM_METAL_PROGRAM_TOOL_DIR}")
+  endforeach ()
+  list(REMOVE_DUPLICATES FIRESTORM_METAL_PROGRAM_TOOL_DIRS)
+  list(JOIN FIRESTORM_METAL_PROGRAM_TOOL_DIRS ":"
+       FIRESTORM_METAL_PROGRAM_TOOL_PATH)
+
+  add_custom_command(
+    OUTPUT
+      "${FIRESTORM_METAL_PROGRAM_LIBRARY}"
+      "${FIRESTORM_METAL_PROGRAM_JSON}"
+      "${FIRESTORM_METAL_PROGRAM_HEADER}"
+      "${FIRESTORM_METAL_PROGRAM_SOURCE}"
+    COMMAND "${CMAKE_COMMAND}" -E env
+            "PATH=${FIRESTORM_METAL_PROGRAM_TOOL_PATH}:$ENV{PATH}"
+            "${Python3_EXECUTABLE}"
+            "${FIRESTORM_METAL_PROGRAM_SCRIPT_DIR}/shader_spike.py"
+            --manifest "${FIRESTORM_METAL_PROGRAM_MANIFEST}"
+            --output "${FIRESTORM_METAL_PROGRAM_OUTPUT_DIR}"
+            --allow-empty-output
+    DEPENDS
+      "${FIRESTORM_METAL_PROGRAM_MANIFEST}"
+      "${FIRESTORM_METAL_PROGRAM_SCRIPT_DIR}/runtime_programs.py"
+      "${FIRESTORM_METAL_PROGRAM_SCRIPT_DIR}/shader_spike.py"
+      "${FIRESTORM_METAL_PROGRAM_SCRIPT_DIR}/spirv_locations.py"
+      "${FIRESTORM_METAL_PROGRAM_SCRIPT_DIR}/validate_metal_pipeline.mm"
+      ${FIRESTORM_METAL_PROGRAM_SHADER_INPUTS}
+      ${FIRESTORM_METAL_PROGRAM_SOURCE_CONTRACTS}
+    COMMENT "Generating and validating the declared Firestorm Metal programs"
+    VERBATIM
+    )
+  add_custom_target(firestorm_metal_declared_programs
+    DEPENDS
+      "${FIRESTORM_METAL_PROGRAM_LIBRARY}"
+      "${FIRESTORM_METAL_PROGRAM_JSON}"
+      "${FIRESTORM_METAL_PROGRAM_HEADER}"
+      "${FIRESTORM_METAL_PROGRAM_SOURCE}"
+    )
+  set_source_files_properties(
+    "${FIRESTORM_METAL_PROGRAM_LIBRARY}"
+    "${FIRESTORM_METAL_PROGRAM_HEADER}"
+    "${FIRESTORM_METAL_PROGRAM_SOURCE}"
+    PROPERTIES GENERATED TRUE
+    )
+
+  add_executable(firestorm_metal_program_library_test
+    ${FIRESTORM_METAL_CPU_TEST_EXCLUDE_FROM_ALL}
+    llmetalformat.h
+    llmetalframecontext.h
+    llmetalprogram.h
+    llmetalprogram.cpp
+    llmetalprogram-objc.mm
+    llmetalvertexlayout.h
+    llmetalvertexlayout.cpp
+    program-library-test-objc.mm
+    "${FIRESTORM_METAL_PROGRAM_HEADER}"
+    "${FIRESTORM_METAL_PROGRAM_SOURCE}"
+    )
+  add_dependencies(firestorm_metal_program_library_test
+                   firestorm_metal_declared_programs)
+  target_include_directories(firestorm_metal_program_library_test PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${FIRESTORM_METAL_PROGRAM_CATALOG_DIR}"
+    )
+  target_compile_features(firestorm_metal_program_library_test PRIVATE cxx_std_17)
+  target_compile_options(firestorm_metal_program_library_test PRIVATE
+    "$<$<COMPILE_LANGUAGE:CXX,OBJCXX>:-Wall>"
+    "$<$<COMPILE_LANGUAGE:CXX,OBJCXX>:-Wextra>"
+    "$<$<COMPILE_LANGUAGE:CXX,OBJCXX>:-Wpedantic>"
+    "$<$<COMPILE_LANGUAGE:CXX,OBJCXX>:-Werror>"
+    "$<$<COMPILE_LANGUAGE:CXX,OBJCXX>:-Wconversion>"
+    "$<$<COMPILE_LANGUAGE:CXX,OBJCXX>:-Wsign-conversion>"
+    "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
+    "$<$<COMPILE_LANGUAGE:CXX,OBJCXX>:-mmacosx-version-min=${FIRESTORM_METAL_BOOTSTRAP_MIN_MACOS}>"
+    )
+  if (NOT FIRESTORM_METAL_BOOTSTRAP_IS_STANDALONE)
+    target_compile_options(firestorm_metal_program_library_test PRIVATE
+      -Wno-overriding-option
+      )
+  endif ()
+  target_link_options(firestorm_metal_program_library_test PRIVATE
+    "-mmacosx-version-min=${FIRESTORM_METAL_BOOTSTRAP_MIN_MACOS}"
+    )
+  target_link_libraries(firestorm_metal_program_library_test PRIVATE
+    "${FIRESTORM_FOUNDATION_FRAMEWORK}"
+    "${FIRESTORM_METAL_FRAMEWORK}"
+    )
+  set_target_properties(firestorm_metal_program_library_test PROPERTIES
+    CXX_EXTENSIONS OFF
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
+    OSX_ARCHITECTURES "arm64"
+    XCODE_ATTRIBUTE_CLANG_ENABLE_OBJC_ARC YES
+    XCODE_ATTRIBUTE_MACOSX_DEPLOYMENT_TARGET
+        "${FIRESTORM_METAL_BOOTSTRAP_MIN_MACOS}"
+    )
+endif ()
+
 if (FIRESTORM_METAL_BOOTSTRAP_IS_STANDALONE)
   message(STATUS "Configuring the standalone Firestorm Metal bootstrap")
 
@@ -833,5 +1004,21 @@ if (FIRESTORM_METAL_BOOTSTRAP_IS_STANDALONE)
         LABELS "metal;gpu"
         TIMEOUT 30
       )
+    if (FIRESTORM_BUILD_METAL_PROGRAM_ARTIFACTS)
+      add_test(
+        NAME firestorm_metal_program_library
+        COMMAND "${CMAKE_COMMAND}" -E env
+                MTL_DEBUG_LAYER=1
+                MTL_SHADER_VALIDATION=1
+                "$<TARGET_FILE:firestorm_metal_program_library_test>"
+                --metallib "${FIRESTORM_METAL_PROGRAM_LIBRARY}"
+        )
+      set_tests_properties(
+        firestorm_metal_program_library
+        PROPERTIES
+          LABELS "metal;gpu;shader-artifact"
+          TIMEOUT 120
+        )
+    endif ()
   endif ()
 endif ()
