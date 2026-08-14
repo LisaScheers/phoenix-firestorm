@@ -113,6 +113,8 @@ std::optional<SamplerKey> makeSamplerKey(const SamplerDesc& descriptor, std::uin
  * A returned handle is borrowed and remains valid until this cache is
  * destroyed. Invalid requests do not affect the hit or miss counters. A valid
  * key absent from the cache is one miss, including if native allocation fails.
+ * Cache operations are not internally synchronized and must be serialized by
+ * the caller.
  */
 class MetalSamplerCache final
 {

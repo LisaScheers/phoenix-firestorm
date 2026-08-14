@@ -314,8 +314,7 @@ set_target_properties(firestorm_metal_frame_context_test PROPERTIES
       "${FIRESTORM_METAL_BOOTSTRAP_MIN_MACOS}"
   )
 
-add_executable(firestorm_metal_resource_transfer_test
-  ${FIRESTORM_METAL_CPU_TEST_EXCLUDE_FROM_ALL}
+set(FIRESTORM_METAL_RESOURCE_TEST_SOURCES
   llmetalformat.cpp
   llmetalformat.h
   llmetalframecontext-objc.mm
@@ -328,6 +327,11 @@ add_executable(firestorm_metal_resource_transfer_test
   llmetaltransfer.h
   llmetaltransientarena.cpp
   llmetaltransientarena.h
+  )
+
+add_executable(firestorm_metal_resource_transfer_test
+  ${FIRESTORM_METAL_CPU_TEST_EXCLUDE_FROM_ALL}
+  ${FIRESTORM_METAL_RESOURCE_TEST_SOURCES}
   resource-transfer-test-objc.mm
   )
 target_compile_features(firestorm_metal_resource_transfer_test PRIVATE cxx_std_17)
@@ -365,21 +369,10 @@ set_target_properties(firestorm_metal_resource_transfer_test PROPERTIES
 
 add_executable(firestorm_metal_sampler_test
   ${FIRESTORM_METAL_CPU_TEST_EXCLUDE_FROM_ALL}
-  llmetalformat.cpp
-  llmetalformat.h
-  llmetalframecontext-objc.mm
-  llmetalframecontext.h
-  llmetalframeslots.cpp
-  llmetalframeslots.h
-  llmetalresource-objc.mm
-  llmetalresource.h
+  ${FIRESTORM_METAL_RESOURCE_TEST_SOURCES}
   llmetalsampler-objc.mm
   llmetalsampler.cpp
   llmetalsampler.h
-  llmetaltransfer-objc.mm
-  llmetaltransfer.h
-  llmetaltransientarena.cpp
-  llmetaltransientarena.h
   sampler-test-objc.mm
   )
 add_dependencies(
