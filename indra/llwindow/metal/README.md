@@ -94,8 +94,9 @@ desired-state tracker or pipeline cache is introduced by this slice.
 `MetalRenderPipelineFamilyCache` fixes one generated-vertex shader pair, one
 color format, optional depth format, and one sample. Only a canonical single
 blend attachment varies between its strongly owned pipeline entries. Disabled,
-masked, and otherwise ignored blend fields share entries without introducing a
-global pipeline cache, desired-state tracker, or render-pass abstraction.
+masked, format-absent, and otherwise ignored blend fields share entries without
+introducing a global pipeline cache, desired-state tracker, or render-pass
+abstraction.
 
 ```sh
 cmake --build .build/metal-core --target \

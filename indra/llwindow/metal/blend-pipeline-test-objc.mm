@@ -136,6 +136,7 @@ constexpr std::array<std::uint8_t, ACTIVE_ROW_BYTES> EXPECTED_PIXELS{
 
 constexpr ColorWriteMask RGB_WRITE_MASK =
     ColorWriteMask::red | ColorWriteMask::green | ColorWriteMask::blue;
+constexpr PixelFormat TEST_COLOR_FORMAT = PixelFormat::rgba8_unorm;
 
 std::string toString(NSString* value)
 {
@@ -221,10 +222,11 @@ MetalRenderPipelineFamilyDesc familyDescriptor()
 }
 
 void expectEquivalent(const BlendAttachmentDesc& lhs,
-                      const BlendAttachmentDesc& rhs)
+                      const BlendAttachmentDesc& rhs,
+                      PixelFormat color_format = TEST_COLOR_FORMAT)
 {
-    const auto lhs_key = makeBlendAttachmentKey(lhs);
-    const auto rhs_key = makeBlendAttachmentKey(rhs);
+    const auto lhs_key = makeBlendAttachmentKey(lhs, color_format);
+    const auto rhs_key = makeBlendAttachmentKey(rhs, color_format);
     EXPECT(lhs_key.has_value());
     EXPECT(rhs_key.has_value());
     EXPECT(lhs_key == rhs_key);
@@ -238,7 +240,8 @@ void expectEquivalent(const BlendAttachmentDesc& lhs,
 void testKeyContract()
 {
     const BlendAttachmentDesc default_descriptor;
-    const auto default_key = makeBlendAttachmentKey(default_descriptor);
+    const auto default_key = makeBlendAttachmentKey(default_descriptor,
+                                                     TEST_COLOR_FORMAT);
     EXPECT(default_key.has_value());
     if (default_key)
     {
@@ -303,7 +306,8 @@ void testKeyContract()
     minimum_equivalent.sourceRGBFactor = BlendFactor::source_color;
     minimum_equivalent.destinationRGBFactor = BlendFactor::one_minus_source_color;
     expectEquivalent(minimum, minimum_equivalent);
-    const auto minimum_key = makeBlendAttachmentKey(minimum);
+    const auto minimum_key = makeBlendAttachmentKey(minimum,
+                                                     TEST_COLOR_FORMAT);
     EXPECT(minimum_key.has_value());
     if (minimum_key)
     {
@@ -334,34 +338,105 @@ void testKeyContract()
     BlendAttachmentDesc live = aliases_equivalent;
     BlendAttachmentDesc distinct = live;
     distinct.sourceRGBFactor = BlendFactor::source_alpha;
-    EXPECT(makeBlendAttachmentKey(live) != makeBlendAttachmentKey(distinct));
+    EXPECT(makeBlendAttachmentKey(live, TEST_COLOR_FORMAT) !=
+           makeBlendAttachmentKey(distinct, TEST_COLOR_FORMAT));
     distinct = live;
     distinct.writeMask = ColorWriteMask::red;
-    EXPECT(makeBlendAttachmentKey(live) != makeBlendAttachmentKey(distinct));
+    EXPECT(makeBlendAttachmentKey(live, TEST_COLOR_FORMAT) !=
+           makeBlendAttachmentKey(distinct, TEST_COLOR_FORMAT));
 
     BlendAttachmentDesc invalid;
     invalid.writeMask = ColorWriteMask::none;
     invalid.rgbOperation = static_cast<BlendOperation>(255);
-    EXPECT(!makeBlendAttachmentKey(invalid).has_value());
+    EXPECT(!makeBlendAttachmentKey(invalid, TEST_COLOR_FORMAT).has_value());
     invalid = BlendAttachmentDesc{};
     invalid.writeMask = ColorWriteMask::none;
     invalid.alphaOperation = static_cast<BlendOperation>(255);
-    EXPECT(!makeBlendAttachmentKey(invalid).has_value());
+    EXPECT(!makeBlendAttachmentKey(invalid, TEST_COLOR_FORMAT).has_value());
     invalid = BlendAttachmentDesc{};
     invalid.sourceRGBFactor = static_cast<BlendFactor>(255);
-    EXPECT(!makeBlendAttachmentKey(invalid).has_value());
+    EXPECT(!makeBlendAttachmentKey(invalid, TEST_COLOR_FORMAT).has_value());
     invalid = BlendAttachmentDesc{};
     invalid.destinationRGBFactor = static_cast<BlendFactor>(255);
-    EXPECT(!makeBlendAttachmentKey(invalid).has_value());
+    EXPECT(!makeBlendAttachmentKey(invalid, TEST_COLOR_FORMAT).has_value());
     invalid = BlendAttachmentDesc{};
     invalid.sourceAlphaFactor = static_cast<BlendFactor>(255);
-    EXPECT(!makeBlendAttachmentKey(invalid).has_value());
+    EXPECT(!makeBlendAttachmentKey(invalid, TEST_COLOR_FORMAT).has_value());
     invalid = BlendAttachmentDesc{};
     invalid.destinationAlphaFactor = static_cast<BlendFactor>(255);
-    EXPECT(!makeBlendAttachmentKey(invalid).has_value());
+    EXPECT(!makeBlendAttachmentKey(invalid, TEST_COLOR_FORMAT).has_value());
     invalid = BlendAttachmentDesc{};
     invalid.writeMask = static_cast<ColorWriteMask>(16);
-    EXPECT(!makeBlendAttachmentKey(invalid).has_value());
+    EXPECT(!makeBlendAttachmentKey(invalid, TEST_COLOR_FORMAT).has_value());
+
+    BlendAttachmentDesc alpha_less_all;
+    alpha_less_all.blendingEnabled = true;
+    alpha_less_all.sourceRGBFactor = BlendFactor::destination_alpha;
+    alpha_less_all.destinationRGBFactor =
+        BlendFactor::one_minus_destination_alpha;
+    alpha_less_all.alphaOperation = BlendOperation::subtract;
+    alpha_less_all.sourceAlphaFactor = BlendFactor::destination_color;
+    alpha_less_all.destinationAlphaFactor =
+        BlendFactor::one_minus_source_color;
+    BlendAttachmentDesc alpha_less_rgb = alpha_less_all;
+    alpha_less_rgb.sourceRGBFactor = BlendFactor::one;
+    alpha_less_rgb.destinationRGBFactor = BlendFactor::zero;
+    alpha_less_rgb.alphaOperation = BlendOperation::max;
+    alpha_less_rgb.sourceAlphaFactor = BlendFactor::zero;
+    alpha_less_rgb.destinationAlphaFactor = BlendFactor::one;
+    alpha_less_rgb.writeMask = RGB_WRITE_MASK;
+    expectEquivalent(alpha_less_all,
+                     alpha_less_rgb,
+                     PixelFormat::rg11b10_float);
+    BlendAttachmentDesc alpha_bearing_factor_state = alpha_less_all;
+    alpha_bearing_factor_state.sourceRGBFactor = BlendFactor::one;
+    alpha_bearing_factor_state.destinationRGBFactor = BlendFactor::zero;
+    EXPECT(makeBlendAttachmentKey(alpha_less_all, TEST_COLOR_FORMAT) !=
+           makeBlendAttachmentKey(alpha_bearing_factor_state,
+                                  TEST_COLOR_FORMAT));
+    BlendAttachmentDesc alpha_bearing_rgb_write = alpha_less_all;
+    alpha_bearing_rgb_write.writeMask = RGB_WRITE_MASK;
+    EXPECT(makeBlendAttachmentKey(alpha_less_all, TEST_COLOR_FORMAT) !=
+           makeBlendAttachmentKey(alpha_bearing_rgb_write,
+                                  TEST_COLOR_FORMAT));
+    const auto alpha_less_key = makeBlendAttachmentKey(
+        alpha_less_all,
+        PixelFormat::rg11b10_float);
+    EXPECT(alpha_less_key.has_value());
+    if (alpha_less_key)
+    {
+        EXPECT(alpha_less_key->writeMask == RGB_WRITE_MASK);
+        EXPECT(alpha_less_key->sourceRGBFactor == BlendFactor::one);
+        EXPECT(alpha_less_key->destinationRGBFactor == BlendFactor::zero);
+        EXPECT(alpha_less_key->alphaOperation == BlendOperation::add);
+        EXPECT(alpha_less_key->sourceAlphaFactor == BlendFactor::one);
+        EXPECT(alpha_less_key->destinationAlphaFactor == BlendFactor::zero);
+    }
+    BlendAttachmentDesc alpha_only_no_storage;
+    alpha_only_no_storage.blendingEnabled = true;
+    alpha_only_no_storage.rgbOperation = BlendOperation::subtract;
+    alpha_only_no_storage.sourceRGBFactor = BlendFactor::destination_alpha;
+    alpha_only_no_storage.writeMask = ColorWriteMask::alpha;
+    BlendAttachmentDesc no_write_no_storage;
+    no_write_no_storage.writeMask = ColorWriteMask::none;
+    expectEquivalent(alpha_only_no_storage,
+                     no_write_no_storage,
+                     PixelFormat::rg11b10_float);
+
+    BlendAttachmentDesc hidden_invalid;
+    hidden_invalid.writeMask = ColorWriteMask::alpha;
+    hidden_invalid.alphaOperation = static_cast<BlendOperation>(255);
+    EXPECT(!makeBlendAttachmentKey(hidden_invalid,
+                                   PixelFormat::rg11b10_float).has_value());
+    hidden_invalid = BlendAttachmentDesc{};
+    hidden_invalid.writeMask =
+        ColorWriteMask::alpha | static_cast<ColorWriteMask>(16);
+    EXPECT(!makeBlendAttachmentKey(hidden_invalid,
+                                   PixelFormat::rg11b10_float).has_value());
+    EXPECT(!makeBlendAttachmentKey(default_descriptor,
+                                   PixelFormat::depth32_float).has_value());
+    EXPECT(!makeBlendAttachmentKey(default_descriptor,
+                                   static_cast<PixelFormat>(255)).has_value());
 }
 
 void expectInvalidFamily(MetalRenderPipelineFamilyCache& cache)
@@ -441,6 +516,53 @@ void testInvalidFamilies(id<MTLDevice> device, id<MTLLibrary> library)
     EXPECT(depth_family.pipeline(BlendAttachmentDesc{}).has_value());
     EXPECT(depth_family.missCount() == 1);
     EXPECT(depth_family.entryCount() == 1);
+
+    auto alpha_less_descriptor = valid_descriptor;
+    alpha_less_descriptor.colorFormat = PixelFormat::rg11b10_float;
+    MetalRenderPipelineFamilyCache alpha_less_family(
+        (__bridge void*)device,
+        (__bridge void*)library,
+        alpha_less_descriptor);
+    EXPECT(alpha_less_family.valid());
+    BlendAttachmentDesc alpha_less_all;
+    alpha_less_all.blendingEnabled = true;
+    alpha_less_all.sourceRGBFactor = BlendFactor::destination_alpha;
+    alpha_less_all.destinationRGBFactor =
+        BlendFactor::one_minus_destination_alpha;
+    alpha_less_all.alphaOperation = BlendOperation::subtract;
+    alpha_less_all.sourceAlphaFactor = BlendFactor::destination_color;
+    BlendAttachmentDesc alpha_less_rgb = alpha_less_all;
+    alpha_less_rgb.sourceRGBFactor = BlendFactor::one;
+    alpha_less_rgb.destinationRGBFactor = BlendFactor::zero;
+    alpha_less_rgb.alphaOperation = BlendOperation::max;
+    alpha_less_rgb.sourceAlphaFactor = BlendFactor::zero;
+    alpha_less_rgb.writeMask = RGB_WRITE_MASK;
+    const auto alpha_less_all_pipeline =
+        alpha_less_family.pipeline(alpha_less_all);
+    const auto alpha_less_rgb_pipeline =
+        alpha_less_family.pipeline(alpha_less_rgb);
+    EXPECT(alpha_less_all_pipeline.has_value());
+    EXPECT(alpha_less_rgb_pipeline == alpha_less_all_pipeline);
+
+    BlendAttachmentDesc alpha_only_no_storage;
+    alpha_only_no_storage.blendingEnabled = true;
+    alpha_only_no_storage.rgbOperation = BlendOperation::subtract;
+    alpha_only_no_storage.writeMask = ColorWriteMask::alpha;
+    BlendAttachmentDesc no_write_no_storage;
+    no_write_no_storage.writeMask = ColorWriteMask::none;
+    const auto alpha_only_pipeline =
+        alpha_less_family.pipeline(alpha_only_no_storage);
+    const auto no_write_pipeline =
+        alpha_less_family.pipeline(no_write_no_storage);
+    EXPECT(alpha_only_pipeline.has_value());
+    EXPECT(no_write_pipeline == alpha_only_pipeline);
+    BlendAttachmentDesc hidden_invalid;
+    hidden_invalid.writeMask =
+        ColorWriteMask::alpha | static_cast<ColorWriteMask>(16);
+    EXPECT(!alpha_less_family.pipeline(hidden_invalid).has_value());
+    EXPECT(alpha_less_family.hitCount() == 2);
+    EXPECT(alpha_less_family.missCount() == 2);
+    EXPECT(alpha_less_family.entryCount() == 2);
 
     for (id<MTLDevice> other_device in MTLCopyAllDevices())
     {
@@ -602,19 +724,21 @@ PipelineSet preparePipelines(MetalRenderPipelineFamilyCache& cache)
     EXPECT(cache.missCount() == 13);
     EXPECT(cache.entryCount() == 13);
 
-    const auto seed_key = makeBlendAttachmentKey(seed);
+    const auto seed_key = makeBlendAttachmentKey(seed, TEST_COLOR_FORMAT);
     EXPECT(seed_key.has_value());
     for (std::size_t index = 0; index < result.cells.size(); ++index)
     {
         EXPECT(result.cells[index] != nullptr);
-        const auto key = makeBlendAttachmentKey(descriptors[index]);
+        const auto key = makeBlendAttachmentKey(descriptors[index],
+                                                 TEST_COLOR_FORMAT);
         EXPECT(key.has_value());
         EXPECT(key != seed_key);
         for (std::size_t later = index + 1;
              later < result.cells.size();
              ++later)
         {
-            EXPECT(key != makeBlendAttachmentKey(descriptors[later]));
+            EXPECT(key != makeBlendAttachmentKey(descriptors[later],
+                                                  TEST_COLOR_FORMAT));
         }
     }
 

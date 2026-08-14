@@ -100,7 +100,7 @@ struct BlendAttachmentDesc
     ColorWriteMask writeMask              = ColorWriteMask::all;
 };
 
-/** A validated blend attachment with every unobservable field canonicalized. */
+/** A validated blend attachment with every field unobservable in one color format canonicalized. */
 struct BlendAttachmentKey
 {
     bool           blendingEnabled        = false;
@@ -131,8 +131,9 @@ struct BlendAttachmentKeyHash
     std::size_t operator()(const BlendAttachmentKey& key) const noexcept;
 };
 
-/** Validates every field before canonicalizing fields that cannot affect output. */
-std::optional<BlendAttachmentKey> makeBlendAttachmentKey(const BlendAttachmentDesc& descriptor) noexcept;
+/** Validates every field and the color format before canonicalizing fields that cannot affect output. */
+std::optional<BlendAttachmentKey> makeBlendAttachmentKey(const BlendAttachmentDesc& descriptor,
+                                                         PixelFormat                color_format) noexcept;
 
 /**
  * Immutable identity shared by every entry in one pipeline family.

@@ -188,12 +188,14 @@ struct MetalRenderPipelineFamilyCache::Impl
          id<MTLLibrary>                 native_library,
          id<MTLFunction>                native_vertex,
          id<MTLFunction>                native_fragment,
+         PixelFormat                    source_color_format,
          MTLPixelFormat                 native_color_format,
          std::optional<MTLPixelFormat>  native_depth_format) :
         device(native_device),
         library(native_library),
         vertex(native_vertex),
         fragment(native_fragment),
+        sourceColorFormat(source_color_format),
         colorFormat(native_color_format),
         depthFormat(native_depth_format)
     {
@@ -203,6 +205,7 @@ struct MetalRenderPipelineFamilyCache::Impl
     __strong id<MTLLibrary> library;
     __strong id<MTLFunction> vertex;
     __strong id<MTLFunction> fragment;
+    PixelFormat sourceColorFormat;
     MTLPixelFormat colorFormat;
     std::optional<MTLPixelFormat> depthFormat;
     std::unordered_map<BlendAttachmentKey,
@@ -265,6 +268,7 @@ MetalRenderPipelineFamilyCache::MetalRenderPipelineFamilyCache(
                                    native_library,
                                    vertex,
                                    fragment,
+                                   descriptor.colorFormat,
                                    *color_format,
                                    depth_format);
 }
@@ -287,7 +291,8 @@ MetalRenderPipelineFamilyCache::pipeline(
         return std::nullopt;
     }
 
-    const auto key = makeBlendAttachmentKey(descriptor);
+    const auto key = makeBlendAttachmentKey(descriptor,
+                                            mImpl->sourceColorFormat);
     if (!key)
     {
         return std::nullopt;

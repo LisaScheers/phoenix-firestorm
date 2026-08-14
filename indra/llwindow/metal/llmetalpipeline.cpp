@@ -71,6 +71,27 @@ namespace
         return (raw & static_cast<std::uint8_t>(~all)) == 0;
     }
 
+    constexpr bool validColorFormat(PixelFormat format) noexcept
+    {
+        switch (format)
+        {
+            case PixelFormat::bgra8_unorm:
+            case PixelFormat::rgba8_unorm:
+            case PixelFormat::rgba16_unorm:
+            case PixelFormat::rgba16_float:
+            case PixelFormat::rg11b10_float:
+                return true;
+            case PixelFormat::depth32_float:
+                return false;
+        }
+        return false;
+    }
+
+    constexpr bool hasAlphaChannel(PixelFormat format) noexcept
+    {
+        return format != PixelFormat::rg11b10_float;
+    }
+
     constexpr bool ignoresFactors(BlendOperation operation) noexcept
     {
         return operation == BlendOperation::min || operation == BlendOperation::max;
@@ -94,6 +115,32 @@ namespace
             case BlendFactor::one_minus_source_alpha:
             case BlendFactor::destination_alpha:
             case BlendFactor::one_minus_destination_alpha:
+                return factor;
+        }
+        return factor;
+    }
+
+    constexpr BlendFactor canonicalRGBFactor(BlendFactor factor,
+                                             bool        color_has_alpha) noexcept
+    {
+        if (color_has_alpha)
+        {
+            return factor;
+        }
+        switch (factor)
+        {
+            case BlendFactor::destination_alpha:
+                return BlendFactor::one;
+            case BlendFactor::one_minus_destination_alpha:
+                return BlendFactor::zero;
+            case BlendFactor::zero:
+            case BlendFactor::one:
+            case BlendFactor::source_color:
+            case BlendFactor::one_minus_source_color:
+            case BlendFactor::source_alpha:
+            case BlendFactor::one_minus_source_alpha:
+            case BlendFactor::destination_color:
+            case BlendFactor::one_minus_destination_color:
                 return factor;
         }
         return factor;
@@ -136,11 +183,12 @@ std::size_t BlendAttachmentKeyHash::operator()(const BlendAttachmentKey& key) co
     return hash;
 }
 
-std::optional<BlendAttachmentKey> makeBlendAttachmentKey(const BlendAttachmentDesc& descriptor) noexcept
+std::optional<BlendAttachmentKey> makeBlendAttachmentKey(const BlendAttachmentDesc& descriptor,
+                                                         PixelFormat                color_format) noexcept
 {
     if (!valid(descriptor.rgbOperation) || !valid(descriptor.sourceRGBFactor) || !valid(descriptor.destinationRGBFactor) ||
         !valid(descriptor.alphaOperation) || !valid(descriptor.sourceAlphaFactor) || !valid(descriptor.destinationAlphaFactor) ||
-        !valid(descriptor.writeMask))
+        !valid(descriptor.writeMask) || !validColorFormat(color_format))
     {
         return std::nullopt;
     }
@@ -149,6 +197,11 @@ std::optional<BlendAttachmentKey> makeBlendAttachmentKey(const BlendAttachmentDe
         descriptor.blendingEnabled, descriptor.rgbOperation,      descriptor.sourceRGBFactor,        descriptor.destinationRGBFactor,
         descriptor.alphaOperation,  descriptor.sourceAlphaFactor, descriptor.destinationAlphaFactor, descriptor.writeMask,
     };
+    const bool color_has_alpha = hasAlphaChannel(color_format);
+    if (!color_has_alpha)
+    {
+        key.writeMask = key.writeMask & RGB_WRITE_MASK;
+    }
 
     if (!key.blendingEnabled || key.writeMask == ColorWriteMask::none)
     {
@@ -166,6 +219,14 @@ std::optional<BlendAttachmentKey> makeBlendAttachmentKey(const BlendAttachmentDe
     {
         key.sourceRGBFactor      = BlendFactor::one;
         key.destinationRGBFactor = BlendFactor::one;
+    }
+    else
+    {
+        key.sourceRGBFactor = canonicalRGBFactor(key.sourceRGBFactor,
+                                                 color_has_alpha);
+        key.destinationRGBFactor = canonicalRGBFactor(
+            key.destinationRGBFactor,
+            color_has_alpha);
     }
 
     if (!hasColorWrite(key.writeMask, ColorWriteMask::alpha))
