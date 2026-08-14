@@ -189,10 +189,11 @@ green-then-red RGBA bytes.
 
 The MRT test validates bounded ordered attachment and pipeline descriptors,
 including invalid requests that leave cache telemetry untouched. One command
-buffer renders four private 1x1 attachments with distinct formats and per-slot
-blend/write masks, then renders a separate depth-only pass. One transfer batch
-publishes raw RGBA red, BGRA cyan, RGBA magenta, BGRA green, and exact depth
-`0.25` readbacks in registration order under one submission serial.
+buffer renders four private 1x1 attachments with mixed RGBA8 and BGRA8 formats
+and per-slot blend/write masks, then renders a separate depth-only pass. One
+transfer batch publishes raw RGBA red, BGRA cyan, RGBA magenta, BGRA green,
+and exact depth `0.25` readbacks in registration order under one submission
+serial.
 
 The color/gamma test renders a linear RGBA8 constant, samples it into an sRGB
 attachment for automatic encoding, samples that attachment back into linear
