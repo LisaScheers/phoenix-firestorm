@@ -419,11 +419,13 @@ private:
     BOOL mDrawableRetryQueued;
     BOOL mSimulateDrawableUnavailableOnce;
     BOOL mSelfTestBypassVisibility;
+    BOOL mDisplayPassQueued;
 }
 
 - (instancetype)initWithRenderer:
     (std::shared_ptr<firestorm::metal::MetalRenderer>)renderer;
 - (firestorm::metal::FrameSubmission)drawMetalFrameWithError:(std::string*)error;
+- (void)requestMetalFrame;
 - (void)frameSlotDidBecomeAvailable;
 - (void)scheduleDrawableRetry;
 - (void)simulateDrawableUnavailableOnceForSelfTest;
@@ -459,8 +461,8 @@ private:
     metal_layer.displaySyncEnabled = YES;
     metal_layer.presentsWithTransaction = NO;
 
-    self.wantsLayer = YES;
     self.layer = metal_layer;
+    self.wantsLayer = YES;
     self.layerContentsRedrawPolicy = NSViewLayerContentsRedrawOnSetNeedsDisplay;
     [self updateDrawableSize];
     return self;
@@ -475,6 +477,14 @@ private:
 {
     return YES;
 }
+
+#if defined(LL_ACTIVE_METAL_VIEWER)
+- (NSView*)hitTest:(NSPoint)point
+{
+    (void)point;
+    return nil;
+}
+#endif
 
 - (BOOL)wantsUpdateLayer
 {
@@ -532,14 +542,14 @@ private:
 {
     [super setFrameSize:new_size];
     [self updateDrawableSize];
-    [self setNeedsDisplay:YES];
+    [self requestMetalFrame];
 }
 
 - (void)viewDidChangeBackingProperties
 {
     [super viewDidChangeBackingProperties];
     [self updateDrawableSize];
-    [self setNeedsDisplay:YES];
+    [self requestMetalFrame];
 }
 
 - (void)viewDidMoveToWindow
@@ -557,7 +567,7 @@ private:
                    name:NSWindowDidChangeOcclusionStateNotification
                  object:self.window];
         [self updateDrawableSize];
-        [self setNeedsDisplay:YES];
+        [self requestMetalFrame];
     }
 }
 
@@ -566,8 +576,29 @@ private:
     (void)notification;
     if (self.window.occlusionState & NSWindowOcclusionStateVisible)
     {
-        [self setNeedsDisplay:YES];
+        [self requestMetalFrame];
     }
+}
+
+- (void)requestMetalFrame
+{
+    if (mDisplayPassQueued)
+    {
+        return;
+    }
+
+    mDisplayPassQueued = YES;
+    __weak LLMetalBootstrapView* weak_self = self;
+    CFRunLoopPerformBlock(CFRunLoopGetMain(), kCFRunLoopCommonModes, ^{
+        LLMetalBootstrapView* strong_self = weak_self;
+        if (!strong_self)
+        {
+            return;
+        }
+        strong_self->mDisplayPassQueued = NO;
+        [strong_self updateLayer];
+    });
+    CFRunLoopWakeUp(CFRunLoopGetMain());
 }
 
 - (void)frameSlotDidBecomeAvailable
@@ -575,7 +606,7 @@ private:
     if (mFrameRetryPending)
     {
         mFrameRetryPending = NO;
-        [self setNeedsDisplay:YES];
+        [self requestMetalFrame];
     }
 }
 
@@ -709,17 +740,62 @@ void* LLMetalBootstrap::nativeView() const noexcept
     return (__bridge void*)mImpl->view;
 }
 
+bool LLMetalBootstrap::attachToNativeView(
+    void* native_view,
+    std::string* error) noexcept
+{
+    if (![NSThread isMainThread])
+    {
+        assignError(error, "the Metal bootstrap view must be attached on the AppKit main thread");
+        return false;
+    }
+
+    NSView* host_view = (__bridge NSView*)native_view;
+    if (!host_view)
+    {
+        assignError(error, "the Metal bootstrap input host is null");
+        return false;
+    }
+
+    LLMetalBootstrapView* view = mImpl->view;
+    [view removeFromSuperview];
+    view.frame = host_view.bounds;
+    view.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+    [host_view addSubview:view];
+    [view updateDrawableSize];
+    [view requestMetalFrame];
+    if (error)
+    {
+        error->clear();
+    }
+    return true;
+}
+
+void LLMetalBootstrap::detachFromNativeView() noexcept
+{
+    LLMetalBootstrapView* view = mImpl->view;
+    if ([NSThread isMainThread])
+    {
+        [view removeFromSuperview];
+        return;
+    }
+
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        [view removeFromSuperview];
+    });
+}
+
 void LLMetalBootstrap::requestFrame() noexcept
 {
     LLMetalBootstrapView* view = mImpl->view;
     if ([NSThread isMainThread])
     {
-        [view setNeedsDisplay:YES];
+        [view requestMetalFrame];
         return;
     }
 
     dispatch_async(dispatch_get_main_queue(), ^{
-        [view setNeedsDisplay:YES];
+        [view requestMetalFrame];
     });
 }
 
@@ -761,6 +837,18 @@ std::uint64_t LLMetalBootstrap::completedFrameCount() const noexcept
 std::uint64_t LLMetalBootstrap::presentedFrameCount() const noexcept
 {
     return mImpl->renderer->presentedFrameCount();
+}
+
+std::uint32_t LLMetalBootstrap::drawableWidth() const noexcept
+{
+    CAMetalLayer* layer = (CAMetalLayer*)mImpl->view.layer;
+    return static_cast<std::uint32_t>(std::max(0.0, layer.drawableSize.width));
+}
+
+std::uint32_t LLMetalBootstrap::drawableHeight() const noexcept
+{
+    CAMetalLayer* layer = (CAMetalLayer*)mImpl->view.layer;
+    return static_cast<std::uint32_t>(std::max(0.0, layer.drawableSize.height));
 }
 
 std::string LLMetalBootstrap::capabilityReport() const

@@ -1869,6 +1869,12 @@ if (DARWIN)
     PROPERTIES
     SKIP_PRECOMPILE_HEADERS TRUE
   )
+  if (FIRESTORM_BUILD_ACTIVE_METAL_VIEWER)
+    # This bootstrap never enters the file-picker path. Keep the legacy source
+    # buildable at the Phase 1 deployment floor without broad warning changes.
+    set_property(SOURCE llfilepicker_mac.mm APPEND PROPERTY
+      COMPILE_OPTIONS "-Wno-deprecated-declarations")
+  endif ()
 
   # This should be compiled with the viewer.
   LIST(APPEND viewer_SOURCE_FILES llappdelegate-objc.mm)
@@ -2287,6 +2293,38 @@ add_executable(${VIEWER_BINARY_NAME}
     MACOSX_BUNDLE
     ${viewer_SOURCE_FILES}
     )
+
+if (DARWIN AND FIRESTORM_BUILD_ACTIVE_METAL_VIEWER)
+  if (NOT FIRESTORM_ACTIVE_METAL_LIBRARY)
+    message(FATAL_ERROR "The active Metal viewer shader library was not configured")
+  endif ()
+  target_sources(${VIEWER_BINARY_NAME} PRIVATE
+    "${FIRESTORM_ACTIVE_METAL_LIBRARY}"
+    )
+  set_source_files_properties(
+    "${FIRESTORM_ACTIVE_METAL_LIBRARY}"
+    PROPERTIES
+    GENERATED TRUE
+    MACOSX_PACKAGE_LOCATION Resources
+    )
+  add_dependencies(${VIEWER_BINARY_NAME}
+    firestorm_metal_bootstrap_shader_library
+    )
+  target_compile_definitions(${VIEWER_BINARY_NAME} PRIVATE
+    LL_ACTIVE_METAL_VIEWER=1
+    )
+  target_compile_options(${VIEWER_BINARY_NAME} PRIVATE
+    "-mmacosx-version-min=${FIRESTORM_ACTIVE_METAL_MIN_MACOS}"
+    )
+  target_link_options(${VIEWER_BINARY_NAME} PRIVATE
+    "-mmacosx-version-min=${FIRESTORM_ACTIVE_METAL_MIN_MACOS}"
+    )
+  set_target_properties(${VIEWER_BINARY_NAME} PROPERTIES
+    OSX_ARCHITECTURES "arm64"
+    XCODE_ATTRIBUTE_MACOSX_DEPLOYMENT_TARGET
+        "${FIRESTORM_ACTIVE_METAL_MIN_MACOS}"
+    )
+endif ()
 
 # add package files
 file(GLOB EVENT_HOST_SCRIPT_GLOB_LIST

@@ -111,6 +111,7 @@ attributedStringInfo getSegments(NSAttributedString *str)
 
 @implementation LLOpenGLView
 
+#if !defined(LL_ACTIVE_METAL_VIEWER)
 - (unsigned long)getVramSize
 {
     CGLRendererInfoObj info = 0;
@@ -134,6 +135,7 @@ attributedStringInfo getSegments(NSAttributedString *str)
 
     return (unsigned long)vram_megabytes; // return value is in megabytes.
 }
+#endif
 
 - (void)viewDidMoveToWindow
 {
@@ -212,7 +214,7 @@ attributedStringInfo getSegments(NSAttributedString *str)
     return [self initWithFrame:[self bounds] withSamples:samples andVsync:vsync];
 }
 
-#if LL_DARWIN
+#if LL_DARWIN && !defined(LL_ACTIVE_METAL_VIEWER)
 // For setView and opengl deprecation
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
@@ -227,6 +229,11 @@ attributedStringInfo getSegments(NSAttributedString *str)
     [self registerForDraggedTypes:[NSArray arrayWithObject:NSPasteboardTypeURL]];
     //[self initWithFrame:frame]; <FS> Fix some bad refcount code and squash some potential leakiness; by Cinder Roxley
 
+#if defined(LL_ACTIVE_METAL_VIEWER)
+    (void)samples;
+    (void)vsync;
+    return self;
+#else
     // Initialize with a default "safe" pixel format that will work with versions dating back to OS X 10.6.
     // Any specialized pixel formats, i.e. a core profile pixel format, should be initialized through rebuildContextWithFormat.
     // 10.7 and 10.8 don't really care if we're defining a profile or not.  If we don't explicitly request a core or legacy profile, it'll always assume a legacy profile (for compatibility reasons).
@@ -288,8 +295,10 @@ attributedStringInfo getSegments(NSAttributedString *str)
     }
 
     return self;
+#endif
 }
 
+#if !defined(LL_ACTIVE_METAL_VIEWER)
 - (BOOL) rebuildContext
 {
     return [self rebuildContextWithFormat:[self pixelFormat]];
@@ -332,6 +341,7 @@ attributedStringInfo getSegments(NSAttributedString *str)
     NSOpenGLPixelFormat *fmt = [self pixelFormat];
     return (CGLPixelFormatObj*)[fmt CGLPixelFormatObj];
 }
+#endif
 
 // Various events can be intercepted by our view, thus not reaching our window.
 // Intercept these events, and pass them to the window as needed. - Geenz
@@ -595,16 +605,24 @@ attributedStringInfo getSegments(NSAttributedString *str)
 
 - (NSRange)markedRange
 {
+#if defined(LL_ACTIVE_METAL_VIEWER)
+    return NSMakeRange(NSNotFound, 0);
+#else
     int range[2];
     getPreeditMarkedRange(&range[0], &range[1]);
     return NSMakeRange(range[0], range[1]);
+#endif
 }
 
 - (NSRange)selectedRange
 {
+#if defined(LL_ACTIVE_METAL_VIEWER)
+    return NSMakeRange(NSNotFound, 0);
+#else
     int range[2];
     getPreeditSelectionRange(&range[0], &range[1]);
     return NSMakeRange(range[0], range[1]);
+#endif
 }
 
 - (void)setMarkedText:(id)aString selectedRange:(NSRange)selectedRange replacementRange:(NSRange)replacementRange

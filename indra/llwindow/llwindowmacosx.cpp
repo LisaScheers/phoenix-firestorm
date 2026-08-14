@@ -182,6 +182,7 @@ LLWindowMacOSX::LLWindowMacOSX(LLWindowCallbacks* callbacks,
 
     // Ignore use_gl for now, only used for drones on PC
     mWindow = NULL;
+    mGLView = NULL;
     mContext = NULL;
     mPixelFormat = NULL;
     mDisplay = CGMainDisplayID();
@@ -215,7 +216,7 @@ LLWindowMacOSX::LLWindowMacOSX(LLWindowCallbacks* callbacks,
 
     // Stash an object pointer for OSMessageBox()
     gWindowImplementation = this;
-    // Create the GL context and set it up for windowed or fullscreen, as appropriate.
+    // Create the selected compile-time presentation surface.
     if(createContext(x, y, width, height, 32, fullscreen, enable_vsync))
     {
         if(mWindow != NULL)
@@ -223,6 +224,9 @@ LLWindowMacOSX::LLWindowMacOSX(LLWindowCallbacks* callbacks,
             makeWindowOrderFront(mWindow);
         }
 
+#if defined(LL_ACTIVE_METAL_VIEWER)
+        setArrowCursor();
+#else
         if (!gGLManager.initGL())
         {
             setupFailure(
@@ -239,12 +243,15 @@ LLWindowMacOSX::LLWindowMacOSX(LLWindowCallbacks* callbacks,
         //initCursors();
         initCursors(mUseLegacyCursors); // <FS:LO> Legacy cursor setting from main program
         setCursor( UI_CURSOR_ARROW );
+#endif
 
         allowLanguageTextInput(NULL, false);
     }
 
     mCallbacks = callbacks;
+#if !defined(LL_ACTIVE_METAL_VIEWER)
     stop_glerror();
+#endif
 
 
 }
@@ -747,6 +754,45 @@ bool LLWindowMacOSX::createContext(int x, int y, int width, int height, int bits
         mWindow = getMainAppWindow();
     }
 
+#if defined(LL_ACTIVE_METAL_VIEWER)
+    if (!mWindow)
+    {
+        LL_WARNS("MetalBootstrap") << "The native viewer window is unavailable" << LL_ENDL;
+        return false;
+    }
+
+    if (!mMetalBootstrap)
+    {
+        setCocoaMetalWindowContentSize(mWindow, width, height);
+        mGLView = createCocoaInputView(mWindow);
+        if (!mGLView)
+        {
+            LL_WARNS("MetalBootstrap") << "Could not create the Cocoa input host" << LL_ENDL;
+            return false;
+        }
+
+        const std::string metallib_path = getBundledMetalLibraryPath();
+        std::string error;
+        mMetalBootstrap = firestorm::metal::LLMetalBootstrap::create(
+            metallib_path, error);
+        if (!mMetalBootstrap ||
+            !mMetalBootstrap->attachToNativeView(mGLView, &error))
+        {
+            LL_WARNS("MetalBootstrap") << "Could not initialize the active Metal viewer: "
+                                        << error << LL_ENDL;
+            mMetalBootstrap.reset();
+            return false;
+        }
+
+        LL_INFOS("MetalBootstrap") << mMetalBootstrap->capabilityReport() << LL_ENDL;
+    }
+
+    setupInputWindow(mWindow, mGLView);
+    makeFirstResponder(mWindow, mGLView);
+    mRefreshRate = DEFAULT_REFRESH_RATE;
+    mMetalBootstrap->requestFrame();
+    return true;
+#else
     if(mContext == NULL)
     {
         // Our OpenGL view is already defined within SecondLife.xib.
@@ -817,6 +863,7 @@ bool LLWindowMacOSX::createContext(int x, int y, int width, int height, int bits
     makeFirstResponder(mWindow, mGLView);
 
     return true;
+#endif
 }
 
 
@@ -829,6 +876,25 @@ bool LLWindowMacOSX::switchContext(bool fullscreen, const LLCoordScreen &size, b
 
 void LLWindowMacOSX::destroyContext()
 {
+#if defined(LL_ACTIVE_METAL_VIEWER)
+    if (mMetalBootstrap)
+    {
+        mMetalBootstrap->detachFromNativeView();
+        mMetalBootstrap.reset();
+    }
+    if (mGLView != NULL)
+    {
+        removeGLView(mGLView);
+        mGLView = NULL;
+    }
+    if (mWindow != NULL)
+    {
+        NSWindowRef dead_window = mWindow;
+        mWindow = NULL;
+        closeWindow(dead_window);
+    }
+    return;
+#else
     if (!mContext)
     {
         // We don't have a context
@@ -871,7 +937,7 @@ void LLWindowMacOSX::destroyContext()
         mWindow = NULL;
         closeWindow(dead_window);
     }
-
+#endif
 }
 
 LLWindowMacOSX::~LLWindowMacOSX()
@@ -1101,12 +1167,98 @@ bool LLWindowMacOSX::setSizeImpl(const LLCoordWindow size)
 
 void LLWindowMacOSX::swapBuffers()
 {
+#if defined(LL_ACTIVE_METAL_VIEWER)
+    requestMetalBootstrapFrame();
+#else
     CGLFlushDrawable(mContext);
+#endif
 }
+
+#if defined(LL_ACTIVE_METAL_VIEWER)
+void LLWindowMacOSX::requestMetalBootstrapFrame() noexcept
+{
+    if (mMetalBootstrap)
+    {
+        mMetalBootstrap->requestFrame();
+    }
+}
+
+firestorm::metal::FrameSubmission LLWindowMacOSX::submitMetalBootstrapFrame(
+    std::string& error) noexcept
+{
+    if (!mMetalBootstrap)
+    {
+        error = "the Metal bootstrap is unavailable";
+        return firestorm::metal::FrameSubmission::failed;
+    }
+
+    if (!prepareCocoaMetalWindow(mWindow, mGLView))
+    {
+        error = "the Metal bootstrap window is not visible for self-test";
+        return firestorm::metal::FrameSubmission::drawable_unavailable;
+    }
+    if (mMetalBootstrap->submittedFrameCount() > 0)
+    {
+        error.clear();
+        return firestorm::metal::FrameSubmission::submitted;
+    }
+    return mMetalBootstrap->drawFrame(&error);
+}
+
+bool LLWindowMacOSX::resizeMetalBootstrapWindow(
+    float width_delta, float height_delta) noexcept
+{
+    return mWindow && resizeCocoaMetalWindow(
+        mWindow, width_delta, height_delta);
+}
+
+bool LLWindowMacOSX::waitForMetalBootstrapFrame(
+    std::chrono::milliseconds timeout,
+    std::string& error) noexcept
+{
+    return mMetalBootstrap &&
+        mMetalBootstrap->waitForIdle(timeout, &error) &&
+        mMetalBootstrap->waitForPresent(timeout, &error);
+}
+
+U64 LLWindowMacOSX::getMetalBootstrapSubmittedFrameCount() const noexcept
+{
+    return mMetalBootstrap ? mMetalBootstrap->submittedFrameCount() : 0;
+}
+
+U64 LLWindowMacOSX::getMetalBootstrapCompletedFrameCount() const noexcept
+{
+    return mMetalBootstrap ? mMetalBootstrap->completedFrameCount() : 0;
+}
+
+U64 LLWindowMacOSX::getMetalBootstrapPresentedFrameCount() const noexcept
+{
+    return mMetalBootstrap ? mMetalBootstrap->presentedFrameCount() : 0;
+}
+
+void LLWindowMacOSX::getMetalBootstrapDrawableSize(
+    U32& width, U32& height) const noexcept
+{
+    width = mMetalBootstrap ? mMetalBootstrap->drawableWidth() : 0;
+    height = mMetalBootstrap ? mMetalBootstrap->drawableHeight() : 0;
+}
+
+std::string LLWindowMacOSX::getMetalBootstrapCapabilityReport() const
+{
+    return mMetalBootstrap ? mMetalBootstrap->capabilityReport() : std::string{};
+}
+
+bool LLWindowMacOSX::runMetalBootstrapInputSelfTest(std::string& report)
+{
+    return mGLView && runCocoaInputSelfTest(mGLView, report);
+}
+#endif
 
 void LLWindowMacOSX::restoreGLContext()
 {
+#if !defined(LL_ACTIVE_METAL_VIEWER)
     CGLSetCurrentContext(mContext);
+#endif
 }
 
 F32 LLWindowMacOSX::getGamma()
@@ -2413,7 +2565,11 @@ bool LLWindowMacOSX::getInputDevices(U32 device_type_filter,
     io_iterator_t io_iter = 0;
 
     // create an IO object iterator
-    result = IOServiceGetMatchingServices( kIOMasterPortDefault, device_dict_ref, &io_iter );
+#if defined(LL_ACTIVE_METAL_VIEWER)
+    result = IOServiceGetMatchingServices(kIOMainPortDefault, device_dict_ref, &io_iter);
+#else
+    result = IOServiceGetMatchingServices(kIOMasterPortDefault, device_dict_ref, &io_iter);
+#endif
     if ( kIOReturnSuccess != result )
     {
         LL_WARNS("Joystick") << "IOServiceGetMatchingServices failed" << LL_ENDL;

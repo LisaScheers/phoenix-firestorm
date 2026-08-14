@@ -64,6 +64,14 @@ public:
     /** Returns an unretained NSView pointer. */
     void* nativeView() const noexcept;
 
+    /**
+     * Installs the Metal view as an event-transparent, autoresizing child of
+     * the supplied NSView. Used only by the active viewer bootstrap so the
+     * established Cocoa input host remains first responder.
+     */
+    bool attachToNativeView(void* native_view, std::string* error = nullptr) noexcept;
+    void detachFromNativeView() noexcept;
+
     /** Requests an event-driven AppKit redraw. */
     void requestFrame() noexcept;
 
@@ -83,6 +91,8 @@ public:
     std::uint64_t submittedFrameCount() const noexcept;
     std::uint64_t completedFrameCount() const noexcept;
     std::uint64_t presentedFrameCount() const noexcept;
+    std::uint32_t drawableWidth() const noexcept;
+    std::uint32_t drawableHeight() const noexcept;
     std::string capabilityReport() const;
 
 private:

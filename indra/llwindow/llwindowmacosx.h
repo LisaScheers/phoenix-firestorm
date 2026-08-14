@@ -35,6 +35,11 @@
 
 #include <ApplicationServices/ApplicationServices.h>
 #include <OpenGL/OpenGL.h>
+#if defined(LL_ACTIVE_METAL_VIEWER)
+#include "llmetalbootstrap.h"
+#include <chrono>
+#include <memory>
+#endif
 
 // AssertMacros.h does bad things.
 #include "fix_macros.h"
@@ -139,6 +144,22 @@ public:
 
     bool allowsLanguageInput() { return mLanguageTextInputAllowed; }
 
+#if defined(LL_ACTIVE_METAL_VIEWER)
+    bool isMetalBootstrapReady() const noexcept { return bool(mMetalBootstrap); }
+    void requestMetalBootstrapFrame() noexcept;
+    firestorm::metal::FrameSubmission submitMetalBootstrapFrame(
+        std::string& error) noexcept;
+    bool resizeMetalBootstrapWindow(float width_delta, float height_delta) noexcept;
+    bool waitForMetalBootstrapFrame(std::chrono::milliseconds timeout,
+                                    std::string& error) noexcept;
+    U64 getMetalBootstrapSubmittedFrameCount() const noexcept;
+    U64 getMetalBootstrapCompletedFrameCount() const noexcept;
+    U64 getMetalBootstrapPresentedFrameCount() const noexcept;
+    void getMetalBootstrapDrawableSize(U32& width, U32& height) const noexcept;
+    std::string getMetalBootstrapCapabilityReport() const;
+    bool runMetalBootstrapInputSelfTest(std::string& report);
+#endif
+
     //create a new GL context that shares a namespace with this Window's main GL context and make it current on the current thread
     // returns a pointer to be handed back to destroySharedConext/makeContextCurrent
     void* createSharedContext() override;
@@ -211,6 +232,9 @@ protected:
     GLViewRef           mGLView;
     CGLContextObj       mContext;
     CGLPixelFormatObj   mPixelFormat;
+#if defined(LL_ACTIVE_METAL_VIEWER)
+    std::unique_ptr<firestorm::metal::LLMetalBootstrap> mMetalBootstrap;
+#endif
     CGDirectDisplayID   mDisplay;
 
     LLRect      mOldMouseClip;  // Screen rect to which the mouse cursor was globally constrained before we changed it in clipMouse()

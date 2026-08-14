@@ -33,6 +33,11 @@ void cleanupViewer();
 void infos(const std::string& message);
 void clearDumpLogsDir();
 
+#if defined(LL_ACTIVE_METAL_VIEWER)
+bool metalBootstrapSelfTestRequested();
+int metalBootstrapSelfTestExitStatus();
+#endif
+
 // This struct is malleable; it only serves as a way to convey a number of
 // fields from llappviewermacosx.cpp's CrashMetadata_instance() function to the
 // consuming functions in llappdelegate-objc.mm. As long as both those sources

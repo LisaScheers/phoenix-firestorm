@@ -25,7 +25,7 @@
  */
 
 #import "llappdelegate-objc.h"
-#if defined(LL_BUGSPLAT)
+#if defined(LL_BUGSPLAT) && !defined(LL_ACTIVE_METAL_VIEWER)
 #include <boost/filesystem.hpp>
 #include <vector>
 @import CrashReporter;
@@ -68,7 +68,7 @@
     // initialized, "played back" into whatever handlers have been set up.
     constructViewer();
 
-#if defined(LL_BUGSPLAT)
+#if defined(LL_BUGSPLAT) && !defined(LL_ACTIVE_METAL_VIEWER)
     infos("bugsplat setup");
     // Engage BugSplat *before* calling initViewer() to handle
     // any crashes during initialization.
@@ -97,10 +97,19 @@
     {
         // Set up recurring calls to oneFrame (repeating timer with timeout 0)
         // until applicationShouldTerminate.
-        frameTimer = [NSTimer scheduledTimerWithTimeInterval:0.0 target:self
+#if defined(LL_ACTIVE_METAL_VIEWER)
+        const NSTimeInterval frame_interval = 1.0 / 60.0;
+#else
+        const NSTimeInterval frame_interval = 0.0;
+#endif
+        frameTimer = [NSTimer scheduledTimerWithTimeInterval:frame_interval target:self
                               selector:@selector(oneFrame) userInfo:nil repeats:YES];
     } else {
+#if defined(LL_ACTIVE_METAL_VIEWER)
+        exit(EXIT_FAILURE);
+#else
         exit(0);
+#endif
     }
 
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(languageUpdated) name:@"NSTextInputContextKeyboardSelectionDidChangeNotification" object:nil];
@@ -165,6 +174,15 @@
     {
         // Once pumpMainLoop() reports that we're done, cancel frameTimer:
         // stop the repetitive calls.
+#if defined(LL_ACTIVE_METAL_VIEWER)
+        if (metalBootstrapSelfTestRequested())
+        {
+            [frameTimer invalidate];
+            frameTimer = nil;
+            cleanupViewer();
+            exit(metalBootstrapSelfTestExitStatus());
+        }
+#endif
         [frameTimer release];
         [[LLApplication sharedApplication] terminate:self];
     }
@@ -226,13 +244,13 @@
 
 - (void) setBugsplatValue:(nullable NSString *)value forAttribute:(NSString *)attribute
 {
-#if defined(LL_BUGSPLAT)
+#if defined(LL_BUGSPLAT) && !defined(LL_ACTIVE_METAL_VIEWER)
     //[[BugSplat shared] setValue:@"Value of not so plain <value> Attribute" forAttribute:@"NotSoPlainAttribute"];
     [[BugSplat shared] setValue:value forAttribute:attribute];
 #endif // LL_BUGSPLAT
 }
 
-#if defined(LL_BUGSPLAT)
+#if defined(LL_BUGSPLAT) && !defined(LL_ACTIVE_METAL_VIEWER)
 
 - (void)bugSplatWillSendCrashReport:(BugSplat *)bugSplat
 {
@@ -388,7 +406,7 @@ struct AttachmentInfo
     return attachments;
 }
 
-#endif // LL_BUGSPLAT
+#endif // LL_BUGSPLAT && !LL_ACTIVE_METAL_VIEWER
 
 @end
 
