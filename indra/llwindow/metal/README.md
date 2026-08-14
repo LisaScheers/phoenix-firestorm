@@ -54,7 +54,32 @@ API and GPU validation are enabled by the registered test.
 cmake -S indra/llwindow/metal -B .build/metal-core -G Ninja \
   -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
 cmake --build .build/metal-core --target firestorm_metal_offscreen_test
-ctest --test-dir .build/metal-core --output-on-failure
+(cd .build/metal-core && \
+  ctest -R '^firestorm_metal_offscreen_orientation$' --output-on-failure)
+```
+
+## Resource core contracts
+
+The resource core keeps Metal objects behind an Objective-C-free C++17
+boundary. Its checked layout helper covers the formats exercised by the
+current shader and attachment work, accepts the transfer path's row alignment,
+and rejects invalid extents or arithmetic overflow without assigning row
+orientation.
+
+`MetalFrameContext` owns exactly three `MTLStorageModeShared` transient
+buffers. Generation-tagged leases prevent reuse while the GPU can still read a
+slot. Resources retired against a lease remain alive until that exact command
+buffer completes, and successful completion publishes a global submission
+serial only after cleanup makes the slot available again. The runtime path
+does not wait for GPU completion; bounded waits exist only in the focused test.
+
+```sh
+cmake --build .build/metal-core --target \
+  firestorm_metal_resource_layout_test \
+  firestorm_metal_frame_context_test
+(cd .build/metal-core && \
+  ctest -R '^firestorm_metal_(resource_layout|frame_context)$' \
+    --output-on-failure)
 ```
 
 ## Firestorm build integration
@@ -73,13 +98,20 @@ developer app is excluded from the default build and can be built explicitly:
 cmake --build BUILD_DIR --target firestorm_metal_bootstrap
 ```
 
-The CPU contract test is also excluded from an embedded default build. It can
-be requested explicitly without registering a test in the viewer's CTest tree:
+The contract tests are also excluded from an embedded default build. They can
+be requested explicitly without registering tests in the viewer's CTest tree:
 
 ```sh
-cmake --build BUILD_DIR --target firestorm_metal_frame_contracts_test
+cmake --build BUILD_DIR --target \
+  firestorm_metal_frame_contracts_test \
+  firestorm_metal_resource_layout_test \
+  firestorm_metal_frame_context_test
 # Single-config generators:
 BUILD_DIR/llwindow/metal/firestorm_metal_frame_contracts_test
+BUILD_DIR/llwindow/metal/firestorm_metal_resource_layout_test
+BUILD_DIR/llwindow/metal/firestorm_metal_frame_context_test
 # Multi-config generators such as Xcode:
 BUILD_DIR/llwindow/metal/CONFIG/firestorm_metal_frame_contracts_test
+BUILD_DIR/llwindow/metal/CONFIG/firestorm_metal_resource_layout_test
+BUILD_DIR/llwindow/metal/CONFIG/firestorm_metal_frame_context_test
 ```
