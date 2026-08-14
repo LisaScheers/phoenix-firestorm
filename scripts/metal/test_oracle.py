@@ -12,6 +12,7 @@ import subprocess
 import tempfile
 import unittest
 import zlib
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import patch
 
@@ -104,6 +105,8 @@ class OracleCorpusTest(unittest.TestCase):
         slot = next(value for value in manifest["slots"] if value["id"] == slot_id)
         slot["definition_status"] = "ready"
         slot["definition_blockers"] = []
+        slot["machine_contract_status"] = "ready"
+        slot["machine_contract_blockers"] = []
         display = slot["conditions"]["display"]
         display["width_px"] = 4
         display["height_px"] = 3
@@ -150,6 +153,29 @@ class OracleCorpusTest(unittest.TestCase):
         environment = slot["conditions"]["environment"]
         if environment["mode"] != "not_applicable":
             environment["asset_id"] = "test-environment-asset"
+        conditions = slot["conditions"]
+        slot["machine_contract"] = {
+            "schema": 1,
+            "kind": "typed_runtime_state_v1",
+            "expected": {
+                "runtime_settings": copy.deepcopy(conditions["settings"]),
+                "camera": copy.deepcopy(conditions["camera"]),
+                "environment": copy.deepcopy(conditions["environment"]),
+                "display": copy.deepcopy(conditions["display"]),
+                "fixture_state": {
+                    "schema": 1,
+                    "driver": "test_fixture_driver_v1",
+                    "fixture_id": content["fixture_id"],
+                    "fixture_revision": content["fixture_revision"],
+                    "asset_manifest_sha256": content["asset_manifest_sha256"],
+                    "state": {"semantic_state": f"{slot_id}-ready"},
+                },
+            },
+            "producer": {
+                "instrumentation_commit": "a" * 40,
+                "executable_sha256": "b" * 64,
+            },
+        }
         oracle.validate_manifest(manifest, fixture_root)
         return manifest, fixture_root
 
@@ -170,43 +196,126 @@ class OracleCorpusTest(unittest.TestCase):
             )
         return session_path
 
-    def _measurements(self, session_path: Path, slot_id: str) -> Path:
-        request = json.loads(
-            (session_path.parent / "requests" / f"{slot_id}.json").read_text(
-                encoding="utf-8"
+    def _acquisition(
+        self,
+        manifest: dict[str, object],
+        session_path: Path,
+        slot_id: str,
+        captures: list[Path],
+        supporting: dict[str, Path] | None = None,
+    ) -> tuple[Path, Path]:
+        session = json.loads(session_path.read_text(encoding="utf-8"))
+        slot = next(value for value in session["slots"] if value["id"] == slot_id)
+        request_path = session_path.parent / "requests" / f"{slot_id}.json"
+        request_bytes = request_path.read_bytes()
+        directory = session_path.parent / f"{slot_id}-acquisition"
+        directory.mkdir()
+        capture_entries = []
+        for index, source in enumerate(captures, start=1):
+            encoded = source.read_bytes()
+            destination = directory / f"capture-{index}.png"
+            destination.write_bytes(encoded)
+            capture_entries.append(
+                {
+                    "ordinal": index,
+                    "frame_serial": 900 + index,
+                    "capture_state_generation": 7,
+                    "path": destination.name,
+                    "bytes": len(encoded),
+                    "sha256": hashlib.sha256(encoded).hexdigest(),
+                    "transaction_id": f"capture-{index}",
+                }
             )
-        )
-        measurements = request["measurement_template"]
-        for processor in ("cpu", "gpu"):
-            measurements["frame_timing_ms"][processor].update(
-                {"mean": 1.5, "p50": 1.0, "p95": 2.0, "p99": 3.0}
+        supporting_entries = []
+        for role, source in sorted((supporting or {}).items()):
+            encoded = source.read_bytes()
+            destination = directory / f"supporting-{role}{source.suffix}"
+            destination.write_bytes(encoded)
+            supporting_entries.append(
+                {
+                    "role": role,
+                    "frame_serial": 901,
+                    "capture_state_generation": 7,
+                    "path": destination.name,
+                    "bytes": len(encoded),
+                    "sha256": hashlib.sha256(encoded).hexdigest(),
+                    "transaction_id": "capture-1",
+                }
             )
-        measurements["memory_mib"].update(
+        samples = [
             {
-                "process_resident_start": 1000.0,
-                "process_resident_peak": 1100.0,
-                "gpu_allocated_start": 500.0,
-                "gpu_allocated_peak": 600.0,
+                "frame_serial": 301 + index,
+                "capture_state_generation": 7,
+                "cpu_ms": 1.0 + index / 1000,
+                "gpu_ms": 0.5 + index / 1000,
+                "process_resident_bytes": 1024 * 1024 * 100 + index,
+                "renderer_accounted_gpu_bytes": 1024 * 1024 * 50 + index,
             }
-        )
-        measurements["hardware_os"].update(
-            {
+            for index in range(600)
+        ]
+        receipt = {
+            "schema": 1,
+            "kind": "firestorm-opengl-oracle-acquisition",
+            "binding": {
+                "session_id": session["session_id"],
+                "slot_id": slot_id,
+                "corpus_sha256": session["corpus_sha256"],
+                "request_sha256": hashlib.sha256(request_bytes).hexdigest(),
+                "definition_sha256": slot["definition_sha256"],
+                "conditions_sha256": slot["conditions_sha256"],
+                "baseline_commit": manifest["baseline"]["commit"],
+            },
+            "producer": {
+                "protocol": "firestorm-opengl-oracle-capture-v1",
+                "instrumentation_commit": "a" * 40,
+                "executable_sha256": "b" * 64,
+                "process_run_id": "test-process-run",
+            },
+            "scopes": {
+                "cpu_timing": "display_to_pre_swap_wall_v1",
+                "gpu_timing": "gl_time_elapsed_frame_v1",
+                "gpu_memory": "renderer_accounted_v1",
+            },
+            "hardware_os": {
                 "machine_model": "Mac-Test",
                 "cpu": "Test CPU",
                 "gpu": "Test GPU",
                 "ram_mib": 16384,
+                "os_name": "macOS",
                 "os_version": "test",
+                "architecture": "arm64",
                 "display_id": "test-display",
+                "display_scale": slot["conditions"]["display"]["scale_factor"],
                 "opengl_vendor": "test-vendor",
                 "opengl_renderer": "test-renderer",
                 "opengl_version": "test-version",
-                "viewer_build": measurements["baseline_commit"],
+                "viewer_build": "a" * 40,
                 "xcode_build": "test-xcode",
-            }
-        )
-        path = session_path.parent / f"{slot_id}-measurements.json"
-        path.write_text(json.dumps(measurements), encoding="utf-8")
-        return path
+            },
+            "capture_state_generation": 7,
+            "observed_state": slot["machine_contract"]["expected"],
+            "warmup_frames": list(range(1, 301)),
+            "samples": samples,
+            "captures": capture_entries,
+            "supporting_artifacts": supporting_entries,
+        }
+        receipt_path = directory / "acquisition.json"
+        receipt_bytes = json.dumps(
+            receipt, separators=(",", ":"), sort_keys=True
+        ).encode()
+        receipt_path.write_bytes(receipt_bytes)
+        review = {
+            "schema": 1,
+            "kind": "firestorm-opengl-oracle-known-quirks-review",
+            "session_id": session["session_id"],
+            "slot_id": slot_id,
+            "acquisition_sha256": hashlib.sha256(receipt_bytes).hexdigest(),
+            "reviewed_at": "2026-08-14T00:00:00Z",
+            "quirks": [],
+        }
+        review_path = directory / "known-quirks.json"
+        review_path.write_text(json.dumps(review), encoding="utf-8")
+        return receipt_path, review_path
 
     def _captures(
         self,
@@ -221,6 +330,64 @@ class OracleCorpusTest(unittest.TestCase):
             captures.append(capture)
         return captures
 
+    def _measurement_document(
+        self,
+        manifest: dict[str, object],
+        session_path: Path,
+        slot_id: str,
+    ) -> dict[str, object]:
+        session = json.loads(session_path.read_text(encoding="utf-8"))
+        slot = next(value for value in session["slots"] if value["id"] == slot_id)
+        rgba = bytes((0, 0, 0, 255)) * (
+            slot["conditions"]["display"]["width_px"]
+            * slot["conditions"]["display"]["height_px"]
+        )
+        metrics = {"mean": 1.0, "p50": 1.0, "p95": 1.0, "p99": 1.0}
+        return {
+            "schema": 2,
+            "slot_id": slot_id,
+            "baseline_commit": manifest["baseline"]["commit"],
+            "conditions_sha256": slot["conditions_sha256"],
+            "self_variance": oracle._self_variance([rgba] * 3),
+            "frame_timing_ms": {
+                "sample_count": 600,
+                "aggregate_method": "sorted_linear_interpolation_v1",
+                "cpu_scope": "display_to_pre_swap_wall_v1",
+                "gpu_scope": "gl_time_elapsed_frame_v1",
+                "cpu": copy.deepcopy(metrics),
+                "gpu": copy.deepcopy(metrics),
+            },
+            "memory_mib": {
+                "process_resident_start": 100.0,
+                "process_resident_peak": 110.0,
+                "renderer_accounted_gpu_start": 50.0,
+                "renderer_accounted_gpu_peak": 60.0,
+                "gpu_memory_method": "renderer_accounted_v1",
+                "gpu_memory_provenance": copy.deepcopy(
+                    manifest["capture_contract"][
+                        "renderer_accounted_gpu_memory_sources"
+                    ]
+                ),
+            },
+            "hardware_os": {
+                "machine_model": "Mac-Test",
+                "cpu": "Test CPU",
+                "gpu": "Test GPU",
+                "ram_mib": 16384,
+                "os_name": "macOS",
+                "os_version": "test",
+                "architecture": "arm64",
+                "display_id": "test-display",
+                "display_scale": slot["conditions"]["display"]["scale_factor"],
+                "opengl_vendor": "test-vendor",
+                "opengl_renderer": "test-renderer",
+                "opengl_version": "test-version",
+                "viewer_build": "a" * 40,
+                "xcode_build": "test-xcode",
+            },
+            "known_quirks": [],
+        }
+
     def _record(
         self,
         manifest: dict[str, object],
@@ -230,16 +397,32 @@ class OracleCorpusTest(unittest.TestCase):
         captures: list[Path],
         supporting: dict[str, Path] | None = None,
     ) -> None:
+        acquisition, quirks = self._acquisition(
+            manifest, session_path, slot_id, captures, supporting
+        )
         with patch.object(oracle, "_git_errors", return_value=[]):
-            oracle.record_slot(
+            oracle.record_acquisition(
                 manifest,
                 session_path,
                 slot_id,
-                captures,
-                self._measurements(session_path, slot_id),
-                supporting,
+                acquisition,
+                quirks,
                 fixture_root,
             )
+
+    def _rewrite_acquisition(
+        self,
+        acquisition: Path,
+        quirks: Path,
+        mutate: Callable[[dict[str, object]], None],
+    ) -> None:
+        receipt = json.loads(acquisition.read_text(encoding="utf-8"))
+        mutate(receipt)
+        encoded = json.dumps(receipt, separators=(",", ":"), sort_keys=True).encode()
+        acquisition.write_bytes(encoded)
+        review = json.loads(quirks.read_text(encoding="utf-8"))
+        review["acquisition_sha256"] = hashlib.sha256(encoded).hexdigest()
+        quirks.write_text(json.dumps(review), encoding="utf-8")
 
     def test_manifest_pins_baseline_contract_and_required_coverage(self) -> None:
         self.assertEqual(
@@ -249,6 +432,10 @@ class OracleCorpusTest(unittest.TestCase):
         self.assertEqual(
             self.manifest["capture_contract"]["self_variance_method"],
             "linear_srgb_rgba8_all_pairs_v1",
+        )
+        self.assertEqual(
+            self.manifest["capture_contract"]["renderer_accounted_gpu_memory_sources"],
+            list(oracle.GPU_MEMORY_SOURCES),
         )
         tools = next(
             slot for slot in self.manifest["slots"] if slot["id"] == "tools_readback"
@@ -273,6 +460,102 @@ class OracleCorpusTest(unittest.TestCase):
                 settings = slot["conditions"]["settings"]
                 self.assertIs(settings["RenderHDREnabled"], True)
                 self.assertIs(settings["RenderEnableEmissiveBuffer"], False)
+
+    def test_manifest_matches_the_capture_controller_platform_contract(self) -> None:
+        mutations = (
+            ("repetitions", 4, "must equal 3"),
+            ("warmup_frames", 299, "must equal 300"),
+            ("measurement_frames", 601, "must equal 600"),
+        )
+        for field, value, message in mutations:
+            with self.subTest(field=field):
+                manifest = copy.deepcopy(self.manifest)
+                manifest["capture_contract"][field] = value
+                with self.assertRaisesRegex(oracle.OracleError, message):
+                    oracle.validate_manifest(manifest)
+        for field, value, message in (
+            ("os", "Linux", "must be macOS"),
+            ("architecture", "x86_64", "must be arm64"),
+        ):
+            with self.subTest(field=field):
+                manifest = copy.deepcopy(self.manifest)
+                manifest["capture_contract"]["platform"][field] = value
+                with self.assertRaisesRegex(oracle.OracleError, message):
+                    oracle.validate_manifest(manifest)
+        manifest = copy.deepcopy(self.manifest)
+        manifest["slots"][0]["conditions"]["display"]["window_mode"] = "fullscreen"
+        with self.assertRaisesRegex(oracle.OracleError, "windowed_no_occlusion"):
+            oracle.validate_manifest(manifest)
+
+        manifest = copy.deepcopy(self.manifest)
+        manifest["capture_contract"]["renderer_accounted_gpu_memory_sources"] = [
+            "authoritative OpenGL allocation total"
+        ]
+        with self.assertRaisesRegex(oracle.OracleError, "canonical.*provenance"):
+            oracle.validate_manifest(manifest)
+
+        for name, mutate, message in (
+            (
+                "baseline-extra",
+                lambda value: value["baseline"].__setitem__("extra", True),
+                "baseline has invalid fields",
+            ),
+            (
+                "capture-extra",
+                lambda value: value["capture_contract"].__setitem__("extra", True),
+                "capture_contract has invalid fields",
+            ),
+            (
+                "platform-extra",
+                lambda value: value["capture_contract"]["platform"].__setitem__(
+                    "extra", True
+                ),
+                "capture_contract.platform has invalid fields",
+            ),
+        ):
+            with self.subTest(name=name):
+                manifest = copy.deepcopy(self.manifest)
+                mutate(manifest)
+                with self.assertRaisesRegex(oracle.OracleError, message):
+                    oracle.validate_manifest(manifest)
+
+        for notes, message in (
+            ("not-an-array", "capture_contract.notes must be an array"),
+            ([1], "notes must contain only non-empty strings"),
+            ([""], "notes must contain only non-empty strings"),
+        ):
+            with self.subTest(notes=notes):
+                manifest = copy.deepcopy(self.manifest)
+                manifest["capture_contract"]["notes"] = notes
+                with self.assertRaisesRegex(oracle.OracleError, message):
+                    oracle.validate_manifest(manifest)
+
+        manifest = copy.deepcopy(self.manifest)
+        manifest["capture_contract"]["notes"] = []
+        oracle.validate_manifest(manifest)
+
+    def test_login_ui_uses_loginpage_without_force_modal(self) -> None:
+        login = next(
+            slot for slot in self.manifest["slots"] if slot["id"] == "login_ui"
+        )
+        settings = login["conditions"]["settings"]
+        self.assertEqual(settings["LoginPage"], oracle.LOGIN_PAGE_URL)
+        self.assertEqual(settings["ForceLoginURL"], "")
+        requirements = login["conditions"]["content"]["requirements"]
+        self.assertTrue(any("--loginpage" in item for item in requirements))
+        self.assertTrue(
+            any("WarnForceLoginURL is never opened" in item for item in requirements)
+        )
+
+        for setting, value, message in (
+            ("LoginPage", "http://127.0.0.1/wrong", "--loginpage fixture contract"),
+            ("ForceLoginURL", oracle.LOGIN_PAGE_URL, "WarnForceLoginURL"),
+        ):
+            with self.subTest(setting=setting):
+                manifest = copy.deepcopy(self.manifest)
+                manifest["slots"][0]["conditions"]["settings"][setting] = value
+                with self.assertRaisesRegex(oracle.OracleError, message):
+                    oracle.validate_manifest(manifest)
 
     def test_initialize_and_verify_keep_missing_evidence_honest(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -307,13 +590,344 @@ class OracleCorpusTest(unittest.TestCase):
             with self.assertRaisesRegex(
                 oracle.OracleError, "slot login_ui evidence is invalid"
             ):
-                oracle.record_slot(
+                oracle.record_acquisition(
                     self.manifest,
                     session_path,
                     "login_ui",
-                    [],
                     directory / "missing.json",
+                    directory / "missing-quirks.json",
                 )
+
+    def test_blocked_requests_are_explicit_and_rejected_before_receipt_access(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            session_path = self._initialize(directory)
+            request = json.loads(
+                (directory / "requests/login_ui.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(request["schema"], 2)
+            self.assertEqual(request["kind"], "firestorm-opengl-oracle-request")
+            self.assertEqual(request["definition_status"], "blocked")
+            self.assertEqual(request["machine_contract_status"], "blocked")
+            self.assertIsNone(request["machine_contract"])
+            self.assertTrue(request["machine_contract_blockers"])
+            self.assertEqual(
+                request["conditions"]["settings"]["LoginPage"],
+                oracle.LOGIN_PAGE_URL,
+            )
+            self.assertEqual(request["conditions"]["settings"]["ForceLoginURL"], "")
+            with self.assertRaisesRegex(
+                oracle.OracleError, "blocked by its corpus definition"
+            ):
+                oracle.record_acquisition(
+                    self.manifest,
+                    session_path,
+                    "login_ui",
+                    directory / "does-not-exist.json",
+                    directory / "does-not-exist-quirks.json",
+                )
+
+    def test_self_test_contract_cannot_become_corpus_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            manifest, fixture_root = self._ready_manifest(directory)
+            contract = manifest["slots"][0]["machine_contract"]
+            contract["kind"] = "capture_self_test_v1"
+            with self.assertRaisesRegex(
+                oracle.OracleError, "must be typed_runtime_state_v1"
+            ):
+                oracle.validate_manifest(manifest, fixture_root)
+
+            contract["kind"] = "typed_runtime_state_v1"
+            conditions = manifest["slots"][0]["conditions"]
+            contract["expected"] = {
+                "runtime_settings": conditions["settings"],
+                "display": conditions["display"],
+            }
+            with self.assertRaisesRegex(
+                oracle.OracleError, "machine_contract.expected has invalid fields"
+            ):
+                oracle.validate_manifest(manifest, fixture_root)
+
+    def test_acquisition_receipt_is_closed_typed_hashed_and_contiguous(self) -> None:
+        cases: tuple[tuple[str, Callable[[dict[str, object]], None], str], ...] = (
+            (
+                "extra-key",
+                lambda receipt: receipt.__setitem__("operator_claim", True),
+                "invalid fields",
+            ),
+            (
+                "boolean-timing",
+                lambda receipt: receipt["samples"][0].__setitem__("cpu_ms", True),
+                "must be a number",
+            ),
+            (
+                "missing-frame",
+                lambda receipt: receipt["samples"].pop(),
+                "exactly 600",
+            ),
+            (
+                "noncontiguous-frame",
+                lambda receipt: receipt["samples"][1].__setitem__("frame_serial", 9999),
+                "contiguous frames",
+            ),
+            (
+                "artifact-hash",
+                lambda receipt: receipt["captures"][0].__setitem__("sha256", "0" * 64),
+                "size or SHA-256",
+            ),
+            (
+                "unpinned-producer",
+                lambda receipt: receipt["producer"].__setitem__(
+                    "instrumentation_commit", "c" * 40
+                ),
+                "pinned machine contract",
+            ),
+            (
+                "path-escape",
+                lambda receipt: receipt["captures"][0].__setitem__(
+                    "path", "../capture-1.png"
+                ),
+                "safe relative path",
+            ),
+            (
+                "case-aliased-path",
+                lambda receipt: receipt["captures"][0].__setitem__(
+                    "path", "Capture-1.png"
+                ),
+                "canonical safe relative path",
+            ),
+            (
+                "reserved-path-parent",
+                lambda receipt: receipt["captures"][0].__setitem__(
+                    "path", "receipt.json/capture.png"
+                ),
+                "canonical safe relative path",
+            ),
+        )
+        for name, mutate, message in cases:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as temporary:
+                directory = Path(temporary)
+                manifest, fixture_root = self._ready_manifest(directory)
+                session_path = self._initialize(directory, manifest, fixture_root)
+                acquisition, quirks = self._acquisition(
+                    manifest,
+                    session_path,
+                    "login_ui",
+                    self._captures(directory),
+                )
+                self._rewrite_acquisition(acquisition, quirks, mutate)
+                with self.assertRaisesRegex(oracle.OracleError, message):
+                    oracle.record_acquisition(
+                        manifest,
+                        session_path,
+                        "login_ui",
+                        acquisition,
+                        quirks,
+                        fixture_root,
+                    )
+
+    def test_acquisition_rejects_nonstandard_and_duplicate_json(
+        self,
+    ) -> None:
+        with self.assertRaisesRegex(oracle.OracleError, "non-standard number NaN"):
+            oracle._read_strict_json_bytes(b'{"value":NaN}', "receipt")
+        with self.assertRaisesRegex(oracle.OracleError, "cannot read receipt"):
+            oracle._read_strict_json_bytes("{}".encode("utf-16"), "receipt")
+
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            manifest, fixture_root = self._ready_manifest(directory)
+            session_path = self._initialize(directory, manifest, fixture_root)
+            acquisition, quirks = self._acquisition(
+                manifest,
+                session_path,
+                "login_ui",
+                self._captures(directory),
+            )
+            encoded = acquisition.read_bytes()
+            duplicate = b'{"schema":1,' + encoded[1:]
+            acquisition.write_bytes(duplicate)
+            review = json.loads(quirks.read_text(encoding="utf-8"))
+            review["acquisition_sha256"] = hashlib.sha256(duplicate).hexdigest()
+            quirks.write_text(json.dumps(review), encoding="utf-8")
+            with self.assertRaisesRegex(oracle.OracleError, "duplicate key schema"):
+                oracle.record_acquisition(
+                    manifest,
+                    session_path,
+                    "login_ui",
+                    acquisition,
+                    quirks,
+                    fixture_root,
+                )
+
+    def test_review_binding_and_artifact_symlinks_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            manifest, fixture_root = self._ready_manifest(directory)
+            session_path = self._initialize(directory, manifest, fixture_root)
+            acquisition, quirks = self._acquisition(
+                manifest,
+                session_path,
+                "login_ui",
+                self._captures(directory),
+            )
+            review = json.loads(quirks.read_text(encoding="utf-8"))
+            review["acquisition_sha256"] = "0" * 64
+            quirks.write_text(json.dumps(review), encoding="utf-8")
+            with self.assertRaisesRegex(oracle.OracleError, "not bound"):
+                oracle.record_acquisition(
+                    manifest,
+                    session_path,
+                    "login_ui",
+                    acquisition,
+                    quirks,
+                    fixture_root,
+                )
+
+        if hasattr(os, "mkfifo"):
+            with tempfile.TemporaryDirectory() as temporary:
+                directory = Path(temporary)
+                manifest, fixture_root = self._ready_manifest(directory)
+                session_path = self._initialize(directory, manifest, fixture_root)
+                acquisition, quirks = self._acquisition(
+                    manifest,
+                    session_path,
+                    "login_ui",
+                    self._captures(directory),
+                )
+                fifo = acquisition.parent / "capture.fifo"
+                os.mkfifo(fifo)
+                self._rewrite_acquisition(
+                    acquisition,
+                    quirks,
+                    lambda value: value["captures"][0].__setitem__("path", fifo.name),
+                )
+                with self.assertRaisesRegex(oracle.OracleError, "real regular file"):
+                    oracle.record_acquisition(
+                        manifest,
+                        session_path,
+                        "login_ui",
+                        acquisition,
+                        quirks,
+                        fixture_root,
+                    )
+
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            manifest, fixture_root = self._ready_manifest(directory)
+            session_path = self._initialize(directory, manifest, fixture_root)
+            acquisition, quirks = self._acquisition(
+                manifest,
+                session_path,
+                "login_ui",
+                self._captures(directory),
+            )
+            receipt = json.loads(acquisition.read_text(encoding="utf-8"))
+            source = acquisition.parent / receipt["captures"][0]["path"]
+            target = acquisition.parent / "aliased.png"
+            target.symlink_to(source)
+            self._rewrite_acquisition(
+                acquisition,
+                quirks,
+                lambda value: value["captures"][0].__setitem__("path", target.name),
+            )
+            with self.assertRaisesRegex(oracle.OracleError, "symbolic link"):
+                oracle.record_acquisition(
+                    manifest,
+                    session_path,
+                    "login_ui",
+                    acquisition,
+                    quirks,
+                    fixture_root,
+                )
+
+    def test_tools_receipt_requires_one_same_frame_transaction(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            manifest, fixture_root = self._ready_manifest(directory, "tools_readback")
+            session_path = self._initialize(directory, manifest, fixture_root)
+            acquisition, quirks = self._acquisition(
+                manifest,
+                session_path,
+                "tools_readback",
+                self._captures(directory),
+                self._tools_artifacts(directory),
+            )
+
+            def split_transaction(receipt: dict[str, object]) -> None:
+                depth = next(
+                    artifact
+                    for artifact in receipt["supporting_artifacts"]
+                    if artifact["role"] == "raw_depth"
+                )
+                depth["frame_serial"] = 902
+                depth["transaction_id"] = "capture-2"
+
+            self._rewrite_acquisition(acquisition, quirks, split_transaction)
+            with self.assertRaisesRegex(oracle.OracleError, "share one transaction"):
+                oracle.record_acquisition(
+                    manifest,
+                    session_path,
+                    "tools_readback",
+                    acquisition,
+                    quirks,
+                    fixture_root,
+                )
+
+    def test_capture_transactions_are_unique_and_bind_tools_png(self) -> None:
+        for case in ("reused_transaction", "mismatched_tools_png"):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as temporary:
+                directory = Path(temporary)
+                manifest, fixture_root = self._ready_manifest(
+                    directory, "tools_readback"
+                )
+                session_path = self._initialize(directory, manifest, fixture_root)
+                acquisition, quirks = self._acquisition(
+                    manifest,
+                    session_path,
+                    "tools_readback",
+                    self._captures(directory),
+                    self._tools_artifacts(directory),
+                )
+                if case == "reused_transaction":
+                    self._rewrite_acquisition(
+                        acquisition,
+                        quirks,
+                        lambda receipt: receipt["captures"][1].__setitem__(
+                            "transaction_id", "capture-1"
+                        ),
+                    )
+                    expected = "transactions must be unique"
+                else:
+                    receipt = json.loads(acquisition.read_text(encoding="utf-8"))
+                    first = receipt["captures"][0]
+                    capture_path = acquisition.parent / first["path"]
+                    encoded = _png_bytes(pixel=(255, 0, 0, 255))
+                    capture_path.write_bytes(encoded)
+                    first["bytes"] = len(encoded)
+                    first["sha256"] = hashlib.sha256(encoded).hexdigest()
+                    receipt_bytes = json.dumps(
+                        receipt, separators=(",", ":"), sort_keys=True
+                    ).encode()
+                    acquisition.write_bytes(receipt_bytes)
+                    review = json.loads(quirks.read_text(encoding="utf-8"))
+                    review["acquisition_sha256"] = hashlib.sha256(
+                        receipt_bytes
+                    ).hexdigest()
+                    quirks.write_text(json.dumps(review), encoding="utf-8")
+                    expected = "PNG for its capture transaction"
+                with self.assertRaisesRegex(oracle.OracleError, expected):
+                    oracle.record_acquisition(
+                        manifest,
+                        session_path,
+                        "tools_readback",
+                        acquisition,
+                        quirks,
+                        fixture_root,
+                    )
 
     def test_initialize_rejects_requests_symlink_without_overwriting_outside(
         self,
@@ -341,6 +955,38 @@ class OracleCorpusTest(unittest.TestCase):
             self.assertEqual(list(outside.iterdir()), [sentinel])
             self.assertFalse(session_path.exists())
 
+    def test_record_rejects_artifact_directory_symlink_without_writing_outside(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            manifest, fixture_root = self._ready_manifest(directory)
+            session_path = self._initialize(directory, manifest, fixture_root)
+            acquisition, quirks = self._acquisition(
+                manifest,
+                session_path,
+                "login_ui",
+                self._captures(directory),
+            )
+            outside = directory / "outside"
+            outside.mkdir()
+            artifacts = directory / "artifacts"
+            artifacts.mkdir()
+            (artifacts / "login_ui").symlink_to(outside, target_is_directory=True)
+            with (
+                patch.object(oracle, "_git_errors", return_value=[]),
+                self.assertRaisesRegex(oracle.OracleError, "symbolic links"),
+            ):
+                oracle.record_acquisition(
+                    manifest,
+                    session_path,
+                    "login_ui",
+                    acquisition,
+                    quirks,
+                    fixture_root,
+                )
+            self.assertEqual(list(outside.iterdir()), [])
+
     def test_record_computes_and_verifies_capture_bound_variance(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
@@ -359,6 +1005,18 @@ class OracleCorpusTest(unittest.TestCase):
             self.assertAlmostEqual(variance["rmse"], math.sqrt(1 / 3), places=11)
             self.assertEqual(variance["max_absolute_error"], 1.0)
             self.assertEqual(variance["identical_pixel_fraction"], 0.0)
+            timing = login["evidence"]["frame_timing_ms"]
+            self.assertEqual(timing["sample_count"], 600)
+            self.assertEqual(timing["cpu"]["mean"], 1.2995)
+            self.assertEqual(timing["gpu"]["p50"], 0.7995)
+            memory = login["evidence"]["memory_mib"]
+            self.assertEqual(memory["process_resident_start"], 100.0)
+            self.assertEqual(memory["renderer_accounted_gpu_start"], 50.0)
+            self.assertEqual(memory["gpu_memory_method"], "renderer_accounted_v1")
+            self.assertEqual(
+                memory["gpu_memory_provenance"],
+                manifest["capture_contract"]["renderer_accounted_gpu_memory_sources"],
+            )
             errors = oracle.verify_session(
                 manifest, session_path, check_git=False, fixture_root=fixture_root
             )
@@ -370,7 +1028,10 @@ class OracleCorpusTest(unittest.TestCase):
                 manifest, session_path, check_git=False, fixture_root=fixture_root
             )
             self.assertTrue(
-                any("self-variance does not match" in error for error in errors)
+                any(
+                    "self_variance is not acquisition-derived" in error
+                    for error in errors
+                )
             )
 
     def test_self_variance_is_order_independent_and_linearized(self) -> None:
@@ -422,38 +1083,62 @@ class OracleCorpusTest(unittest.TestCase):
             session_path = self._initialize(directory, manifest, fixture_root)
             captures = self._captures(directory)
             supporting = self._tools_artifacts(directory)
-            measurement_path = self._measurements(session_path, "tools_readback")
-            original_capture = captures[0].read_bytes()
-            original_color = supporting["raw_color"].read_bytes()
-            real_reader = oracle._read_file_bytes
+            acquisition, quirks = self._acquisition(
+                manifest,
+                session_path,
+                "tools_readback",
+                captures,
+                supporting,
+            )
+            receipt = json.loads(acquisition.read_text(encoding="utf-8"))
+            capture_path = (
+                acquisition.parent / receipt["captures"][0]["path"]
+            ).resolve()
+            color_entry = next(
+                value
+                for value in receipt["supporting_artifacts"]
+                if value["role"] == "raw_color"
+            )
+            color_path = (acquisition.parent / color_entry["path"]).resolve()
+            original_capture = capture_path.read_bytes()
+            original_color = color_path.read_bytes()
+            real_reader = oracle._read_relative_regular_file_once
             mutated: set[Path] = set()
 
             def racing_reader(
-                path: Path, field: str, maximum_bytes: int | None = None
+                root: Path,
+                relative: Path,
+                field: str,
+                maximum_bytes: int | None = None,
             ) -> bytes:
-                encoded = real_reader(path, field, maximum_bytes)
-                if path == captures[0] and path not in mutated:
+                encoded = real_reader(root, relative, field, maximum_bytes)
+                path = (root / relative).resolve()
+                if path == capture_path and path not in mutated:
                     mutated.add(path)
                     path.write_bytes(_png_bytes(pixel=(255, 0, 0, 255)))
-                elif path == supporting["raw_color"] and path not in mutated:
+                elif path == color_path and path not in mutated:
                     mutated.add(path)
                     path.write_bytes(b"Z" * 48)
                 return encoded
 
             with (
-                patch.object(oracle, "_read_file_bytes", side_effect=racing_reader),
+                patch.object(
+                    oracle,
+                    "_read_relative_regular_file_once",
+                    side_effect=racing_reader,
+                ),
                 patch.object(oracle, "_git_errors", return_value=[]),
             ):
-                oracle.record_slot(
+                oracle.record_acquisition(
                     manifest,
                     session_path,
                     "tools_readback",
-                    captures,
-                    measurement_path,
-                    supporting,
+                    acquisition,
+                    quirks,
                     fixture_root,
                 )
 
+            self.assertEqual(mutated, {capture_path, color_path})
             session = json.loads(session_path.read_text(encoding="utf-8"))
             slot = next(
                 value for value in session["slots"] if value["id"] == "tools_readback"
@@ -579,7 +1264,9 @@ class OracleCorpusTest(unittest.TestCase):
             content["asset_manifest_sha256"] = hashlib.sha256(
                 duplicate_bytes
             ).hexdigest()
-            with self.assertRaisesRegex(oracle.OracleError, "duplicate asset paths"):
+            with self.assertRaisesRegex(
+                oracle.OracleError, "canonical safe relative path"
+            ):
                 oracle.validate_manifest(manifest, fixture_root)
 
             fixture_path.write_bytes(original_fixture)
@@ -684,6 +1371,16 @@ class OracleCorpusTest(unittest.TestCase):
             with self.assertRaisesRegex(oracle.OracleError, "symbolic link"):
                 oracle.validate_manifest(manifest, fixture_root)
 
+        if hasattr(os, "mkfifo"):
+            with tempfile.TemporaryDirectory() as temporary:
+                directory = Path(temporary)
+                manifest, fixture_root = self._ready_manifest(directory)
+                asset = fixture_root / "login_ui/asset.bin"
+                asset.unlink()
+                os.mkfifo(asset)
+                with self.assertRaisesRegex(oracle.OracleError, "real regular file"):
+                    oracle.validate_manifest(manifest, fixture_root)
+
     def test_render_target_settings_are_canonical_and_explicit(self) -> None:
         for setting, invalid, expected_text in (
             ("RenderHDREnabled", False, "must be pinned to true"),
@@ -724,12 +1421,12 @@ class OracleCorpusTest(unittest.TestCase):
                 "login_ui: session definition does not match the manifest", errors
             )
             with self.assertRaisesRegex(oracle.OracleError, "invalid session"):
-                oracle.record_slot(
+                oracle.record_acquisition(
                     self.manifest,
                     session_path,
                     "login_ui",
-                    [],
                     directory / "missing.json",
+                    directory / "missing-quirks.json",
                 )
 
     def test_session_binding_uses_strict_canonical_json_and_recomputed_hashes(
@@ -758,12 +1455,12 @@ class OracleCorpusTest(unittest.TestCase):
             )
             self.assertIn("login_ui: session conditions hash is invalid", errors)
             with self.assertRaisesRegex(oracle.OracleError, "invalid session"):
-                oracle.record_slot(
+                oracle.record_acquisition(
                     self.manifest,
                     session_path,
                     "login_ui",
-                    [],
                     directory / "missing.json",
+                    directory / "missing-quirks.json",
                 )
 
     def test_schema_versions_require_json_integers(self) -> None:
@@ -806,12 +1503,10 @@ class OracleCorpusTest(unittest.TestCase):
                 ),
             )
 
-            measurements = json.loads(
-                self._measurements(session_path, "login_ui").read_text(encoding="utf-8")
+            measurements = self._measurement_document(
+                manifest, session_path, "login_ui"
             )
             measurements["schema"] = True
-            rgba = bytes((0, 0, 0, 255)) * 12
-            measurements["self_variance"] = oracle._self_variance([rgba] * 3)
             login = next(slot for slot in session["slots"] if slot["id"] == "login_ui")
             with self.assertRaisesRegex(oracle.OracleError, "measurements.schema"):
                 oracle.validate_measurements(
@@ -819,6 +1514,7 @@ class OracleCorpusTest(unittest.TestCase):
                     login,
                     manifest["baseline"]["commit"],
                     manifest["capture_contract"],
+                    "a" * 40,
                 )
 
     def test_measurements_reject_nonfinite_numbers_and_unpinned_build(self) -> None:
@@ -826,12 +1522,11 @@ class OracleCorpusTest(unittest.TestCase):
             directory = Path(temporary)
             manifest, fixture_root = self._ready_manifest(directory)
             session_path = self._initialize(directory, manifest, fixture_root)
-            measurement_path = self._measurements(session_path, "login_ui")
-            measurements = json.loads(measurement_path.read_text(encoding="utf-8"))
+            measurements = self._measurement_document(
+                manifest, session_path, "login_ui"
+            )
             session = json.loads(session_path.read_text(encoding="utf-8"))
             login = next(slot for slot in session["slots"] if slot["id"] == "login_ui")
-            rgba = bytes((0, 0, 0, 255)) * 12
-            measurements["self_variance"] = oracle._self_variance([rgba] * 3)
             fractional_schema = copy.deepcopy(measurements)
             fractional_schema["self_variance"]["comparison_count"] = 3.0
             with self.assertRaisesRegex(oracle.OracleError, "must be an integer"):
@@ -840,6 +1535,7 @@ class OracleCorpusTest(unittest.TestCase):
                     login,
                     manifest["baseline"]["commit"],
                     manifest["capture_contract"],
+                    "a" * 40,
                 )
             wrong_sample_count = copy.deepcopy(measurements)
             wrong_sample_count["frame_timing_ms"]["sample_count"] = 601
@@ -849,6 +1545,7 @@ class OracleCorpusTest(unittest.TestCase):
                     login,
                     manifest["baseline"]["commit"],
                     manifest["capture_contract"],
+                    "a" * 40,
                 )
             for nonfinite in (float("nan"), float("inf"), float("-inf")):
                 with self.subTest(nonfinite=nonfinite):
@@ -860,21 +1557,23 @@ class OracleCorpusTest(unittest.TestCase):
                             login,
                             manifest["baseline"]["commit"],
                             manifest["capture_contract"],
+                            "a" * 40,
                         )
-            measurements["hardware_os"]["viewer_build"] = "not-the-baseline"
-            with self.assertRaisesRegex(oracle.OracleError, "pinned baseline commit"):
+            measurements["hardware_os"]["viewer_build"] = "not-instrumentation"
+            with self.assertRaisesRegex(oracle.OracleError, "instrumentation commit"):
                 oracle.validate_measurements(
                     measurements,
                     login,
                     manifest["baseline"]["commit"],
                     manifest["capture_contract"],
+                    "a" * 40,
                 )
 
     def _tools_artifacts(self, directory: Path) -> dict[str, Path]:
         snapshot = directory / "snapshot.png"
-        _write_png(snapshot, pixel=(10, 20, 30), color_type=2)
+        _write_png(snapshot, pixel=(0, 0, 0, 255), color_type=6)
         raw_color = directory / "frame.bgra"
-        raw_color.write_bytes(bytes((30, 20, 10, 255)) * 12)
+        raw_color.write_bytes(bytes((0, 0, 0, 255)) * 12)
         raw_depth = directory / "frame.depth"
         raw_depth.write_bytes(struct.pack("<12f", *([0.5] * 12)))
         return {
@@ -928,7 +1627,7 @@ class OracleCorpusTest(unittest.TestCase):
 
     def test_tools_artifacts_reject_empty_truncated_and_invalid_depth(self) -> None:
         cases = {
-            "empty_png": "is not a PNG",
+            "empty_png": "supporting_artifacts\\[0\\].bytes must be an integer >= 1",
             "short_color": "has 47 bytes; expected 48",
             "long_color": "exceeds the 48-byte limit",
             "invalid_depth": "contains an invalid depth value",
@@ -954,14 +1653,14 @@ class OracleCorpusTest(unittest.TestCase):
                         struct.pack("<12f", float("nan"), *([0.5] * 11))
                     )
                 elif case == "color_mismatch":
-                    supporting["raw_color"].write_bytes(bytes((31, 20, 10, 255)) * 12)
+                    supporting["raw_color"].write_bytes(bytes((1, 0, 0, 255)) * 12)
                 else:
                     _write_png(
                         supporting["local_snapshot"],
-                        pixel=(10, 20, 30, 128),
+                        pixel=(0, 0, 0, 128),
                         color_type=6,
                     )
-                    supporting["raw_color"].write_bytes(bytes((30, 20, 10, 127)) * 12)
+                    supporting["raw_color"].write_bytes(bytes((0, 0, 0, 127)) * 12)
                 with self.assertRaisesRegex(oracle.OracleError, expected):
                     self._record(
                         manifest,
@@ -1009,19 +1708,8 @@ class OracleCorpusTest(unittest.TestCase):
                 manifest, session_path, check_git=False, fixture_root=fixture_root
             )
             self.assertTrue(
-                any("roles are invalid or duplicated" in error for error in errors)
+                any("invalid machine acquisition" in error for error in errors)
             )
-            self.assertTrue(
-                any("escapes its slot directory" in error for error in errors)
-            )
-            self.assertTrue(
-                any(
-                    "supporting artifact paths must be unique" in error
-                    for error in errors
-                )
-            )
-            self.assertTrue(any("contract mismatch" in error for error in errors))
-            self.assertTrue(any("artifact hash mismatch" in error for error in errors))
 
     def test_manifest_rejects_incomplete_feature_coverage(self) -> None:
         for missing_feature in ("readback", "hud", "day_night"):

@@ -1,5 +1,5 @@
 {
-  "schema": 1,
+  "schema": 2,
   "kind": "firestorm-opengl-oracle-corpus",
   "baseline": {
     "remote": "https://github.com/FirestormViewer/phoenix-firestorm",
@@ -14,6 +14,14 @@
     "capture_encoding": "rgb_or_rgba8_srgb",
     "png_interlaced": false,
     "self_variance_method": "linear_srgb_rgba8_all_pairs_v1",
+    "cpu_timing_scope": "display_to_pre_swap_wall_v1",
+    "gpu_timing_scope": "gl_time_elapsed_frame_v1",
+    "gpu_memory_method": "renderer_accounted_v1",
+    "renderer_accounted_gpu_memory_sources": [
+      "viewer texture allocation counters",
+      "viewer vertex-buffer allocation counters",
+      "viewer render-target attachment accounting"
+    ],
     "platform": {
       "os": "macOS",
       "architecture": "arm64"
@@ -36,11 +44,18 @@
       "description": "Logged-out login panel, menus, icons, text, and font atlas composition.",
       "definition_status": "blocked",
       "definition_blockers": [
-        "A static local login-page fixture for ForceLoginURL has not been added and hashed."
+        "A static local login-page fixture for the pinned --loginpage URL has not been added and hashed."
       ],
+      "machine_contract_status": "blocked",
+      "machine_contract_blockers": [
+        "A typed runtime-state proof contract and fixture driver have not been implemented."
+      ],
+      "machine_contract": null,
       "conditions": {
         "settings": {
+          "ForceLoginURL": "",
           "Language": "en",
+          "LoginPage": "http://127.0.0.1:19472/login_ui/index.html",
           "RenderFSAASamples": 0,
           "RenderFSAAType": 0,
           "RenderUIBuffer": false,
@@ -61,7 +76,8 @@
           "asset_manifest_sha256": null,
           "requirements": [
             "Fresh settings directory with no saved credentials",
-            "Default English login layout with ForceLoginURL set to a static local page",
+            "Viewer launched with --loginpage http://127.0.0.1:19472/login_ui/index.html, mapped to LoginPage",
+            "ForceLoginURL remains empty so WarnForceLoginURL is never opened",
             "No modal dialog or transient notification"
           ]
         },
@@ -102,6 +118,11 @@
         "The offline oracle region fixture and its asset manifest have not been published.",
         "The fixed EEP environment asset has not been selected and hashed."
       ],
+      "machine_contract_status": "blocked",
+      "machine_contract_blockers": [
+        "A typed runtime-state proof contract and fixture driver have not been implemented."
+      ],
+      "machine_contract": null,
       "conditions": {
         "settings": {
           "RenderEnableEmissiveBuffer": false,
@@ -174,6 +195,11 @@
         "The material fixture assets and exact texture payload hashes do not exist yet.",
         "The fixed EEP environment asset has not been selected and hashed."
       ],
+      "machine_contract_status": "blocked",
+      "machine_contract_blockers": [
+        "A typed runtime-state proof contract and fixture driver have not been implemented."
+      ],
+      "machine_contract": null,
       "conditions": {
         "settings": {
           "RenderEnableEmissiveBuffer": false,
@@ -246,6 +272,11 @@
         "A redistributable avatar outfit, pose, and baked-texture fixture has not been published.",
         "The offline test account and region are not provisioned."
       ],
+      "machine_contract_status": "blocked",
+      "machine_contract_blockers": [
+        "A typed runtime-state proof contract and fixture driver have not been implemented."
+      ],
+      "machine_contract": null,
       "conditions": {
         "settings": {
           "RenderEnableEmissiveBuffer": false,
@@ -317,6 +348,11 @@
         "The water/sky fixture and fixed EEP asset have not been published.",
         "Cloud motion must be disabled in a purpose-built environment asset."
       ],
+      "machine_contract_status": "blocked",
+      "machine_contract_blockers": [
+        "A typed runtime-state proof contract and fixture driver have not been implemented."
+      ],
+      "machine_contract": null,
       "conditions": {
         "settings": {
           "RenderEnableEmissiveBuffer": false,
@@ -388,6 +424,11 @@
         "The reflection-probe fixture and capture-order settling procedure do not exist yet.",
         "The fixed EEP environment asset has not been selected and hashed."
       ],
+      "machine_contract_status": "blocked",
+      "machine_contract_blockers": [
+        "A typed runtime-state proof contract and fixture driver have not been implemented."
+      ],
+      "machine_contract": null,
       "conditions": {
         "settings": {
           "RenderEnableEmissiveBuffer": false,
@@ -459,6 +500,11 @@
         "The post-processing edge/chart fixture has not been published.",
         "The final parity AA mode must be selected before this slot can become ready."
       ],
+      "machine_contract_status": "blocked",
+      "machine_contract_blockers": [
+        "A typed runtime-state proof contract and fixture driver have not been implemented."
+      ],
+      "machine_contract": null,
       "conditions": {
         "settings": {
           "RenderEnableEmissiveBuffer": false,
@@ -555,6 +601,11 @@
         "The deterministic tool-action script and selected-object fixture do not exist yet.",
         "A machine capture hook must emit the snapshot, raw color, and raw depth together from one frame without relying on a daily-driver viewer."
       ],
+      "machine_contract_status": "blocked",
+      "machine_contract_blockers": [
+        "A typed runtime-state proof contract and fixture driver have not been implemented."
+      ],
+      "machine_contract": null,
       "conditions": {
         "settings": {
           "RenderEnableEmissiveBuffer": false,
@@ -625,6 +676,11 @@
         "Redistributable HUD attachments and deterministic nearby-avatar identities have not been published.",
         "The offline test identities and fixed indicator states are not provisioned."
       ],
+      "machine_contract_status": "blocked",
+      "machine_contract_blockers": [
+        "A typed runtime-state proof contract and fixture driver have not been implemented."
+      ],
+      "machine_contract": null,
       "conditions": {
         "settings": {
           "RenderEnableEmissiveBuffer": false,
@@ -696,6 +752,11 @@
         "The multi-avatar fixture, forced-impostor placement, and deterministic particle payload do not exist yet.",
         "A capture hook for freezing the particle simulation at a named phase is required."
       ],
+      "machine_contract_status": "blocked",
+      "machine_contract_blockers": [
+        "A typed runtime-state proof contract and fixture driver have not been implemented."
+      ],
+      "machine_contract": null,
       "conditions": {
         "settings": {
           "RenderEnableEmissiveBuffer": false,
@@ -773,6 +834,11 @@
         "A versioned localhost media payload and redistributable preview assets have not been published.",
         "A deterministic action script for opening and positioning each preview floater is required."
       ],
+      "machine_contract_status": "blocked",
+      "machine_contract_blockers": [
+        "A typed runtime-state proof contract and fixture driver have not been implemented."
+      ],
+      "machine_contract": null,
       "conditions": {
         "settings": {
           "RenderEnableEmissiveBuffer": false,
@@ -842,6 +908,11 @@
       "definition_blockers": [
         "The paired day/night EEP assets and shared scene manifest have not been published."
       ],
+      "machine_contract_status": "blocked",
+      "machine_contract_blockers": [
+        "A typed runtime-state proof contract and fixture driver have not been implemented."
+      ],
+      "machine_contract": null,
       "conditions": {
         "settings": {
           "RenderEnableEmissiveBuffer": false,
@@ -910,6 +981,11 @@
       "definition_blockers": [
         "The paired day/night EEP assets and shared scene manifest have not been published."
       ],
+      "machine_contract_status": "blocked",
+      "machine_contract_blockers": [
+        "A typed runtime-state proof contract and fixture driver have not been implemented."
+      ],
+      "machine_contract": null,
       "conditions": {
         "settings": {
           "RenderEnableEmissiveBuffer": false,

@@ -10,10 +10,12 @@ import json
 import math
 import os
 import re
+import stat
 import struct
 import subprocess
 import sys
 import tempfile
+import uuid
 import zlib
 from collections import Counter
 from datetime import datetime, timezone
@@ -63,6 +65,19 @@ COMMIT_PATTERN: Final = re.compile(r"[0-9a-f]{40}")
 MAX_PNG_BYTES: Final = 256 * 1024 * 1024
 MAX_JSON_BYTES: Final = 16 * 1024 * 1024
 MAX_BLOB_BYTES: Final = 256 * 1024 * 1024
+ACQUISITION_PROTOCOL: Final = "firestorm-opengl-oracle-capture-v1"
+CPU_TIMING_SCOPE: Final = "display_to_pre_swap_wall_v1"
+GPU_TIMING_SCOPE: Final = "gl_time_elapsed_frame_v1"
+GPU_MEMORY_METHOD: Final = "renderer_accounted_v1"
+GPU_MEMORY_SOURCES: Final = (
+    "viewer texture allocation counters",
+    "viewer vertex-buffer allocation counters",
+    "viewer render-target attachment accounting",
+)
+LOGIN_PAGE_URL: Final = "http://127.0.0.1:19472/login_ui/index.html"
+SESSION_ID_PATTERN: Final = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"
+)
 SRGB_TO_LINEAR: Final = tuple(
     value / (255.0 * 12.92) if value <= 10 else ((value / 255.0 + 0.055) / 1.055) ** 2.4
     for value in range(256)
@@ -83,9 +98,32 @@ def _read_json(path: Path) -> dict[str, object]:
 
 
 def _read_json_bytes(encoded: bytes, label: str) -> dict[str, object]:
+    return _read_strict_json_bytes(encoded, label)
+
+
+def _read_strict_json_bytes(encoded: bytes, label: str) -> dict[str, object]:
+    def reject_constant(value: str) -> object:
+        raise OracleError(f"{label} contains non-standard number {value}")
+
+    def reject_duplicate_keys(
+        pairs: list[tuple[str, object]],
+    ) -> dict[str, object]:
+        result: dict[str, object] = {}
+        for key, value in pairs:
+            if key in result:
+                raise OracleError(f"{label} contains duplicate key {key}")
+            result[key] = value
+        return result
+
     try:
-        document = json.loads(encoded)
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        document = json.loads(
+            encoded.decode("utf-8"),
+            object_pairs_hook=reject_duplicate_keys,
+            parse_constant=reject_constant,
+        )
+    except OracleError:
+        raise
+    except (UnicodeDecodeError, ValueError, RecursionError) as error:
         raise OracleError(f"cannot read {label}: {error}") from error
     if not isinstance(document, dict):
         raise OracleError(f"{label} must contain a JSON object")
@@ -93,18 +131,40 @@ def _read_json_bytes(encoded: bytes, label: str) -> dict[str, object]:
 
 
 def _write_json(path: Path, document: dict[str, object]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    handle, temporary_name = tempfile.mkstemp(
-        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
-    )
+    encoded = (json.dumps(document, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    directory_fd, _ = _open_canonical_directory(path.parent, "JSON destination")
+    temporary_name = f".{path.name}.{uuid.uuid4().hex}.tmp"
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    file_fd = -1
     try:
-        with os.fdopen(handle, "w", encoding="utf-8") as output:
-            json.dump(document, output, indent=2, sort_keys=True)
-            output.write("\n")
-        os.replace(temporary_name, path)
+        file_fd = os.open(temporary_name, flags, 0o600, dir_fd=directory_fd)
+        offset = 0
+        while offset < len(encoded):
+            written = os.write(file_fd, encoded[offset:])
+            if written <= 0:
+                raise OSError("write returned no progress")
+            offset += written
+        os.fsync(file_fd)
+        os.close(file_fd)
+        file_fd = -1
+        os.rename(
+            temporary_name,
+            path.name,
+            src_dir_fd=directory_fd,
+            dst_dir_fd=directory_fd,
+        )
     except BaseException:
-        Path(temporary_name).unlink(missing_ok=True)
+        if file_fd >= 0:
+            os.close(file_fd)
+        try:
+            os.unlink(temporary_name, dir_fd=directory_fd)
+        except FileNotFoundError:
+            pass
         raise
+    finally:
+        os.close(directory_fd)
 
 
 def _canonical_json_bytes(value: object) -> bytes:
@@ -134,62 +194,232 @@ def _read_file_bytes(path: Path, field: str, maximum_bytes: int | None = None) -
     return encoded
 
 
-def _file_size_and_sha256(
-    path: Path, field: str, maximum_bytes: int | None = None
+def _open_canonical_directory(path: Path, field: str) -> tuple[int, Path]:
+    if not hasattr(os, "O_NOFOLLOW"):
+        raise OracleError("this platform cannot enforce the no-symlink file contract")
+    try:
+        canonical = path.resolve(strict=True)
+    except OSError as error:
+        raise OracleError(
+            f"cannot resolve {field} directory {path}: {error}"
+        ) from error
+
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    directory_fd = -1
+    try:
+        directory_fd = os.open(canonical.anchor, flags)
+        for component in canonical.parts[1:]:
+            next_fd = os.open(component, flags, dir_fd=directory_fd)
+            os.close(directory_fd)
+            directory_fd = next_fd
+        return directory_fd, canonical
+    except OSError as error:
+        if directory_fd >= 0:
+            os.close(directory_fd)
+        raise OracleError(
+            f"cannot open {field} directory without following symbolic links: {error}"
+        ) from error
+
+
+def _open_relative_regular_file(root: Path, relative: Path, field: str) -> int:
+    if (
+        relative.is_absolute()
+        or relative == Path(".")
+        or any(part in {"", ".", ".."} for part in relative.parts)
+    ):
+        raise OracleError(f"{field} must be a safe relative regular-file path")
+    directory_fd, _ = _open_canonical_directory(root, field)
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    file_flags = os.O_RDONLY | os.O_NOFOLLOW
+    if hasattr(os, "O_NONBLOCK"):
+        file_flags |= os.O_NONBLOCK
+    if hasattr(os, "O_CLOEXEC"):
+        directory_flags |= os.O_CLOEXEC
+        file_flags |= os.O_CLOEXEC
+
+    file_fd = -1
+    try:
+        for component in relative.parts[:-1]:
+            next_fd = os.open(component, directory_flags, dir_fd=directory_fd)
+            os.close(directory_fd)
+            directory_fd = next_fd
+        file_fd = os.open(relative.name, file_flags, dir_fd=directory_fd)
+        metadata = os.fstat(file_fd)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise OracleError(f"{field} must be a real regular file")
+        os.close(directory_fd)
+        directory_fd = -1
+        result = file_fd
+        file_fd = -1
+        return result
+    except OracleError:
+        raise
+    except OSError as error:
+        raise OracleError(
+            f"cannot open {field} without following symbolic links: {error}"
+        ) from error
+    finally:
+        if file_fd >= 0:
+            os.close(file_fd)
+        if directory_fd >= 0:
+            os.close(directory_fd)
+
+
+def _read_relative_regular_file_once(
+    root: Path,
+    relative: Path,
+    field: str,
+    maximum_bytes: int | None = None,
+) -> bytes:
+    file_fd = _open_relative_regular_file(root, relative, field)
+    try:
+        chunks: list[bytes] = []
+        byte_count = 0
+        while True:
+            chunk = os.read(file_fd, 1024 * 1024)
+            if not chunk:
+                break
+            byte_count += len(chunk)
+            if maximum_bytes is not None and byte_count > maximum_bytes:
+                raise OracleError(f"{field} exceeds the {maximum_bytes}-byte limit")
+            chunks.append(chunk)
+        return b"".join(chunks)
+    except OracleError:
+        raise
+    except OSError as error:
+        raise OracleError(f"cannot read {field}: {error}") from error
+    finally:
+        os.close(file_fd)
+
+
+def _hash_relative_regular_file_once(
+    root: Path,
+    relative: Path,
+    field: str,
+    maximum_bytes: int | None = None,
 ) -> tuple[int, str]:
+    file_fd = _open_relative_regular_file(root, relative, field)
     digest = hashlib.sha256()
     byte_count = 0
     try:
-        with path.open("rb") as source:
-            for chunk in iter(lambda: source.read(1024 * 1024), b""):
-                byte_count += len(chunk)
-                if maximum_bytes is not None and byte_count > maximum_bytes:
-                    raise OracleError(
-                        f"{field} exceeds its {maximum_bytes}-byte contract: {path}"
-                    )
-                digest.update(chunk)
+        while True:
+            chunk = os.read(file_fd, 1024 * 1024)
+            if not chunk:
+                break
+            byte_count += len(chunk)
+            if maximum_bytes is not None and byte_count > maximum_bytes:
+                raise OracleError(f"{field} exceeds its {maximum_bytes}-byte contract")
+            digest.update(chunk)
+        return byte_count, digest.hexdigest()
+    except OracleError:
+        raise
     except OSError as error:
-        raise OracleError(f"cannot read {field} {path}: {error}") from error
-    return byte_count, digest.hexdigest()
+        raise OracleError(f"cannot read {field}: {error}") from error
+    finally:
+        os.close(file_fd)
 
 
-def _write_bytes(path: Path, data: bytes) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    handle, temporary_name = tempfile.mkstemp(
-        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+def _read_regular_file_once(
+    path: Path, field: str, maximum_bytes: int | None = None
+) -> bytes:
+    try:
+        parent = path.parent.resolve(strict=True)
+    except OSError as error:
+        raise OracleError(
+            f"cannot resolve {field} parent {path.parent}: {error}"
+        ) from error
+    return _read_relative_regular_file_once(
+        parent, Path(path.name), field, maximum_bytes
+    )
+
+
+def _open_child_directory(
+    parent_fd: int, name: str, field: str, *, create: bool, exclusive: bool = False
+) -> int:
+    if create:
+        try:
+            os.mkdir(name, mode=0o700, dir_fd=parent_fd)
+        except FileExistsError:
+            if exclusive:
+                raise OracleError(f"refusing existing {field}") from None
+        except OSError as error:
+            raise OracleError(f"cannot create {field}: {error}") from error
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    try:
+        return os.open(name, flags, dir_fd=parent_fd)
+    except OSError as error:
+        raise OracleError(
+            f"cannot open {field} without following symbolic links: {error}"
+        ) from error
+
+
+def _create_acquisition_directory(
+    session_path: Path, slot_id: str, name: str
+) -> tuple[int, Path]:
+    directory_fd, root = _open_canonical_directory(
+        session_path.parent, "session artifact"
     )
     try:
-        with os.fdopen(handle, "wb") as output:
-            output.write(data)
-        os.replace(temporary_name, path)
-    except BaseException:
-        Path(temporary_name).unlink(missing_ok=True)
-        raise
-
-
-def _persist_artifact(path: Path, data: bytes) -> None:
-    if path.is_symlink():
-        raise OracleError(f"artifact destination is a symbolic link: {path}")
-    if path.exists():
-        if _read_file_bytes(path, "existing artifact", len(data)) != data:
-            raise OracleError(f"artifact collision: {path}")
-        return
-    _write_bytes(path, data)
-
-
-def _artifact_directory(session_path: Path, slot_id: str) -> Path:
-    root = session_path.parent.resolve()
-    directory = root
-    for part in ("artifacts", slot_id):
-        directory /= part
-        if directory.is_symlink():
-            raise OracleError(
-                f"artifact directory traverses a symbolic link: {directory}"
+        for component in ("artifacts", slot_id):
+            next_fd = _open_child_directory(
+                directory_fd,
+                component,
+                f"artifact directory {component}",
+                create=True,
             )
-        directory.mkdir(exist_ok=True)
-        if not directory.is_dir():
-            raise OracleError(f"artifact directory is not a directory: {directory}")
-    return directory
+            os.close(directory_fd)
+            directory_fd = next_fd
+        acquisition_fd = _open_child_directory(
+            directory_fd,
+            name,
+            f"acquisition directory {name}",
+            create=True,
+            exclusive=True,
+        )
+        return acquisition_fd, root / "artifacts" / slot_id / name
+    finally:
+        os.close(directory_fd)
+
+
+def _persist_relative_bytes(
+    root_fd: int, relative: str, encoded: bytes, field: str
+) -> None:
+    parts = relative.split("/")
+    directory_fd = os.dup(root_fd)
+    file_fd = -1
+    try:
+        for component in parts[:-1]:
+            next_fd = _open_child_directory(
+                directory_fd,
+                component,
+                f"{field} directory {component}",
+                create=True,
+            )
+            os.close(directory_fd)
+            directory_fd = next_fd
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+        if hasattr(os, "O_CLOEXEC"):
+            flags |= os.O_CLOEXEC
+        file_fd = os.open(parts[-1], flags, 0o600, dir_fd=directory_fd)
+        offset = 0
+        while offset < len(encoded):
+            written = os.write(file_fd, encoded[offset:])
+            if written <= 0:
+                raise OSError("write returned no progress")
+            offset += written
+        os.fsync(file_fd)
+    except OracleError:
+        raise
+    except OSError as error:
+        raise OracleError(f"cannot persist {field}: {error}") from error
+    finally:
+        if file_fd >= 0:
+            os.close(file_fd)
+        os.close(directory_fd)
 
 
 def _validated_session_child_directory(
@@ -261,7 +491,8 @@ def _stored_artifact_path(session_path: Path, slot_id: str, value: object) -> Pa
     if (
         relative.is_absolute()
         or ".." in relative.parts
-        or relative.parent != expected_parent
+        or relative == Path(".")
+        or not relative.is_relative_to(expected_parent)
     ):
         raise OracleError(f"{slot_id}: artifact path escapes its slot directory")
     root = session_path.parent.resolve()
@@ -616,6 +847,23 @@ def _require_object(value: object, field: str) -> dict[str, object]:
     return value
 
 
+def _require_exact_keys(
+    value: object, field: str, expected: set[str]
+) -> dict[str, object]:
+    document = _require_object(value, field)
+    actual = set(document)
+    if actual != expected:
+        missing = sorted(expected - actual)
+        extra = sorted(actual - expected)
+        details = []
+        if missing:
+            details.append(f"missing {', '.join(missing)}")
+        if extra:
+            details.append(f"unexpected {', '.join(extra)}")
+        raise OracleError(f"{field} has invalid fields ({'; '.join(details)})")
+    return document
+
+
 def _require_array(value: object, field: str) -> list[object]:
     if not isinstance(value, list):
         raise OracleError(f"{field} must be an array")
@@ -644,26 +892,51 @@ def _require_integer(value: object, field: str, minimum: int = 0) -> int:
 
 
 def _require_exact_integer(value: object, field: str, expected: int) -> int:
-    integer = _require_integer(value, field, expected)
+    integer = _require_integer(value, field)
     if integer != expected:
         raise OracleError(f"{field} must equal {expected}")
     return integer
 
 
-def _resolve_regular_file(root: Path, relative_value: object, field: str) -> Path:
+def _require_u64(value: object, field: str) -> int:
+    integer = _require_integer(value, field)
+    if integer > (1 << 64) - 1:
+        raise OracleError(f"{field} must fit in an unsigned 64-bit integer")
+    return integer
+
+
+def _require_hash(
+    value: object, field: str, pattern: re.Pattern[str] = HASH_PATTERN
+) -> str:
+    digest = _require_string(value, field)
+    if not pattern.fullmatch(digest):
+        raise OracleError(f"{field} has an invalid hash")
+    return digest
+
+
+def _require_session_id(value: object, field: str) -> str:
+    session_id = _require_string(value, field)
+    if not SESSION_ID_PATTERN.fullmatch(session_id):
+        raise OracleError(f"{field} must be a lowercase UUIDv4")
+    return session_id
+
+
+def _safe_fixture_relative_path(relative_value: object, field: str) -> Path:
     relative_text = _require_string(relative_value, field)
     relative = Path(relative_text)
-    if relative.is_absolute() or ".." in relative.parts or relative == Path("."):
-        raise OracleError(f"{field} must be a safe relative path")
-    resolved_root = root.resolve()
-    candidate = resolved_root
-    for part in relative.parts:
-        candidate /= part
-        if candidate.is_symlink():
-            raise OracleError(f"{field} must not traverse a symbolic link")
-    if not candidate.is_file():
-        raise OracleError(f"{field} does not name a regular file: {relative_text}")
-    return candidate
+    if (
+        relative.is_absolute()
+        or relative == Path(".")
+        or "\\" in relative_text
+        or any(part in {"", ".", ".."} for part in relative.parts)
+        or any(
+            re.fullmatch(r"[a-z0-9][a-z0-9._-]*", part) is None
+            for part in relative.parts
+        )
+        or relative.as_posix() != relative_text
+    ):
+        raise OracleError(f"{field} must be a canonical safe relative path")
+    return relative
 
 
 def _validate_fixture_manifest(
@@ -680,8 +953,8 @@ def _validate_fixture_manifest(
             )
         return
 
-    manifest_path = _resolve_regular_file(
-        fixture_root, path_value, f"{field}.asset_manifest_path"
+    manifest_relative = _safe_fixture_relative_path(
+        path_value, f"{field}.asset_manifest_path"
     )
     expected_bytes = _require_integer(bytes_value, f"{field}.asset_manifest_bytes", 1)
     expected_hash = _require_string(hash_value, f"{field}.asset_manifest_sha256")
@@ -691,13 +964,20 @@ def _validate_fixture_manifest(
         raise OracleError(
             f"{field}.asset_manifest_bytes exceeds the fixture manifest limit"
         )
-    manifest_bytes = _read_file_bytes(manifest_path, "fixture manifest", MAX_JSON_BYTES)
+    manifest_bytes = _read_relative_regular_file_once(
+        fixture_root,
+        manifest_relative,
+        "fixture manifest",
+        MAX_JSON_BYTES,
+    )
     if len(manifest_bytes) != expected_bytes:
         raise OracleError(f"{field}.asset_manifest_bytes does not match the file")
     if hashlib.sha256(manifest_bytes).hexdigest() != expected_hash:
         raise OracleError(f"{field}.asset_manifest_sha256 does not match the file")
 
-    fixture_manifest = _read_json_bytes(manifest_bytes, str(manifest_path))
+    fixture_manifest = _read_json_bytes(
+        manifest_bytes, str(fixture_root / manifest_relative)
+    )
     _require_exact_integer(
         fixture_manifest.get("schema"), f"{field} fixture manifest schema", 1
     )
@@ -709,16 +989,14 @@ def _validate_fixture_manifest(
     if not assets:
         raise OracleError(f"{field} fixture manifest assets must not be empty")
     seen_paths: set[Path] = set()
-    manifest_parent = manifest_path.parent.relative_to(fixture_root.resolve())
+    manifest_parent = manifest_relative.parent
     for index, value in enumerate(assets):
         asset_field = f"{field}.assets[{index}]"
         asset = _require_object(value, asset_field)
-        relative_path = _require_string(asset.get("path"), f"{asset_field}.path")
-        asset_path = _resolve_regular_file(
-            fixture_root,
-            (manifest_parent / relative_path).as_posix(),
-            f"{asset_field}.path",
+        relative_path = _safe_fixture_relative_path(
+            asset.get("path"), f"{asset_field}.path"
         )
+        asset_path = manifest_parent / relative_path
         if asset_path in seen_paths:
             raise OracleError(f"{field} fixture manifest has duplicate asset paths")
         seen_paths.add(asset_path)
@@ -726,8 +1004,11 @@ def _validate_fixture_manifest(
         asset_hash = _require_string(asset.get("sha256"), f"{asset_field}.sha256")
         if not HASH_PATTERN.fullmatch(asset_hash):
             raise OracleError(f"{asset_field}.sha256 must be a SHA-256 hash")
-        actual_bytes, actual_hash = _file_size_and_sha256(
-            asset_path, "fixture asset", asset_bytes
+        actual_bytes, actual_hash = _hash_relative_regular_file_once(
+            fixture_root,
+            asset_path,
+            "fixture asset",
+            asset_bytes,
         )
         if actual_bytes != asset_bytes:
             raise OracleError(f"{asset_field}.bytes does not match the file")
@@ -1015,6 +1296,101 @@ def _validate_conditions(value: object, field: str, fixture_root: Path) -> None:
     _require_number(display.get("scale_factor"), f"{field}.display.scale_factor", 1.0)
     if display.get("color_space") != "sRGB":
         raise OracleError(f"{field}.display.color_space must be sRGB")
+    if display.get("window_mode") != "windowed_no_occlusion":
+        raise OracleError(f"{field}.display.window_mode must be windowed_no_occlusion")
+
+
+def _validate_typed_machine_contract(
+    value: object, conditions: dict[str, object], field: str
+) -> None:
+    contract = _require_exact_keys(
+        value,
+        field,
+        {"schema", "kind", "expected", "producer"},
+    )
+    _require_exact_integer(contract.get("schema"), f"{field}.schema", 1)
+    if contract.get("kind") != "typed_runtime_state_v1":
+        raise OracleError(f"{field}.kind must be typed_runtime_state_v1")
+
+    expected = _require_exact_keys(
+        contract.get("expected"),
+        f"{field}.expected",
+        {
+            "runtime_settings",
+            "camera",
+            "environment",
+            "display",
+            "fixture_state",
+        },
+    )
+    for expected_name, condition_name in (
+        ("runtime_settings", "settings"),
+        ("camera", "camera"),
+        ("environment", "environment"),
+        ("display", "display"),
+    ):
+        observed = _require_object(
+            expected.get(expected_name), f"{field}.expected.{expected_name}"
+        )
+        if not _canonical_json_equal(observed, conditions[condition_name]):
+            raise OracleError(
+                f"{field}.expected.{expected_name} must exactly bind "
+                f"conditions.{condition_name}"
+            )
+
+    fixture = _require_exact_keys(
+        expected.get("fixture_state"),
+        f"{field}.expected.fixture_state",
+        {
+            "schema",
+            "driver",
+            "fixture_id",
+            "fixture_revision",
+            "asset_manifest_sha256",
+            "state",
+        },
+    )
+    _require_exact_integer(
+        fixture.get("schema"), f"{field}.expected.fixture_state.schema", 1
+    )
+    driver = _require_string(
+        fixture.get("driver"), f"{field}.expected.fixture_state.driver"
+    )
+    if not re.fullmatch(r"[a-z][a-z0-9_]*_v[1-9][0-9]*", driver):
+        raise OracleError(
+            f"{field}.expected.fixture_state.driver must be a versioned driver id"
+        )
+    content = conditions["content"]
+    for name in ("fixture_id", "fixture_revision", "asset_manifest_sha256"):
+        if fixture.get(name) != content[name]:
+            raise OracleError(
+                f"{field}.expected.fixture_state.{name} must exactly bind "
+                f"conditions.content.{name}"
+            )
+    _require_hash(
+        fixture.get("asset_manifest_sha256"),
+        f"{field}.expected.fixture_state.asset_manifest_sha256",
+    )
+    state = _require_object(
+        fixture.get("state"), f"{field}.expected.fixture_state.state"
+    )
+    if not state:
+        raise OracleError(f"{field}.expected.fixture_state.state must not be empty")
+
+    producer = _require_exact_keys(
+        contract.get("producer"),
+        f"{field}.producer",
+        {"instrumentation_commit", "executable_sha256"},
+    )
+    _require_hash(
+        producer.get("instrumentation_commit"),
+        f"{field}.producer.instrumentation_commit",
+        COMMIT_PATTERN,
+    )
+    _require_hash(
+        producer.get("executable_sha256"),
+        f"{field}.producer.executable_sha256",
+    )
 
 
 def _validate_missing_evidence(value: object, field: str) -> None:
@@ -1042,11 +1418,15 @@ def validate_manifest(
     document: dict[str, object], fixture_root: Path | None = None
 ) -> None:
     fixture_root = fixture_root or repository_root()
-    _require_exact_integer(document.get("schema"), "manifest schema", 1)
+    _require_exact_integer(document.get("schema"), "manifest schema", 2)
     if document.get("kind") != "firestorm-opengl-oracle-corpus":
         raise OracleError("manifest kind must be firestorm-opengl-oracle-corpus")
 
-    baseline = _require_object(document.get("baseline"), "baseline")
+    baseline = _require_exact_keys(
+        document.get("baseline"),
+        "baseline",
+        {"remote", "commit", "renderer"},
+    )
     _require_string(baseline.get("remote"), "baseline.remote")
     commit = _require_string(baseline.get("commit"), "baseline.commit")
     if not COMMIT_PATTERN.fullmatch(commit):
@@ -1054,11 +1434,35 @@ def validate_manifest(
     if baseline.get("renderer") != "OpenGL":
         raise OracleError("baseline.renderer must be OpenGL")
 
-    contract = _require_object(document.get("capture_contract"), "capture_contract")
-    _require_integer(contract.get("repetitions"), "capture_contract.repetitions", 3)
-    _require_integer(contract.get("warmup_frames"), "capture_contract.warmup_frames", 1)
-    _require_integer(
-        contract.get("measurement_frames"), "capture_contract.measurement_frames", 1
+    contract = _require_exact_keys(
+        document.get("capture_contract"),
+        "capture_contract",
+        {
+            "repetitions",
+            "warmup_frames",
+            "measurement_frames",
+            "capture_format",
+            "capture_encoding",
+            "png_interlaced",
+            "self_variance_method",
+            "cpu_timing_scope",
+            "gpu_timing_scope",
+            "gpu_memory_method",
+            "renderer_accounted_gpu_memory_sources",
+            "platform",
+            "notes",
+        },
+    )
+    _require_exact_integer(
+        contract.get("repetitions"), "capture_contract.repetitions", 3
+    )
+    _require_exact_integer(
+        contract.get("warmup_frames"), "capture_contract.warmup_frames", 300
+    )
+    _require_exact_integer(
+        contract.get("measurement_frames"),
+        "capture_contract.measurement_frames",
+        600,
     )
     if contract.get("capture_format") != "png":
         raise OracleError("capture_contract.capture_format must be png")
@@ -1071,11 +1475,39 @@ def validate_manifest(
             "capture_contract.self_variance_method must be "
             "linear_srgb_rgba8_all_pairs_v1"
         )
-    platform = _require_object(contract.get("platform"), "capture_contract.platform")
-    _require_string(platform.get("os"), "capture_contract.platform.os")
-    _require_string(
-        platform.get("architecture"), "capture_contract.platform.architecture"
+    if contract.get("cpu_timing_scope") != CPU_TIMING_SCOPE:
+        raise OracleError(
+            f"capture_contract.cpu_timing_scope must be {CPU_TIMING_SCOPE}"
+        )
+    if contract.get("gpu_timing_scope") != GPU_TIMING_SCOPE:
+        raise OracleError(
+            f"capture_contract.gpu_timing_scope must be {GPU_TIMING_SCOPE}"
+        )
+    if contract.get("gpu_memory_method") != GPU_MEMORY_METHOD:
+        raise OracleError(
+            f"capture_contract.gpu_memory_method must be {GPU_MEMORY_METHOD}"
+        )
+    memory_sources = _require_array(
+        contract.get("renderer_accounted_gpu_memory_sources"),
+        "capture_contract.renderer_accounted_gpu_memory_sources",
     )
+    if memory_sources != list(GPU_MEMORY_SOURCES):
+        raise OracleError(
+            "capture_contract.renderer_accounted_gpu_memory_sources must use the "
+            "canonical renderer-accounted provenance"
+        )
+    notes = _require_array(contract.get("notes"), "capture_contract.notes")
+    if not all(isinstance(note, str) and note for note in notes):
+        raise OracleError("capture_contract.notes must contain only non-empty strings")
+    platform = _require_exact_keys(
+        contract.get("platform"),
+        "capture_contract.platform",
+        {"os", "architecture"},
+    )
+    if platform.get("os") != "macOS":
+        raise OracleError("capture_contract.platform.os must be macOS")
+    if platform.get("architecture") != "arm64":
+        raise OracleError("capture_contract.platform.architecture must be arm64")
 
     slots = _require_array(document.get("slots"), "slots")
     if not slots:
@@ -1105,6 +1537,18 @@ def validate_manifest(
         _validate_conditions(
             slot.get("conditions"), f"{field}.conditions", fixture_root
         )
+        if slot_id == "login_ui":
+            settings = slot["conditions"]["settings"]
+            if settings.get("LoginPage") != LOGIN_PAGE_URL:
+                raise OracleError(
+                    f"{field}.conditions.settings.LoginPage must be {LOGIN_PAGE_URL} "
+                    "for the --loginpage fixture contract"
+                )
+            if settings.get("ForceLoginURL") != "":
+                raise OracleError(
+                    f"{field}.conditions.settings.ForceLoginURL must remain empty "
+                    "so WarnForceLoginURL is not opened"
+                )
         supporting_contracts = _validate_supporting_contracts(
             slot.get("required_supporting_artifacts"),
             slot["conditions"]["display"],
@@ -1156,6 +1600,37 @@ def validate_manifest(
                 raise OracleError(
                     f"{field} cannot be ready without environment.asset_id"
                 )
+        machine_status = slot.get("machine_contract_status")
+        if machine_status not in {"ready", "blocked"}:
+            raise OracleError(
+                f"{field}.machine_contract_status must be ready or blocked"
+            )
+        machine_blockers = _require_array(
+            slot.get("machine_contract_blockers"),
+            f"{field}.machine_contract_blockers",
+        )
+        if not all(
+            isinstance(blocker, str) and blocker for blocker in machine_blockers
+        ):
+            raise OracleError(
+                f"{field}.machine_contract_blockers must contain non-empty descriptions"
+            )
+        machine_contract = slot.get("machine_contract")
+        if machine_status == "blocked":
+            if not machine_blockers or machine_contract is not None:
+                raise OracleError(
+                    f"{field} blocked machine contract needs blockers and null contract"
+                )
+        else:
+            if machine_blockers:
+                raise OracleError(
+                    f"{field}.machine_contract_blockers must be empty when ready"
+                )
+            _validate_typed_machine_contract(
+                machine_contract,
+                slot["conditions"],
+                f"{field}.machine_contract",
+            )
         _validate_missing_evidence(slot.get("evidence"), f"{field}.evidence")
 
     missing_groups = sorted(REQUIRED_GROUPS - groups)
@@ -1191,10 +1666,14 @@ def _session_definition_errors(
     if (
         not isinstance(session.get("schema"), int)
         or isinstance(session.get("schema"), bool)
-        or session.get("schema") != 1
+        or session.get("schema") != 2
         or session.get("kind") != "firestorm-opengl-oracle-session"
     ):
         return ["session schema or kind is invalid"]
+    try:
+        _require_session_id(session.get("session_id"), "session.session_id")
+    except OracleError as error:
+        errors.append(str(error))
     if session.get("corpus_sha256") != _canonical_hash(manifest):
         errors.append("session corpus hash does not match the manifest")
     if not _canonical_json_equal(session.get("baseline"), manifest["baseline"]):
@@ -1452,43 +1931,31 @@ def _git_errors(worktree: Path, expected_commit: str) -> list[str]:
     return errors
 
 
-def _measurement_template(
-    slot: dict[str, object], baseline_commit: str, contract: dict[str, object]
+def _request_document(
+    manifest: dict[str, object], slot: dict[str, object], session_id: str
 ) -> dict[str, object]:
+    contract = manifest["capture_contract"]
     return {
-        "schema": 1,
+        "schema": 2,
+        "kind": "firestorm-opengl-oracle-request",
+        "session_id": session_id,
         "slot_id": slot["id"],
-        "baseline_commit": baseline_commit,
-        "conditions_sha256": _canonical_hash(slot["conditions"]),
-        "self_variance": None,
-        "frame_timing_ms": {
-            "sample_count": contract["measurement_frames"],
-            "cpu": {"mean": None, "p50": None, "p95": None, "p99": None},
-            "gpu": {"mean": None, "p50": None, "p95": None, "p99": None},
-        },
-        "memory_mib": {
-            "process_resident_start": None,
-            "process_resident_peak": None,
-            "gpu_allocated_start": None,
-            "gpu_allocated_peak": None,
-        },
-        "hardware_os": {
-            "machine_model": None,
-            "cpu": None,
-            "gpu": None,
-            "ram_mib": None,
-            "os_name": "macOS",
-            "os_version": None,
-            "architecture": contract["platform"]["architecture"],
-            "display_id": None,
-            "display_scale": slot["conditions"]["display"]["scale_factor"],
-            "opengl_vendor": None,
-            "opengl_renderer": None,
-            "opengl_version": None,
-            "viewer_build": None,
-            "xcode_build": None,
-        },
-        "known_quirks": [],
+        "corpus_sha256": _canonical_hash(manifest),
+        "baseline": copy.deepcopy(manifest["baseline"]),
+        "definition": _slot_definition(slot),
+        "definition_status": slot["definition_status"],
+        "definition_blockers": slot["definition_blockers"],
+        "machine_contract_status": slot["machine_contract_status"],
+        "machine_contract_blockers": slot["machine_contract_blockers"],
+        "machine_contract": slot["machine_contract"],
+        "conditions": slot["conditions"],
+        "conditions_sha256": slot["conditions_sha256"],
+        "definition_sha256": slot["definition_sha256"],
+        "capture_contract": copy.deepcopy(contract),
+        "warmup_frames": contract["warmup_frames"],
+        "measurement_frames": contract["measurement_frames"],
+        "capture_repetitions": contract["repetitions"],
+        "required_supporting_artifacts": slot["required_supporting_artifacts"],
     }
 
 
@@ -1513,11 +1980,14 @@ def initialize_session(
         slot["conditions_sha256"] = _canonical_hash(slot["conditions"])
         slot["definition_sha256"] = _canonical_hash(_slot_definition(slot))
         slots.append(slot)
+    session_id = str(uuid.uuid4())
+    corpus_sha256 = _canonical_hash(manifest)
     session: dict[str, object] = {
-        "schema": 1,
+        "schema": 2,
         "kind": "firestorm-opengl-oracle-session",
+        "session_id": session_id,
         "created_at": _utc_now(),
-        "corpus_sha256": _canonical_hash(manifest),
+        "corpus_sha256": corpus_sha256,
         "baseline": copy.deepcopy(baseline),
         "capture_contract": copy.deepcopy(manifest["capture_contract"]),
         "oracle_worktree": str(oracle_worktree.resolve()),
@@ -1529,26 +1999,13 @@ def initialize_session(
         request_directory = _validated_session_child_directory(
             session_directory, request_directory, "requests"
         )
-        request = {
-            "schema": 1,
-            "slot_id": slot["id"],
-            "description": slot["description"],
-            "features": slot["features"],
-            "conditions": slot["conditions"],
-            "conditions_sha256": slot["conditions_sha256"],
-            "definition_sha256": slot["definition_sha256"],
-            "warmup_frames": manifest["capture_contract"]["warmup_frames"],
-            "capture_repetitions": manifest["capture_contract"]["repetitions"],
-            "measurement_template": _measurement_template(
-                slot, baseline["commit"], manifest["capture_contract"]
-            ),
-        }
+        request = _request_document(manifest, slot, session_id)
         _write_json(request_directory / f"{slot['id']}.json", request)
     return session
 
 
 def _validate_percentiles(value: object, field: str) -> dict[str, object]:
-    metrics = _require_object(value, field)
+    metrics = _require_exact_keys(value, field, {"mean", "p50", "p95", "p99"})
     for name in ("mean", "p50", "p95", "p99"):
         _require_number(metrics.get(name), f"{field}.{name}")
     if float(metrics["p50"]) > float(metrics["p95"]):
@@ -1563,8 +2020,24 @@ def validate_measurements(
     slot: dict[str, object],
     baseline_commit: str,
     contract: dict[str, object],
+    instrumentation_commit: str,
 ) -> None:
-    _require_exact_integer(measurements.get("schema"), "measurements.schema", 1)
+    _require_exact_keys(
+        measurements,
+        "measurements",
+        {
+            "schema",
+            "slot_id",
+            "baseline_commit",
+            "conditions_sha256",
+            "self_variance",
+            "frame_timing_ms",
+            "memory_mib",
+            "hardware_os",
+            "known_quirks",
+        },
+    )
+    _require_exact_integer(measurements.get("schema"), "measurements.schema", 2)
     if measurements.get("slot_id") != slot["id"]:
         raise OracleError("measurements.slot_id does not match the selected slot")
     if measurements.get("baseline_commit") != baseline_commit:
@@ -1619,17 +2092,47 @@ def validate_measurements(
     if identical > 1.0:
         raise OracleError("self_variance.identical_pixel_fraction must not exceed 1")
 
-    timing = _require_object(measurements.get("frame_timing_ms"), "frame_timing_ms")
+    timing = _require_exact_keys(
+        measurements.get("frame_timing_ms"),
+        "frame_timing_ms",
+        {"sample_count", "aggregate_method", "cpu_scope", "gpu_scope", "cpu", "gpu"},
+    )
     _require_exact_integer(
         timing.get("sample_count"),
         "frame_timing_ms.sample_count",
         int(contract["measurement_frames"]),
     )
+    if timing.get("aggregate_method") != "sorted_linear_interpolation_v1":
+        raise OracleError("frame_timing_ms.aggregate_method is invalid")
+    if timing.get("cpu_scope") != contract["cpu_timing_scope"]:
+        raise OracleError("frame_timing_ms.cpu_scope does not match the contract")
+    if timing.get("gpu_scope") != contract["gpu_timing_scope"]:
+        raise OracleError("frame_timing_ms.gpu_scope does not match the contract")
     _validate_percentiles(timing.get("cpu"), "frame_timing_ms.cpu")
     _validate_percentiles(timing.get("gpu"), "frame_timing_ms.gpu")
 
-    memory = _require_object(measurements.get("memory_mib"), "memory_mib")
-    for prefix in ("process_resident", "gpu_allocated"):
+    memory = _require_exact_keys(
+        measurements.get("memory_mib"),
+        "memory_mib",
+        {
+            "process_resident_start",
+            "process_resident_peak",
+            "renderer_accounted_gpu_start",
+            "renderer_accounted_gpu_peak",
+            "gpu_memory_method",
+            "gpu_memory_provenance",
+        },
+    )
+    if memory.get("gpu_memory_method") != contract["gpu_memory_method"]:
+        raise OracleError("memory_mib.gpu_memory_method does not match the contract")
+    if not _canonical_json_equal(
+        memory.get("gpu_memory_provenance"),
+        contract["renderer_accounted_gpu_memory_sources"],
+    ):
+        raise OracleError(
+            "memory_mib.gpu_memory_provenance does not match the contract"
+        )
+    for prefix in ("process_resident", "renderer_accounted_gpu"):
         start = _require_number(
             memory.get(f"{prefix}_start"), f"memory_mib.{prefix}_start"
         )
@@ -1639,7 +2142,26 @@ def validate_measurements(
         if peak < start:
             raise OracleError(f"memory_mib.{prefix}_peak must be >= {prefix}_start")
 
-    hardware = _require_object(measurements.get("hardware_os"), "hardware_os")
+    hardware = _require_exact_keys(
+        measurements.get("hardware_os"),
+        "hardware_os",
+        {
+            "machine_model",
+            "cpu",
+            "gpu",
+            "ram_mib",
+            "os_name",
+            "os_version",
+            "architecture",
+            "display_id",
+            "display_scale",
+            "opengl_vendor",
+            "opengl_renderer",
+            "opengl_version",
+            "viewer_build",
+            "xcode_build",
+        },
+    )
     for name in (
         "machine_model",
         "cpu",
@@ -1664,9 +2186,9 @@ def validate_measurements(
         raise OracleError(
             "hardware_os.architecture does not match the capture contract"
         )
-    if hardware["viewer_build"] != baseline_commit:
+    if hardware["viewer_build"] != instrumentation_commit:
         raise OracleError(
-            "hardware_os.viewer_build must equal the pinned baseline commit"
+            "hardware_os.viewer_build must equal the instrumentation commit"
         )
     expected_scale = slot["conditions"]["display"]["scale_factor"]
     if float(hardware["display_scale"]) != float(expected_scale):
@@ -1674,7 +2196,11 @@ def validate_measurements(
 
     quirks = _require_array(measurements.get("known_quirks"), "known_quirks")
     for index, value in enumerate(quirks):
-        quirk = _require_object(value, f"known_quirks[{index}]")
+        quirk = _require_exact_keys(
+            value,
+            f"known_quirks[{index}]",
+            {"id", "description", "impact"},
+        )
         for name in ("id", "description", "impact"):
             _require_string(quirk.get(name), f"known_quirks[{index}].{name}")
 
@@ -1692,13 +2218,525 @@ def _capture_artifact_contract(
     }
 
 
-def record_slot(
+def _safe_acquisition_artifact(value: object, field: str) -> str:
+    relative = _require_string(value, field)
+    parts = relative.split("/")
+    if (
+        relative.startswith("/")
+        or "\\" in relative
+        or any(part in {"", ".", ".."} for part in parts)
+        or any(re.fullmatch(r"[a-z0-9][a-z0-9._-]*", part) is None for part in parts)
+        or parts[0] in {"receipt.json", "known-quirks-review.json"}
+    ):
+        raise OracleError(f"{field} must be a canonical safe relative path")
+    return relative
+
+
+def _percentile(values: list[float], fraction: float) -> float:
+    ordered = sorted(values)
+    position = (len(ordered) - 1) * fraction
+    lower = math.floor(position)
+    upper = math.ceil(position)
+    if lower == upper:
+        return ordered[lower]
+    weight = position - lower
+    return ordered[lower] * (1.0 - weight) + ordered[upper] * weight
+
+
+def _sample_aggregate(values: list[float]) -> dict[str, object]:
+    return {
+        "mean": round(sum(value / len(values) for value in values), 12),
+        "p50": round(_percentile(values, 0.50), 12),
+        "p95": round(_percentile(values, 0.95), 12),
+        "p99": round(_percentile(values, 0.99), 12),
+    }
+
+
+def _validate_quirks_review(
+    review: dict[str, object],
+    *,
+    session_id: str,
+    slot_id: str,
+    acquisition_sha256: str,
+) -> list[object]:
+    _require_exact_keys(
+        review,
+        "known-quirks review",
+        {
+            "schema",
+            "kind",
+            "session_id",
+            "slot_id",
+            "acquisition_sha256",
+            "reviewed_at",
+            "quirks",
+        },
+    )
+    _require_exact_integer(review.get("schema"), "known-quirks review.schema", 1)
+    if review.get("kind") != "firestorm-opengl-oracle-known-quirks-review":
+        raise OracleError("known-quirks review kind is invalid")
+    if review.get("session_id") != session_id or review.get("slot_id") != slot_id:
+        raise OracleError("known-quirks review does not match the session and slot")
+    if review.get("acquisition_sha256") != acquisition_sha256:
+        raise OracleError("known-quirks review is not bound to the acquisition")
+    reviewed_at = _require_string(review.get("reviewed_at"), "reviewed_at")
+    try:
+        parsed = datetime.fromisoformat(reviewed_at.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise OracleError("reviewed_at must be an ISO-8601 timestamp") from error
+    if parsed.tzinfo is None:
+        raise OracleError("reviewed_at must include a timezone")
+    quirks = _require_array(review.get("quirks"), "known-quirks review.quirks")
+    identifiers: set[str] = set()
+    for index, value in enumerate(quirks):
+        quirk = _require_exact_keys(
+            value,
+            f"known-quirks review.quirks[{index}]",
+            {"id", "description", "impact"},
+        )
+        identifier = _require_string(quirk.get("id"), f"quirks[{index}].id")
+        if identifier in identifiers:
+            raise OracleError("known-quirks review contains duplicate identifiers")
+        identifiers.add(identifier)
+        for name in ("description", "impact"):
+            _require_string(quirk.get(name), f"quirks[{index}].{name}")
+    return quirks
+
+
+def _load_machine_acquisition(
+    manifest: dict[str, object],
+    session: dict[str, object],
+    slot: dict[str, object],
+    request_path: Path,
+    acquisition_path: Path,
+    quirks_path: Path,
+) -> dict[str, object]:
+    slot_id = str(slot["id"])
+    request_bytes = _read_regular_file_once(request_path, "request", MAX_JSON_BYTES)
+    request = _read_strict_json_bytes(request_bytes, "request")
+    expected_request = _request_document(manifest, slot, str(session["session_id"]))
+    if not _canonical_json_equal(request, expected_request):
+        raise OracleError("request does not match the immutable session definition")
+    request_sha256 = hashlib.sha256(request_bytes).hexdigest()
+
+    acquisition_bytes = _read_regular_file_once(
+        acquisition_path, "acquisition receipt", MAX_JSON_BYTES
+    )
+    acquisition = _read_strict_json_bytes(acquisition_bytes, "acquisition receipt")
+    _require_exact_keys(
+        acquisition,
+        "acquisition receipt",
+        {
+            "schema",
+            "kind",
+            "binding",
+            "producer",
+            "scopes",
+            "hardware_os",
+            "capture_state_generation",
+            "observed_state",
+            "warmup_frames",
+            "samples",
+            "captures",
+            "supporting_artifacts",
+        },
+    )
+    _require_exact_integer(acquisition.get("schema"), "acquisition.schema", 1)
+    if acquisition.get("kind") != "firestorm-opengl-oracle-acquisition":
+        raise OracleError("acquisition kind is invalid")
+
+    binding = _require_exact_keys(
+        acquisition.get("binding"),
+        "acquisition.binding",
+        {
+            "session_id",
+            "slot_id",
+            "corpus_sha256",
+            "request_sha256",
+            "definition_sha256",
+            "conditions_sha256",
+            "baseline_commit",
+        },
+    )
+    expected_binding = {
+        "session_id": session["session_id"],
+        "slot_id": slot_id,
+        "corpus_sha256": session["corpus_sha256"],
+        "request_sha256": request_sha256,
+        "definition_sha256": slot["definition_sha256"],
+        "conditions_sha256": slot["conditions_sha256"],
+        "baseline_commit": manifest["baseline"]["commit"],
+    }
+    if not _canonical_json_equal(binding, expected_binding):
+        raise OracleError("acquisition binding does not match the immutable request")
+
+    producer = _require_exact_keys(
+        acquisition.get("producer"),
+        "acquisition.producer",
+        {
+            "protocol",
+            "instrumentation_commit",
+            "executable_sha256",
+            "process_run_id",
+        },
+    )
+    if producer.get("protocol") != ACQUISITION_PROTOCOL:
+        raise OracleError("acquisition producer protocol is invalid")
+    instrumentation_commit = _require_hash(
+        producer.get("instrumentation_commit"),
+        "acquisition.producer.instrumentation_commit",
+        COMMIT_PATTERN,
+    )
+    _require_hash(
+        producer.get("executable_sha256"),
+        "acquisition.producer.executable_sha256",
+    )
+    _require_string(
+        producer.get("process_run_id"), "acquisition.producer.process_run_id"
+    )
+    scopes = _require_exact_keys(
+        acquisition.get("scopes"),
+        "acquisition.scopes",
+        {"cpu_timing", "gpu_timing", "gpu_memory"},
+    )
+    expected_scopes = {
+        "cpu_timing": manifest["capture_contract"]["cpu_timing_scope"],
+        "gpu_timing": manifest["capture_contract"]["gpu_timing_scope"],
+        "gpu_memory": manifest["capture_contract"]["gpu_memory_method"],
+    }
+    if not _canonical_json_equal(scopes, expected_scopes):
+        raise OracleError("acquisition measurement scopes do not match the contract")
+
+    machine_contract = slot.get("machine_contract")
+    if (
+        slot.get("machine_contract_status") != "ready"
+        or not isinstance(machine_contract, dict)
+        or machine_contract.get("kind") != "typed_runtime_state_v1"
+    ):
+        raise OracleError("slot has no admissible typed runtime-state contract")
+    if not _canonical_json_equal(
+        {
+            "instrumentation_commit": producer["instrumentation_commit"],
+            "executable_sha256": producer["executable_sha256"],
+        },
+        machine_contract["producer"],
+    ):
+        raise OracleError(
+            "acquisition producer does not match the pinned machine contract"
+        )
+    observed_state = _require_object(
+        acquisition.get("observed_state"), "acquisition.observed_state"
+    )
+    if not _canonical_json_equal(observed_state, machine_contract["expected"]):
+        raise OracleError(
+            "acquisition observed state does not match the typed contract"
+        )
+    state_generation = _require_u64(
+        acquisition.get("capture_state_generation"),
+        "acquisition.capture_state_generation",
+    )
+
+    contract = manifest["capture_contract"]
+    warmup = _require_array(acquisition.get("warmup_frames"), "warmup_frames")
+    expected_warmup = int(contract["warmup_frames"])
+    if len(warmup) != expected_warmup:
+        raise OracleError(
+            f"warmup_frames must contain exactly {expected_warmup} frames"
+        )
+    warmup_serials = [
+        _require_u64(value, f"warmup_frames[{index}]")
+        for index, value in enumerate(warmup)
+    ]
+    if warmup_serials[0] != 1 or any(
+        warmup_serials[index + 1] != warmup_serials[index] + 1
+        for index in range(len(warmup_serials) - 1)
+    ):
+        raise OracleError("warmup_frames must be presented frame serials 1 through 300")
+
+    sample_values = _require_array(acquisition.get("samples"), "samples")
+    expected_samples = int(contract["measurement_frames"])
+    if len(sample_values) != expected_samples:
+        raise OracleError(f"samples must contain exactly {expected_samples} frames")
+    samples: list[dict[str, object]] = []
+    sample_serials: list[int] = []
+    for index, value in enumerate(sample_values):
+        sample = _require_exact_keys(
+            value,
+            f"samples[{index}]",
+            {
+                "frame_serial",
+                "capture_state_generation",
+                "cpu_ms",
+                "gpu_ms",
+                "process_resident_bytes",
+                "renderer_accounted_gpu_bytes",
+            },
+        )
+        serial = _require_u64(
+            sample.get("frame_serial"), f"samples[{index}].frame_serial"
+        )
+        if (
+            _require_u64(
+                sample.get("capture_state_generation"),
+                f"samples[{index}].capture_state_generation",
+            )
+            != state_generation
+        ):
+            raise OracleError(
+                "sample capture_state_generation changed during acquisition"
+            )
+        _require_number(sample.get("cpu_ms"), f"samples[{index}].cpu_ms")
+        _require_number(sample.get("gpu_ms"), f"samples[{index}].gpu_ms")
+        _require_u64(
+            sample.get("process_resident_bytes"),
+            f"samples[{index}].process_resident_bytes",
+        )
+        _require_u64(
+            sample.get("renderer_accounted_gpu_bytes"),
+            f"samples[{index}].renderer_accounted_gpu_bytes",
+        )
+        samples.append(sample)
+        sample_serials.append(serial)
+    if sample_serials[0] != warmup_serials[-1] + 1 or any(
+        sample_serials[index + 1] != sample_serials[index] + 1
+        for index in range(len(sample_serials) - 1)
+    ):
+        raise OracleError("samples must immediately follow warmup as contiguous frames")
+
+    artifact_root = acquisition_path.parent
+    seen_paths: set[str] = set()
+    capture_values = _require_array(acquisition.get("captures"), "captures")
+    repetitions = int(contract["repetitions"])
+    if len(capture_values) != repetitions:
+        raise OracleError(f"captures must contain exactly {repetitions} entries")
+    display = slot["conditions"]["display"]
+    expected_dimensions = (int(display["width_px"]), int(display["height_px"]))
+    captures: list[dict[str, object]] = []
+    decoded_captures: list[bytes] = []
+    capture_transactions: set[tuple[int, str]] = set()
+    capture_transaction_ids: set[str] = set()
+    for index, value in enumerate(capture_values):
+        field = f"captures[{index}]"
+        capture = _require_exact_keys(
+            value,
+            field,
+            {
+                "ordinal",
+                "frame_serial",
+                "capture_state_generation",
+                "path",
+                "bytes",
+                "sha256",
+                "transaction_id",
+            },
+        )
+        _require_exact_integer(capture.get("ordinal"), f"{field}.ordinal", index + 1)
+        frame_serial = _require_exact_integer(
+            capture.get("frame_serial"),
+            f"{field}.frame_serial",
+            sample_serials[-1] + index + 1,
+        )
+        if (
+            _require_u64(
+                capture.get("capture_state_generation"),
+                f"{field}.capture_state_generation",
+            )
+            != state_generation
+        ):
+            raise OracleError("capture_state_generation changed during captures")
+        transaction_id = _require_string(
+            capture.get("transaction_id"), f"{field}.transaction_id"
+        )
+        transaction = (frame_serial, transaction_id)
+        if (
+            transaction in capture_transactions
+            or transaction_id in capture_transaction_ids
+        ):
+            raise OracleError("capture transactions must be unique")
+        capture_transactions.add(transaction)
+        capture_transaction_ids.add(transaction_id)
+        relative = _safe_acquisition_artifact(capture.get("path"), f"{field}.path")
+        if relative in seen_paths:
+            raise OracleError("acquisition artifact paths must be unique")
+        seen_paths.add(relative)
+        encoded = _read_relative_regular_file_once(
+            artifact_root, Path(relative), field, MAX_PNG_BYTES
+        )
+        expected_bytes = _require_integer(capture.get("bytes"), f"{field}.bytes", 1)
+        expected_hash = _require_hash(capture.get("sha256"), f"{field}.sha256")
+        if (
+            len(encoded) != expected_bytes
+            or hashlib.sha256(encoded).hexdigest() != expected_hash
+        ):
+            raise OracleError(f"{field} size or SHA-256 does not match its file")
+        _, _, rgba = _decode_png_bytes(encoded, relative, expected_dimensions)
+        captures.append({"metadata": capture, "relative": relative, "bytes": encoded})
+        decoded_captures.append(rgba)
+
+    supporting_contracts = slot["required_supporting_artifacts"]
+    supporting_values = _require_array(
+        acquisition.get("supporting_artifacts"), "supporting_artifacts"
+    )
+    supporting: list[dict[str, object]] = []
+    supporting_bytes: dict[str, bytes] = {}
+    roles: set[str] = set()
+    for index, value in enumerate(supporting_values):
+        field = f"supporting_artifacts[{index}]"
+        artifact = _require_exact_keys(
+            value,
+            field,
+            {
+                "role",
+                "frame_serial",
+                "capture_state_generation",
+                "path",
+                "bytes",
+                "sha256",
+                "transaction_id",
+            },
+        )
+        role = _require_string(artifact.get("role"), f"{field}.role")
+        if role in roles or role not in supporting_contracts:
+            raise OracleError(f"{field}.role is duplicate or unexpected")
+        roles.add(role)
+        frame_serial = _require_u64(
+            artifact.get("frame_serial"), f"{field}.frame_serial"
+        )
+        if (
+            _require_u64(
+                artifact.get("capture_state_generation"),
+                f"{field}.capture_state_generation",
+            )
+            != state_generation
+        ):
+            raise OracleError("supporting artifact state generation is inconsistent")
+        transaction_id = _require_string(
+            artifact.get("transaction_id"), f"{field}.transaction_id"
+        )
+        if (frame_serial, transaction_id) not in capture_transactions:
+            raise OracleError(
+                "supporting artifact is not bound to a capture transaction"
+            )
+        relative = _safe_acquisition_artifact(artifact.get("path"), f"{field}.path")
+        if relative in seen_paths:
+            raise OracleError("acquisition artifact paths must be unique")
+        seen_paths.add(relative)
+        role_contract = supporting_contracts[role]
+        encoded = _read_relative_regular_file_once(
+            artifact_root,
+            Path(relative),
+            field,
+            _supporting_artifact_read_limit(role_contract),
+        )
+        expected_bytes = _require_integer(artifact.get("bytes"), f"{field}.bytes", 1)
+        expected_hash = _require_hash(artifact.get("sha256"), f"{field}.sha256")
+        if (
+            len(encoded) != expected_bytes
+            or hashlib.sha256(encoded).hexdigest() != expected_hash
+        ):
+            raise OracleError(f"{field} size or SHA-256 does not match its file")
+        _validate_supporting_artifact_bytes(role, encoded, relative, role_contract)
+        supporting.append(
+            {"metadata": artifact, "relative": relative, "bytes": encoded}
+        )
+        supporting_bytes[role] = encoded
+    if roles != set(supporting_contracts):
+        raise OracleError("supporting artifact roles do not match the request")
+    if slot_id == "tools_readback":
+        transactions = {
+            (item["metadata"]["frame_serial"], item["metadata"]["transaction_id"])
+            for item in supporting
+        }
+        if len(transactions) != 1:
+            raise OracleError("tools_readback artifacts must share one transaction")
+        _validate_tools_readback_consistency(supporting_bytes, supporting_contracts)
+        frame_serial, transaction_id = next(iter(transactions))
+        matching_capture = next(
+            item
+            for item in captures
+            if item["metadata"]["frame_serial"] == frame_serial
+            and item["metadata"]["transaction_id"] == transaction_id
+        )
+        if supporting_bytes["local_snapshot"] != matching_capture["bytes"]:
+            raise OracleError(
+                "tools_readback local_snapshot must be the PNG for its capture transaction"
+            )
+
+    acquisition_sha256 = hashlib.sha256(acquisition_bytes).hexdigest()
+    review_bytes = _read_regular_file_once(
+        quirks_path, "known-quirks review", MAX_JSON_BYTES
+    )
+    review = _read_strict_json_bytes(review_bytes, "known-quirks review")
+    quirks = _validate_quirks_review(
+        review,
+        session_id=str(session["session_id"]),
+        slot_id=slot_id,
+        acquisition_sha256=acquisition_sha256,
+    )
+
+    cpu_values = [float(sample["cpu_ms"]) for sample in samples]
+    gpu_values = [float(sample["gpu_ms"]) for sample in samples]
+    rss_values = [int(sample["process_resident_bytes"]) for sample in samples]
+    gpu_memory_values = [
+        int(sample["renderer_accounted_gpu_bytes"]) for sample in samples
+    ]
+    measurements = {
+        "schema": 2,
+        "slot_id": slot_id,
+        "baseline_commit": manifest["baseline"]["commit"],
+        "conditions_sha256": slot["conditions_sha256"],
+        "self_variance": _self_variance(decoded_captures),
+        "frame_timing_ms": {
+            "sample_count": len(samples),
+            "aggregate_method": "sorted_linear_interpolation_v1",
+            "cpu_scope": scopes["cpu_timing"],
+            "gpu_scope": scopes["gpu_timing"],
+            "cpu": _sample_aggregate(cpu_values),
+            "gpu": _sample_aggregate(gpu_values),
+        },
+        "memory_mib": {
+            "process_resident_start": round(rss_values[0] / (1024 * 1024), 12),
+            "process_resident_peak": round(max(rss_values) / (1024 * 1024), 12),
+            "renderer_accounted_gpu_start": round(
+                gpu_memory_values[0] / (1024 * 1024), 12
+            ),
+            "renderer_accounted_gpu_peak": round(
+                max(gpu_memory_values) / (1024 * 1024), 12
+            ),
+            "gpu_memory_method": scopes["gpu_memory"],
+            "gpu_memory_provenance": copy.deepcopy(
+                contract["renderer_accounted_gpu_memory_sources"]
+            ),
+        },
+        "hardware_os": copy.deepcopy(acquisition["hardware_os"]),
+        "known_quirks": copy.deepcopy(quirks),
+    }
+    validate_measurements(
+        measurements,
+        slot,
+        manifest["baseline"]["commit"],
+        contract,
+        instrumentation_commit,
+    )
+    return {
+        "acquisition": acquisition,
+        "acquisition_bytes": acquisition_bytes,
+        "acquisition_sha256": acquisition_sha256,
+        "review": review,
+        "review_bytes": review_bytes,
+        "review_sha256": hashlib.sha256(review_bytes).hexdigest(),
+        "captures": captures,
+        "supporting": supporting,
+        "measurements": measurements,
+    }
+
+
+def record_acquisition(
     manifest: dict[str, object],
     session_path: Path,
     slot_id: str,
-    capture_paths: list[Path],
-    measurement_path: Path,
-    supporting_paths: dict[str, Path] | None = None,
+    acquisition_path: Path,
+    quirks_path: Path,
     fixture_root: Path | None = None,
 ) -> None:
     validate_manifest(manifest, fixture_root)
@@ -1724,112 +2762,111 @@ def record_slot(
         raise OracleError(f"slot {slot_id} already has evidence; start a new session")
     if slot.get("definition_status") != "ready":
         raise OracleError(f"slot {slot_id} is blocked by its corpus definition")
+    if slot.get("machine_contract_status") != "ready":
+        raise OracleError(f"slot {slot_id} is blocked by its machine contract")
 
-    contract = manifest["capture_contract"]
-    repetitions = int(contract["repetitions"])
-    if len(capture_paths) != repetitions:
-        raise OracleError(f"slot {slot_id} requires exactly {repetitions} captures")
-    display = slot["conditions"]["display"]
-    expected_dimensions = (display["width_px"], display["height_px"])
-    capture_sources: list[tuple[Path, bytes]] = []
-    decoded_captures: list[bytes] = []
-    for capture in capture_paths:
-        if not capture.is_file():
-            raise OracleError(f"capture does not exist: {capture}")
-        if capture.suffix.lower() != f".{contract['capture_format']}":
-            raise OracleError(
-                f"capture must be a {contract['capture_format']} file: {capture}"
-            )
-        encoded = _read_file_bytes(capture, "capture", MAX_PNG_BYTES)
-        _, _, rgba = _decode_png_bytes(encoded, str(capture), expected_dimensions)
-        capture_sources.append((capture, encoded))
-        decoded_captures.append(rgba)
-
-    supporting_paths = supporting_paths or {}
-    supporting_contracts = slot["required_supporting_artifacts"]
-    required_roles = set(supporting_contracts)
-    if set(supporting_paths) != required_roles:
-        missing = sorted(required_roles - supporting_paths.keys())
-        extra = sorted(supporting_paths.keys() - required_roles)
-        details = []
-        if missing:
-            details.append(f"missing roles: {', '.join(missing)}")
-        if extra:
-            details.append(f"unexpected roles: {', '.join(extra)}")
-        raise OracleError(
-            f"supporting artifacts do not match the slot ({'; '.join(details)})"
-        )
-    supporting_sources: dict[str, tuple[Path, bytes]] = {}
-    for role, path in supporting_paths.items():
-        if not path.is_file():
-            raise OracleError(f"supporting artifact {role} does not exist: {path}")
-        encoded = _read_file_bytes(
-            path,
-            f"supporting artifact {role}",
-            _supporting_artifact_read_limit(supporting_contracts[role]),
-        )
-        _validate_supporting_artifact_bytes(
-            role, encoded, str(path), supporting_contracts[role]
-        )
-        supporting_sources[role] = (path, encoded)
-    if slot_id == "tools_readback":
-        _validate_tools_readback_consistency(
-            {role: encoded for role, (_, encoded) in supporting_sources.items()},
-            supporting_contracts,
-        )
-
-    measurements = _read_json(measurement_path)
-    if measurements.get("self_variance") is not None:
-        raise OracleError(
-            "measurements.self_variance must be null; oracle.py computes it from captures"
-        )
-    measurements["self_variance"] = _self_variance(decoded_captures)
-    validate_measurements(measurements, slot, manifest["baseline"]["commit"], contract)
+    requests_directory = _validated_session_child_directory(
+        session_path.parent.resolve(), session_path.parent / "requests", "requests"
+    )
+    request_path = requests_directory / f"{slot_id}.json"
+    loaded = _load_machine_acquisition(
+        manifest,
+        session,
+        slot,
+        request_path,
+        acquisition_path,
+        quirks_path,
+    )
     git_errors = _git_errors(
         Path(session["oracle_worktree"]), manifest["baseline"]["commit"]
     )
     if git_errors:
         raise OracleError("; ".join(git_errors))
 
-    artifact_directory = _artifact_directory(session_path, slot_id)
+    acquisition_name = f"acquisition-{str(loaded['acquisition_sha256'])[:12]}"
+    acquisition_fd, acquisition_root = _create_acquisition_directory(
+        session_path, slot_id, acquisition_name
+    )
+    relative_root = Path("artifacts") / slot_id / acquisition_root.name
+
     captures: list[dict[str, object]] = []
-    capture_artifact_contract = _capture_artifact_contract(slot, contract)
-    for index, (source, encoded) in enumerate(capture_sources, start=1):
-        digest = hashlib.sha256(encoded).hexdigest()
-        destination = artifact_directory / (
-            f"oracle-{index:02d}-{digest[:12]}{source.suffix.lower()}"
-        )
-        _persist_artifact(destination, encoded)
-        captures.append(
-            {
-                "path": (Path("artifacts") / slot_id / destination.name).as_posix(),
-                "sha256": digest,
-                "bytes": len(encoded),
-                "source_name": source.name,
-                "contract": copy.deepcopy(capture_artifact_contract),
-            }
-        )
-
+    capture_contract = _capture_artifact_contract(slot, manifest["capture_contract"])
     supporting_artifacts: list[dict[str, object]] = []
-    for role, (source, encoded) in sorted(supporting_sources.items()):
-        digest = hashlib.sha256(encoded).hexdigest()
-        suffix = source.suffix.lower()
-        destination = artifact_directory / f"{role}-{digest[:12]}{suffix}"
-        _persist_artifact(destination, encoded)
-        supporting_artifacts.append(
-            {
-                "role": role,
-                "path": (Path("artifacts") / slot_id / destination.name).as_posix(),
-                "sha256": digest,
-                "bytes": len(encoded),
-                "source_name": source.name,
-                "contract": copy.deepcopy(supporting_contracts[role]),
-            }
-        )
+    try:
+        for item in loaded["captures"]:
+            _persist_relative_bytes(
+                acquisition_fd,
+                item["relative"],
+                item["bytes"],
+                "capture artifact",
+            )
+            metadata = item["metadata"]
+            captures.append(
+                {
+                    "path": (relative_root / item["relative"]).as_posix(),
+                    "sha256": metadata["sha256"],
+                    "bytes": metadata["bytes"],
+                    "source_name": Path(item["relative"]).name,
+                    "contract": copy.deepcopy(capture_contract),
+                    "frame_serial": metadata["frame_serial"],
+                    "transaction_id": metadata["transaction_id"],
+                }
+            )
 
+        for item in loaded["supporting"]:
+            _persist_relative_bytes(
+                acquisition_fd,
+                item["relative"],
+                item["bytes"],
+                "supporting artifact",
+            )
+            metadata = item["metadata"]
+            role = metadata["role"]
+            supporting_artifacts.append(
+                {
+                    "role": role,
+                    "path": (relative_root / item["relative"]).as_posix(),
+                    "sha256": metadata["sha256"],
+                    "bytes": metadata["bytes"],
+                    "source_name": Path(item["relative"]).name,
+                    "contract": copy.deepcopy(
+                        slot["required_supporting_artifacts"][role]
+                    ),
+                    "frame_serial": metadata["frame_serial"],
+                    "transaction_id": metadata["transaction_id"],
+                }
+            )
+
+        _persist_relative_bytes(
+            acquisition_fd,
+            "receipt.json",
+            loaded["acquisition_bytes"],
+            "acquisition receipt",
+        )
+        _persist_relative_bytes(
+            acquisition_fd,
+            "known-quirks-review.json",
+            loaded["review_bytes"],
+            "known-quirks review",
+        )
+    finally:
+        os.close(acquisition_fd)
+
+    measurements = loaded["measurements"]
     slot["evidence"] = {
         "status": "complete",
         "recorded_at": _utc_now(),
+        "acquisition": {
+            "path": (relative_root / "receipt.json").as_posix(),
+            "sha256": loaded["acquisition_sha256"],
+            "bytes": len(loaded["acquisition_bytes"]),
+        },
+        "known_quirks_review": {
+            "path": (relative_root / "known-quirks-review.json").as_posix(),
+            "sha256": loaded["review_sha256"],
+            "bytes": len(loaded["review_bytes"]),
+        },
+        "producer": copy.deepcopy(loaded["acquisition"]["producer"]),
         "captures": captures,
         "supporting_artifacts": supporting_artifacts,
         "self_variance": measurements["self_variance"],
@@ -1855,213 +2892,163 @@ def verify_session(
     errors = _session_definition_errors(manifest, session)
     if errors:
         return errors
-    worktree_value = session.get("oracle_worktree")
     if check_git:
-        errors.extend(_git_errors(Path(worktree_value), manifest["baseline"]["commit"]))
+        errors.extend(
+            _git_errors(
+                Path(str(session["oracle_worktree"])),
+                str(manifest["baseline"]["commit"]),
+            )
+        )
+    try:
+        requests_directory = _validated_session_child_directory(
+            session_path.parent.resolve(),
+            session_path.parent / "requests",
+            "requests",
+        )
+    except OracleError as error:
+        return errors + [str(error)]
 
-    session_slots = session.get("slots")
-    session_slots_by_id = {slot["id"]: slot for slot in session_slots}
+    session_slots = _require_array(session.get("slots"), "session.slots")
+    session_slots_by_id = {
+        str(slot["id"]): slot for slot in session_slots if isinstance(slot, dict)
+    }
     for expected in manifest["slots"]:
-        slot_id = expected["id"]
-        value = session_slots_by_id[slot_id]
+        slot_id = str(expected["id"])
+        slot = session_slots_by_id[slot_id]
         if expected["definition_status"] != "ready":
             blockers = expected["definition_blockers"]
             errors.append(f"{slot_id}: definition is blocked ({'; '.join(blockers)})")
-        evidence = value.get("evidence")
+        evidence = slot.get("evidence")
         if not isinstance(evidence, dict) or evidence.get("status") != "complete":
             errors.append(f"{slot_id}: required oracle evidence is missing")
             continue
-        captures = evidence.get("captures")
-        repetitions = int(manifest["capture_contract"]["repetitions"])
-        if not isinstance(captures, list) or len(captures) != repetitions:
-            errors.append(f"{slot_id}: expected {repetitions} captures")
-            continue
-        capture_paths = [
-            artifact.get("path") for artifact in captures if isinstance(artifact, dict)
-        ]
-        if (
-            len(capture_paths) != repetitions
-            or not all(isinstance(path, str) for path in capture_paths)
-            or len(set(capture_paths)) != repetitions
-        ):
-            errors.append(f"{slot_id}: capture artifact paths must be unique")
-        decoded_captures: list[bytes] = []
-        capture_artifact_contract = _capture_artifact_contract(
-            expected, manifest["capture_contract"]
-        )
-        for index, artifact in enumerate(captures):
-            if not isinstance(artifact, dict):
-                errors.append(f"{slot_id}: capture {index + 1} metadata is invalid")
-                continue
-            relative_path = artifact.get("path")
-            digest = artifact.get("sha256")
-            if not isinstance(relative_path, str) or not isinstance(digest, str):
-                errors.append(f"{slot_id}: capture {index + 1} path or hash is invalid")
-                continue
-            if not Path(relative_path).name.startswith(f"oracle-{index + 1:02d}-"):
-                errors.append(
-                    f"{slot_id}: capture {index + 1} path does not match its role"
-                )
-            try:
-                path = _stored_artifact_path(session_path, slot_id, relative_path)
-            except OracleError as error:
-                errors.append(str(error))
-                continue
-            if not path.is_file():
-                errors.append(f"{slot_id}: artifact is missing: {relative_path}")
-                continue
-            try:
-                encoded = _read_file_bytes(path, "stored capture", MAX_PNG_BYTES)
-            except OracleError as error:
-                errors.append(f"{slot_id}: {error}")
-                continue
-            actual_hash = hashlib.sha256(encoded).hexdigest()
-            if actual_hash != digest or not HASH_PATTERN.fullmatch(digest):
-                errors.append(f"{slot_id}: artifact hash mismatch: {relative_path}")
-            if artifact.get("bytes") != len(encoded):
-                errors.append(f"{slot_id}: artifact size mismatch: {relative_path}")
-            if not _canonical_json_equal(
-                artifact.get("contract"), capture_artifact_contract
-            ):
-                errors.append(f"{slot_id}: capture contract mismatch: {relative_path}")
-            try:
-                display = expected["conditions"]["display"]
-                _, _, rgba = _decode_png_bytes(
-                    encoded,
-                    relative_path,
-                    (display["width_px"], display["height_px"]),
-                )
-                decoded_captures.append(rgba)
-            except OracleError as error:
-                errors.append(f"{slot_id}: {error}")
 
-        if len(decoded_captures) == repetitions:
-            computed_variance = _self_variance(decoded_captures)
-            if evidence.get("self_variance") != computed_variance:
-                errors.append(
-                    f"{slot_id}: self-variance does not match decoded captures"
-                )
-
-        supporting = evidence.get("supporting_artifacts")
-        supporting_contracts = expected["required_supporting_artifacts"]
-        required_roles = set(supporting_contracts)
-        supporting_artifact_bytes: dict[str, bytes] = {}
-        if not isinstance(supporting, list):
-            errors.append(f"{slot_id}: supporting artifacts are invalid")
-        else:
-            actual_role_list = [
-                artifact.get("role")
-                for artifact in supporting
-                if isinstance(artifact, dict)
-            ]
-            roles_are_strings = all(isinstance(role, str) for role in actual_role_list)
-            roles_are_unique = roles_are_strings and len(set(actual_role_list)) == len(
-                actual_role_list
-            )
-            if len(actual_role_list) != len(supporting) or not roles_are_unique:
-                errors.append(
-                    f"{slot_id}: supporting artifact roles are invalid or duplicated"
-                )
-            if not roles_are_strings or set(actual_role_list) != required_roles:
-                errors.append(
-                    f"{slot_id}: supporting artifact roles do not match the corpus"
-                )
-            supporting_paths = [
-                artifact.get("path")
-                for artifact in supporting
-                if isinstance(artifact, dict)
-            ]
-            if (
-                len(supporting_paths) != len(supporting)
-                or not all(isinstance(path, str) for path in supporting_paths)
-                or len(set(supporting_paths)) != len(supporting_paths)
-            ):
-                errors.append(f"{slot_id}: supporting artifact paths must be unique")
-            for artifact in supporting:
-                if not isinstance(artifact, dict):
-                    errors.append(f"{slot_id}: supporting artifact metadata is invalid")
-                    continue
-                relative_path = artifact.get("path")
-                digest = artifact.get("sha256")
-                role = artifact.get("role")
-                if not isinstance(relative_path, str) or not isinstance(digest, str):
-                    errors.append(
-                        f"{slot_id}: supporting artifact path or hash is invalid"
-                    )
-                    continue
-                if not isinstance(role, str) or role not in supporting_contracts:
-                    continue
-                if not Path(relative_path).name.startswith(f"{role}-"):
-                    errors.append(
-                        f"{slot_id}: supporting artifact {role} path does not match its role"
-                    )
-                canonical_contract = supporting_contracts[role]
-                if not _canonical_json_equal(
-                    artifact.get("contract"), canonical_contract
-                ):
-                    errors.append(
-                        f"{slot_id}: supporting artifact {role} contract mismatch"
-                    )
-                try:
-                    path = _stored_artifact_path(session_path, slot_id, relative_path)
-                except OracleError as error:
-                    errors.append(str(error))
-                    continue
-                if not path.is_file():
-                    errors.append(f"{slot_id}: artifact is missing: {relative_path}")
-                    continue
-                try:
-                    encoded = _read_file_bytes(
-                        path,
-                        "stored supporting artifact",
-                        _supporting_artifact_read_limit(canonical_contract),
-                    )
-                except OracleError as error:
-                    errors.append(f"{slot_id}: {error}")
-                    continue
-                if hashlib.sha256(
-                    encoded
-                ).hexdigest() != digest or not HASH_PATTERN.fullmatch(digest):
-                    errors.append(f"{slot_id}: artifact hash mismatch: {relative_path}")
-                if artifact.get("bytes") != len(encoded):
-                    errors.append(f"{slot_id}: artifact size mismatch: {relative_path}")
-                try:
-                    _validate_supporting_artifact_bytes(
-                        role, encoded, relative_path, canonical_contract
-                    )
-                    supporting_artifact_bytes[role] = encoded
-                except OracleError as error:
-                    errors.append(f"{slot_id}: {error}")
-        if (
-            slot_id == "tools_readback"
-            and set(supporting_artifact_bytes) == required_roles
-        ):
-            try:
-                _validate_tools_readback_consistency(
-                    supporting_artifact_bytes, supporting_contracts
-                )
-            except OracleError as error:
-                errors.append(f"{slot_id}: {error}")
         try:
-            measurements = {
-                "schema": 1,
-                "slot_id": slot_id,
-                "baseline_commit": manifest["baseline"]["commit"],
-                "conditions_sha256": value["conditions_sha256"],
-                "self_variance": evidence.get("self_variance"),
-                "frame_timing_ms": evidence.get("frame_timing_ms"),
-                "memory_mib": evidence.get("memory_mib"),
-                "hardware_os": evidence.get("hardware_os"),
-                "known_quirks": evidence.get("known_quirks"),
-            }
-            validate_measurements(
-                measurements,
-                value,
-                manifest["baseline"]["commit"],
-                manifest["capture_contract"],
+            _require_exact_keys(
+                evidence,
+                f"{slot_id}.evidence",
+                {
+                    "status",
+                    "recorded_at",
+                    "acquisition",
+                    "known_quirks_review",
+                    "producer",
+                    "captures",
+                    "supporting_artifacts",
+                    "self_variance",
+                    "frame_timing_ms",
+                    "memory_mib",
+                    "hardware_os",
+                    "known_quirks",
+                },
             )
-        except OracleError as error:
-            errors.append(f"{slot_id}: {error}")
+            _require_string(evidence.get("recorded_at"), f"{slot_id}.recorded_at")
+            acquisition_metadata = _require_exact_keys(
+                evidence.get("acquisition"),
+                f"{slot_id}.acquisition",
+                {"path", "sha256", "bytes"},
+            )
+            review_metadata = _require_exact_keys(
+                evidence.get("known_quirks_review"),
+                f"{slot_id}.known_quirks_review",
+                {"path", "sha256", "bytes"},
+            )
+            acquisition_path = _stored_artifact_path(
+                session_path, slot_id, acquisition_metadata["path"]
+            )
+            review_path = _stored_artifact_path(
+                session_path, slot_id, review_metadata["path"]
+            )
+            loaded = _load_machine_acquisition(
+                manifest,
+                session,
+                slot,
+                requests_directory / f"{slot_id}.json",
+                acquisition_path,
+                review_path,
+            )
+            acquisition_size = _require_integer(
+                acquisition_metadata.get("bytes"),
+                f"{slot_id}.acquisition.bytes",
+                1,
+            )
+            review_size = _require_integer(
+                review_metadata.get("bytes"),
+                f"{slot_id}.known_quirks_review.bytes",
+                1,
+            )
+            if _require_hash(
+                acquisition_metadata.get("sha256"),
+                f"{slot_id}.acquisition.sha256",
+            ) != loaded["acquisition_sha256"] or acquisition_size != len(
+                loaded["acquisition_bytes"]
+            ):
+                raise OracleError("acquisition receipt metadata mismatch")
+            if _require_hash(
+                review_metadata.get("sha256"),
+                f"{slot_id}.known_quirks_review.sha256",
+            ) != loaded["review_sha256"] or review_size != len(loaded["review_bytes"]):
+                raise OracleError("known-quirks review metadata mismatch")
+
+            producer = loaded["acquisition"]["producer"]
+            if not _canonical_json_equal(evidence.get("producer"), producer):
+                raise OracleError("producer metadata is not receipt-derived")
+            derived = loaded["measurements"]
+            for name in (
+                "self_variance",
+                "frame_timing_ms",
+                "memory_mib",
+                "hardware_os",
+                "known_quirks",
+            ):
+                if not _canonical_json_equal(evidence.get(name), derived[name]):
+                    raise OracleError(f"{name} is not acquisition-derived")
+
+            stored_root = Path(str(acquisition_metadata["path"])).parent
+            capture_contract = _capture_artifact_contract(
+                slot, manifest["capture_contract"]
+            )
+            expected_captures = []
+            for item in loaded["captures"]:
+                metadata = item["metadata"]
+                expected_captures.append(
+                    {
+                        "path": (stored_root / item["relative"]).as_posix(),
+                        "sha256": metadata["sha256"],
+                        "bytes": metadata["bytes"],
+                        "source_name": Path(item["relative"]).name,
+                        "contract": copy.deepcopy(capture_contract),
+                        "frame_serial": metadata["frame_serial"],
+                        "transaction_id": metadata["transaction_id"],
+                    }
+                )
+            if not _canonical_json_equal(evidence.get("captures"), expected_captures):
+                raise OracleError("capture metadata is not receipt-derived")
+
+            expected_supporting = []
+            for item in loaded["supporting"]:
+                metadata = item["metadata"]
+                role = metadata["role"]
+                expected_supporting.append(
+                    {
+                        "role": role,
+                        "path": (stored_root / item["relative"]).as_posix(),
+                        "sha256": metadata["sha256"],
+                        "bytes": metadata["bytes"],
+                        "source_name": Path(item["relative"]).name,
+                        "contract": copy.deepcopy(
+                            slot["required_supporting_artifacts"][role]
+                        ),
+                        "frame_serial": metadata["frame_serial"],
+                        "transaction_id": metadata["transaction_id"],
+                    }
+                )
+            if not _canonical_json_equal(
+                evidence.get("supporting_artifacts"), expected_supporting
+            ):
+                raise OracleError("supporting metadata is not receipt-derived")
+        except (KeyError, OracleError) as error:
+            errors.append(f"{slot_id}: invalid machine acquisition: {error}")
     return errors
 
 
@@ -2097,15 +3084,8 @@ def _parser() -> argparse.ArgumentParser:
         "--session", type=Path, default=root / ".build/metal-oracle/session.json"
     )
     record.add_argument("--slot", required=True)
-    record.add_argument("--capture", action="append", type=Path, required=True)
-    record.add_argument("--measurements", type=Path, required=True)
-    record.add_argument(
-        "--artifact",
-        action="append",
-        default=[],
-        metavar="ROLE=PATH",
-        help="required supporting artifact, such as raw_color=frame.bgra",
-    )
+    record.add_argument("--acquisition", type=Path, required=True)
+    record.add_argument("--quirks", type=Path, required=True)
 
     verify = subparsers.add_parser("verify", help="verify every required oracle slot")
     verify.add_argument(
@@ -2134,21 +3114,12 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 0
         if arguments.command == "record":
-            supporting: dict[str, Path] = {}
-            for value in arguments.artifact:
-                if "=" not in value:
-                    raise OracleError("--artifact must use ROLE=PATH")
-                role, path = value.split("=", 1)
-                if not re.fullmatch(r"[a-z][a-z0-9_]*", role) or role in supporting:
-                    raise OracleError(f"invalid or duplicate artifact role: {role}")
-                supporting[role] = Path(path)
-            record_slot(
+            record_acquisition(
                 manifest,
                 arguments.session,
                 arguments.slot,
-                arguments.capture,
-                arguments.measurements,
-                supporting,
+                arguments.acquisition,
+                arguments.quirks,
                 arguments.fixture_root,
             )
             print(f"recorded oracle slot {arguments.slot}")
