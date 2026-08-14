@@ -165,3 +165,35 @@ fragment float4 firestorm_blend_pipeline_fragment(
 {
     return float4(color_bytes) / 255.0f;
 }
+
+struct RenderPassDraw
+{
+    float depth;
+    float3 unused;
+};
+
+struct RenderPassVertex
+{
+    float4 position [[position]];
+};
+
+vertex RenderPassVertex firestorm_render_pass_vertex(
+    uint vertex_id [[vertex_id]],
+    constant RenderPassDraw& draw [[buffer(0)]])
+{
+    constexpr float2 positions[] =
+    {
+        float2(-1.0f, -1.0f),
+        float2(-1.0f,  3.0f),
+        float2( 3.0f, -1.0f),
+    };
+
+    RenderPassVertex output;
+    output.position = float4(positions[vertex_id], draw.depth, 1.0f);
+    return output;
+}
+
+fragment half4 firestorm_render_pass_fragment()
+{
+    return half4(0.0h, 1.0h, 0.0h, 1.0h);
+}

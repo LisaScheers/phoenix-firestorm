@@ -98,6 +98,24 @@ masked, format-absent, and otherwise ignored blend fields share entries without
 introducing a global pipeline cache, desired-state tracker, or render-pass
 abstraction.
 
+`MetalRenderTarget` strongly groups one private, render-target-capable,
+single-sample color texture and an optional matching private Depth32Float
+texture. This slice attaches only mip zero of one-slice 2D textures and rejects
+textures with additional mips. `MetalRenderPass` maps typed load, store, and
+clear actions into a movable RAII encoder scope. It validates the complete
+target, descriptor, label, and command-buffer relationship before creating the
+native encoder. Finite HDR color clears are accepted; a selected depth clear
+must be finite and in `[0, 1]`; unselected clear payloads are ignored.
+
+The pass borrows the command buffer and never commits, waits, submits, or owns a
+frame. Callers externally serialize pass creation/use/end with enqueue and
+commit on that command buffer. A not-enqueued or explicitly enqueued buffer is
+accepted while encoding is still open; a committed buffer is rejected. `end()`
+and destruction close an active encoder exactly once. Move assignment
+intentionally closes an active destination encoder before taking the source
+scope. Encoder handles are borrowed and remain valid only while their pass is
+active; attachment handles returned by the target are additional strong owners.
+
 ```sh
 cmake --build .build/metal-core --target \
   firestorm_metal_resource_layout_test \
@@ -105,9 +123,10 @@ cmake --build .build/metal-core --target \
   firestorm_metal_resource_transfer_test \
   firestorm_metal_sampler_test \
   firestorm_metal_depth_raster_test \
-  firestorm_metal_blend_pipeline_test
+  firestorm_metal_blend_pipeline_test \
+  firestorm_metal_render_pass_test
 (cd .build/metal-core && \
-  ctest -R '^firestorm_metal_(resource_layout|frame_context|resource_transfer|sampler|depth_raster|blend_pipeline)$' \
+  ctest -R '^firestorm_metal_(resource_layout|frame_context|resource_transfer|sampler|depth_raster|blend_pipeline|render_pass)$' \
     --output-on-failure)
 ```
 
@@ -127,6 +146,13 @@ The blend/pipeline test seeds and blends nine private RGBA8 cells with separate
 RGB and alpha equations, factors, operations, and write masks. It reads back the
 exact 9x1 byte row through the asynchronous frame-context transfer path. The
 registered test runs with Metal API and GPU validation enabled.
+
+The render-pass test first clears a private 2x1 RGBA8 target to red and a
+matching Depth32Float target to `0.5`, storing both. A second pass loads both,
+uses `Less` with depth writes disabled, and draws green at depth `0.25` then
+`0.75` into separate one-pixel scissors. Its asynchronous 256-byte-pitch
+readback must publish only on successful completion and begin with exact
+green-then-red RGBA bytes.
 
 ## Firestorm build integration
 
@@ -156,7 +182,8 @@ cmake --build BUILD_DIR --target \
   firestorm_metal_resource_transfer_test \
   firestorm_metal_sampler_test \
   firestorm_metal_depth_raster_test \
-  firestorm_metal_blend_pipeline_test
+  firestorm_metal_blend_pipeline_test \
+  firestorm_metal_render_pass_test
 # Single-config executables:
 BUILD_DIR/llwindow/metal/firestorm_metal_frame_contracts_test
 BUILD_DIR/llwindow/metal/firestorm_metal_resource_layout_test
@@ -173,6 +200,9 @@ env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
 env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
   BUILD_DIR/llwindow/metal/firestorm_metal_blend_pipeline_test \
     --metallib BUILD_DIR/llwindow/metal/generated/bootstrap.metallib
+env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
+  BUILD_DIR/llwindow/metal/firestorm_metal_render_pass_test \
+    --metallib BUILD_DIR/llwindow/metal/generated/bootstrap.metallib
 # Multi-config generators such as Xcode:
 cmake --build BUILD_DIR --config CONFIG --target \
   firestorm_metal_frame_contracts_test \
@@ -181,7 +211,8 @@ cmake --build BUILD_DIR --config CONFIG --target \
   firestorm_metal_resource_transfer_test \
   firestorm_metal_sampler_test \
   firestorm_metal_depth_raster_test \
-  firestorm_metal_blend_pipeline_test
+  firestorm_metal_blend_pipeline_test \
+  firestorm_metal_render_pass_test
 BUILD_DIR/llwindow/metal/CONFIG/firestorm_metal_frame_contracts_test
 BUILD_DIR/llwindow/metal/CONFIG/firestorm_metal_resource_layout_test
 env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
@@ -196,5 +227,8 @@ env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
     --metallib BUILD_DIR/llwindow/metal/generated/bootstrap.metallib
 env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
   BUILD_DIR/llwindow/metal/CONFIG/firestorm_metal_blend_pipeline_test \
+    --metallib BUILD_DIR/llwindow/metal/generated/bootstrap.metallib
+env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
+  BUILD_DIR/llwindow/metal/CONFIG/firestorm_metal_render_pass_test \
     --metallib BUILD_DIR/llwindow/metal/generated/bootstrap.metallib
 ```
