@@ -173,6 +173,11 @@ MTLVertexStepFunction nativeStepFunction(MetalVertexStepFunction step)
     return MTLVertexStepFunctionPerVertex;
 }
 
+NSUInteger nativeStepRate(MetalVertexStepFunction step)
+{
+    return step == MetalVertexStepFunction::constant ? 0 : 1;
+}
+
 MTLVertexDescriptor* makeVertexDescriptor(const MetalProgramDescriptor& program)
 {
     MTLVertexDescriptor* descriptor = [MTLVertexDescriptor vertexDescriptor];
@@ -189,7 +194,8 @@ MTLVertexDescriptor* makeVertexDescriptor(const MetalProgramDescriptor& program)
         descriptor.layouts[layout.bufferIndex].stride = layout.stride;
         descriptor.layouts[layout.bufferIndex].stepFunction =
             nativeStepFunction(layout.stepFunction);
-        descriptor.layouts[layout.bufferIndex].stepRate = 1;
+        descriptor.layouts[layout.bufferIndex].stepRate =
+            nativeStepRate(layout.stepFunction);
     }
     return descriptor;
 }
@@ -272,6 +278,10 @@ bool hasVertexBuffer(const MetalProgramDescriptor& program, std::uint8_t index)
 
 void testPureValidation()
 {
+    EXPECT(nativeStepRate(MetalVertexStepFunction::per_vertex) == 1);
+    EXPECT(nativeStepRate(MetalVertexStepFunction::per_instance) == 1);
+    EXPECT(nativeStepRate(MetalVertexStepFunction::constant) == 0);
+
     std::string error;
     EXPECT(validateMetalProgramCatalogMetadata(declaredMetalProgramCatalog(), &error));
     EXPECT(error.empty());

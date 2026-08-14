@@ -733,8 +733,11 @@ if (FIRESTORM_BUILD_METAL_PROGRAM_ARTIFACTS)
       "${FIRESTORM_REPOSITORY_ROOT}/scripts/metal")
   set(FIRESTORM_METAL_PROGRAM_MANIFEST
       "${FIRESTORM_REPOSITORY_ROOT}/doc/metal/shader-spike.json")
+  get_filename_component(FIRESTORM_METAL_PROGRAM_BINARY_DIR
+                         "${CMAKE_CURRENT_BINARY_DIR}"
+                         REALPATH)
   set(FIRESTORM_METAL_PROGRAM_OUTPUT_DIR
-      "${CMAKE_CURRENT_BINARY_DIR}/declared-program-artifacts")
+      "${FIRESTORM_METAL_PROGRAM_BINARY_DIR}/declared-program-artifacts")
   set(FIRESTORM_METAL_PROGRAM_CATALOG_DIR
       "${FIRESTORM_METAL_PROGRAM_OUTPUT_DIR}/firestorm-declared-programs")
   set(FIRESTORM_METAL_PROGRAM_LIBRARY

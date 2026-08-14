@@ -189,6 +189,21 @@ class RuntimeProgramsTest(unittest.TestCase):
                 cmake,
             )
 
+    def test_cmake_canonicalizes_artifact_output_before_generation(self) -> None:
+        cmake = (self.repository / "indra/llwindow/metal/CMakeLists.txt").read_text(
+            encoding="utf-8"
+        )
+        canonicalization = """get_filename_component(FIRESTORM_METAL_PROGRAM_BINARY_DIR
+                         "${CMAKE_CURRENT_BINARY_DIR}"
+                         REALPATH)
+  set(FIRESTORM_METAL_PROGRAM_OUTPUT_DIR
+      "${FIRESTORM_METAL_PROGRAM_BINARY_DIR}/declared-program-artifacts")"""
+        self.assertIn(canonicalization, cmake)
+        self.assertLess(
+            cmake.index(canonicalization),
+            cmake.index('--output "${FIRESTORM_METAL_PROGRAM_OUTPUT_DIR}"'),
+        )
+
     def test_document_and_cpp_are_lexical_path_free_and_self_describing(self) -> None:
         alpha = self._record("alpha_program")
         zulu = self._record("zulu_program")
