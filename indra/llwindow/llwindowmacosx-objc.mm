@@ -28,6 +28,7 @@
 #include <AppKit/AppKit.h>
 #include <Cocoa/Cocoa.h>
 #include <OpenGL/OpenGL.h>
+#include <cmath>
 #include <errno.h>
 #include "llopenglview-objc.h"
 #include "llwindowmacosx-objc.h"
@@ -274,14 +275,15 @@ bool resizeCocoaMetalWindow(
 {
     NSWindow *window = (NSWindow*)window_ref;
     const NSSize content_size = window.contentView.bounds.size;
-    if (content_size.width <= 0.0 || content_size.height <= 0.0)
+    const CGFloat width = content_size.width + width_delta;
+    const CGFloat height = content_size.height + height_delta;
+    if (!std::isfinite(width) || !std::isfinite(height) ||
+        width <= 0.0 || height <= 0.0)
     {
         return false;
     }
 
-    [window setContentSize:NSMakeSize(
-        content_size.width + width_delta,
-        content_size.height + height_delta)];
+    [window setContentSize:NSMakeSize(width, height)];
     [window.contentView layoutSubtreeIfNeeded];
     return true;
 }

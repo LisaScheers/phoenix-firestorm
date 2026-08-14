@@ -780,7 +780,13 @@ bool LLWindowMacOSX::createContext(int x, int y, int width, int height, int bits
         {
             LL_WARNS("MetalBootstrap") << "Could not initialize the active Metal viewer: "
                                         << error << LL_ENDL;
-            mMetalBootstrap.reset();
+            if (mMetalBootstrap)
+            {
+                mMetalBootstrap->detachFromNativeView();
+                mMetalBootstrap.reset();
+            }
+            removeGLView(mGLView);
+            mGLView = NULL;
             return false;
         }
 
@@ -1216,8 +1222,13 @@ bool LLWindowMacOSX::waitForMetalBootstrapFrame(
     std::chrono::milliseconds timeout,
     std::string& error) noexcept
 {
-    return mMetalBootstrap &&
-        mMetalBootstrap->waitForIdle(timeout, &error) &&
+    if (!mMetalBootstrap)
+    {
+        error = "the Metal bootstrap is unavailable";
+        return false;
+    }
+
+    return mMetalBootstrap->waitForIdle(timeout, &error) &&
         mMetalBootstrap->waitForPresent(timeout, &error);
 }
 

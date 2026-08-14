@@ -606,7 +606,17 @@ attributedStringInfo getSegments(NSAttributedString *str)
 - (NSRange)markedRange
 {
 #if defined(LL_ACTIVE_METAL_VIEWER)
-    return NSMakeRange(NSNotFound, 0);
+    if (!mHasMarkedText)
+    {
+        return NSMakeRange(NSNotFound, 0);
+    }
+
+    int range[2] = { -1, 0 };
+    getPreeditMarkedRange(&range[0], &range[1]);
+    return range[0] < 0
+        ? NSMakeRange(NSNotFound, 0)
+        : NSMakeRange(static_cast<NSUInteger>(range[0]),
+                      static_cast<NSUInteger>(range[1]));
 #else
     int range[2];
     getPreeditMarkedRange(&range[0], &range[1]);
@@ -617,7 +627,17 @@ attributedStringInfo getSegments(NSAttributedString *str)
 - (NSRange)selectedRange
 {
 #if defined(LL_ACTIVE_METAL_VIEWER)
-    return NSMakeRange(NSNotFound, 0);
+    if (!mHasMarkedText)
+    {
+        return NSMakeRange(NSNotFound, 0);
+    }
+
+    int range[2] = { -1, 0 };
+    getPreeditSelectionRange(&range[0], &range[1]);
+    return range[0] < 0
+        ? NSMakeRange(NSNotFound, 0)
+        : NSMakeRange(static_cast<NSUInteger>(range[0]),
+                      static_cast<NSUInteger>(range[1]));
 #else
     int range[2];
     getPreeditSelectionRange(&range[0], &range[1]);
