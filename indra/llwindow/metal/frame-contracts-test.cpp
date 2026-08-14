@@ -45,6 +45,15 @@ void expect(bool condition, const char* expression, int line)
 }
 
 #define EXPECT(expression) expect(static_cast<bool>(expression), #expression, __LINE__)
+#define REQUIRE(expression)                                                      \
+    do                                                                           \
+    {                                                                            \
+        if (!(expression))                                                       \
+        {                                                                        \
+            expect(false, #expression, __LINE__);                                \
+            return;                                                              \
+        }                                                                        \
+    } while (false)
 
 using firestorm::metal::FrameSlots;
 using firestorm::metal::FrameToken;
@@ -111,9 +120,9 @@ void testThreeSlotsAndOutOfOrderCompletion()
     const auto first  = slots.tryBegin();
     const auto second = slots.tryBegin();
     const auto third  = slots.tryBegin();
-    EXPECT(first.has_value());
-    EXPECT(second.has_value());
-    EXPECT(third.has_value());
+    REQUIRE(first.has_value());
+    REQUIRE(second.has_value());
+    REQUIRE(third.has_value());
     EXPECT(first->slot == 0);
     EXPECT(second->slot == 1);
     EXPECT(third->slot == 2);
@@ -125,7 +134,7 @@ void testThreeSlotsAndOutOfOrderCompletion()
 
     EXPECT(slots.complete(*third));
     const auto third_reused = slots.tryBegin();
-    EXPECT(third_reused.has_value());
+    REQUIRE(third_reused.has_value());
     EXPECT(third_reused->slot == third->slot);
     EXPECT(third_reused->generation > third->generation);
     EXPECT(!slots.complete(*third));
@@ -150,14 +159,14 @@ void testTokenStateAndGenerationChecks()
     EXPECT(!slots.complete(invalid_slot));
 
     const auto first = slots.tryBegin();
-    EXPECT(first.has_value());
+    REQUIRE(first.has_value());
     EXPECT(!slots.complete(*first));
     EXPECT(slots.cancel(*first));
     EXPECT(!slots.cancel(*first));
     EXPECT(!slots.submit(*first));
 
     const auto reused = slots.tryBegin();
-    EXPECT(reused.has_value());
+    REQUIRE(reused.has_value());
     EXPECT(reused->slot == first->slot);
     EXPECT(reused->generation > first->generation);
     EXPECT(!slots.submit(*first));

@@ -34,7 +34,7 @@ The standalone build also includes an ordinary C++17 test for the three-slot
 frame lifecycle and non-wrapping transient allocator:
 
 ```sh
-ctest --test-dir .build/metal-bootstrap --output-on-failure
+(cd .build/metal-bootstrap && ctest --output-on-failure)
 ```
 
 `FrameSlots` accepts at most three concurrent frames and rejects stale or
@@ -64,5 +64,8 @@ be requested explicitly without registering a test in the viewer's CTest tree:
 
 ```sh
 cmake --build BUILD_DIR --target firestorm_metal_frame_contracts_test
+# Single-config generators:
 BUILD_DIR/llwindow/metal/firestorm_metal_frame_contracts_test
+# Multi-config generators such as Xcode:
+BUILD_DIR/llwindow/metal/CONFIG/firestorm_metal_frame_contracts_test
 ```
