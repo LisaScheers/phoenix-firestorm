@@ -70,3 +70,22 @@ fragment half4 firestorm_offscreen_orientation_fragment(
         ? half4(0.0h, 0.0h, 1.0h, 1.0h)
         : half4(1.0h, 1.0h, 1.0h, 1.0h);
 }
+
+kernel void firestorm_sampler_test(
+    texture2d<half, access::sample> source [[texture(0)]],
+    texture2d<half, access::write> output [[texture(1)]],
+    sampler repeat_sampler [[sampler(0)]],
+    sampler clamp_sampler [[sampler(1)]],
+    uint2 position [[thread_position_in_grid]])
+{
+    if (position.x >= 2 || position.y != 0)
+    {
+        return;
+    }
+
+    constexpr float2 outside_left(-0.125f, 0.5f);
+    const half4 color = position.x == 0
+        ? source.sample(repeat_sampler, outside_left)
+        : source.sample(clamp_sampler, outside_left);
+    output.write(color, position);
+}

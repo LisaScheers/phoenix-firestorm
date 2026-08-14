@@ -80,15 +80,27 @@ readbacks use a separate explicit byte budget. The caller owns the command
 buffer and queue; the batch never commits or waits, and resources or bytes are
 published only by the frame context's successful completion action.
 
+`MetalSamplerCache` validates typed address, minification, magnification, mip,
+and anisotropy fields before creating immutable native states. Its explicit
+canonical key maps every mip filter to `not_mipmapped` for one-level textures,
+so observably equivalent requests share one strongly owned cache entry. Handles
+borrowed from the cache remain valid for the cache lifetime.
+
 ```sh
 cmake --build .build/metal-core --target \
   firestorm_metal_resource_layout_test \
   firestorm_metal_frame_context_test \
-  firestorm_metal_resource_transfer_test
+  firestorm_metal_resource_transfer_test \
+  firestorm_metal_sampler_test
 (cd .build/metal-core && \
-  ctest -R '^firestorm_metal_(resource_layout|frame_context|resource_transfer)$' \
+  ctest -R '^firestorm_metal_(resource_layout|frame_context|resource_transfer|sampler)$' \
     --output-on-failure)
 ```
+
+The sampler test uploads a private 2x1 RGBA8 texture, samples one out-of-range
+coordinate with repeat and clamp states, and reads back exact distinct pixels
+through the asynchronous frame-context transfer path. The registered test runs
+with Metal API and GPU validation enabled.
 
 ## Firestorm build integration
 
@@ -115,23 +127,32 @@ cmake --build BUILD_DIR --target \
   firestorm_metal_frame_contracts_test \
   firestorm_metal_resource_layout_test \
   firestorm_metal_frame_context_test \
-  firestorm_metal_resource_transfer_test
+  firestorm_metal_resource_transfer_test \
+  firestorm_metal_sampler_test
+# Single-config executables:
 BUILD_DIR/llwindow/metal/firestorm_metal_frame_contracts_test
 BUILD_DIR/llwindow/metal/firestorm_metal_resource_layout_test
 env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
   BUILD_DIR/llwindow/metal/firestorm_metal_frame_context_test
 env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
   BUILD_DIR/llwindow/metal/firestorm_metal_resource_transfer_test
+env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
+  BUILD_DIR/llwindow/metal/firestorm_metal_sampler_test \
+    --metallib BUILD_DIR/llwindow/metal/generated/bootstrap.metallib
 # Multi-config generators such as Xcode:
 cmake --build BUILD_DIR --config CONFIG --target \
   firestorm_metal_frame_contracts_test \
   firestorm_metal_resource_layout_test \
   firestorm_metal_frame_context_test \
-  firestorm_metal_resource_transfer_test
+  firestorm_metal_resource_transfer_test \
+  firestorm_metal_sampler_test
 BUILD_DIR/llwindow/metal/CONFIG/firestorm_metal_frame_contracts_test
 BUILD_DIR/llwindow/metal/CONFIG/firestorm_metal_resource_layout_test
 env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
   BUILD_DIR/llwindow/metal/CONFIG/firestorm_metal_frame_context_test
 env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
   BUILD_DIR/llwindow/metal/CONFIG/firestorm_metal_resource_transfer_test
+env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
+  BUILD_DIR/llwindow/metal/CONFIG/firestorm_metal_sampler_test \
+    --metallib BUILD_DIR/llwindow/metal/generated/bootstrap.metallib
 ```
