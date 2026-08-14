@@ -507,6 +507,17 @@ std::string canonicalHash(const boost::json::value& value)
     return sha256(reinterpret_cast<const U8*>(encoded.data()), encoded.size());
 }
 
+bool syncDescriptor(int descriptor)
+{
+    int result = 0;
+    do
+    {
+        result = ::fsync(descriptor);
+    }
+    while (result != 0 && errno == EINTR);
+    return result == 0;
+}
+
 void writeDurable(const fs::path& path, const std::vector<U8>& bytes)
 {
     const int descriptor = ::open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0600);
@@ -520,6 +531,10 @@ void writeDurable(const fs::path& path, const std::vector<U8>& bytes)
     while (offset < bytes.size())
     {
         const ssize_t written = ::write(descriptor, bytes.data() + offset, bytes.size() - offset);
+        if (written < 0 && errno == EINTR)
+        {
+            continue;
+        }
         if (written <= 0)
         {
             success = false;
@@ -527,7 +542,7 @@ void writeDurable(const fs::path& path, const std::vector<U8>& bytes)
         }
         offset += static_cast<std::size_t>(written);
     }
-    if (success && ::fsync(descriptor) != 0)
+    if (success && !syncDescriptor(descriptor))
     {
         success = false;
     }
@@ -543,7 +558,7 @@ void writeDurable(const fs::path& path, const std::vector<U8>& bytes)
 void syncDirectory(const fs::path& path)
 {
     const int descriptor = ::open(path.c_str(), O_RDONLY);
-    if (descriptor < 0 || ::fsync(descriptor) != 0)
+    if (descriptor < 0 || !syncDescriptor(descriptor))
     {
         if (descriptor >= 0)
         {

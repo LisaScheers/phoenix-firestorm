@@ -51,6 +51,17 @@ set(CMAKE_XCODE_GENERATE_TOP_LEVEL_PROJECT_ONLY ON)
 include(Variables)
 include(BuildVersion)
 
+set(ENABLE_OPENGL_ORACLE_CAPTURE OFF CACHE BOOL
+    "Enable the developer-only OpenGL oracle acquisition hook")
+if(ENABLE_OPENGL_ORACLE_CAPTURE)
+  if(NOT DARWIN)
+    message(FATAL_ERROR "OpenGL oracle capture is supported only in macOS builds")
+  endif()
+  # The guarded LLWindow virtual interface is consumed across library boundaries,
+  # so every translation unit in this opt-in build must see the same definition.
+  add_compile_definitions(LL_OPENGL_ORACLE_CAPTURE=1)
+endif()
+
 if (NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release CACHE STRING
       "Build type.  One of: Release RelWithDebInfo" FORCE)
@@ -230,4 +241,3 @@ if (LL_TESTS)
   # individual apps can add themselves as dependencies
   add_subdirectory(${INTEGRATION_TESTS_PREFIX}integration_tests)
 endif (LL_TESTS)
-

@@ -87,7 +87,9 @@ public:
     void gatherInput() override;
     void delayInputProcessing() override {};
     void swapBuffers() override;
+#if defined(LL_OPENGL_ORACLE_CAPTURE) && LL_OPENGL_ORACLE_CAPTURE
     bool swapBuffersWithStatus() override;
+#endif
 
     // handy coordinate space conversion routines
     bool convertCoords(LLCoordScreen from, LLCoordWindow *to) override;

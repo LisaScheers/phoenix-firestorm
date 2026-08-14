@@ -85,12 +85,6 @@ if (HAVOK)
    endif()
 endif ()
 
-set(ENABLE_OPENGL_ORACLE_CAPTURE OFF CACHE BOOL
-    "Enable the developer-only OpenGL oracle acquisition hook")
-if(ENABLE_OPENGL_ORACLE_CAPTURE AND NOT DARWIN)
-  message(FATAL_ERROR "OpenGL oracle capture is supported only in macOS builds")
-endif()
-
 set(viewer_SOURCE_FILES
 # <Add FS includes below this line>
     alfloaterregiontracker.cpp
@@ -2354,9 +2348,6 @@ endif()
   )
   add_dependencies(${VIEWER_BINARY_NAME} ${VIEWER_BINARY_NAME}_oracle_build_identity)
   target_include_directories(${VIEWER_BINARY_NAME} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
-  target_compile_definitions(${VIEWER_BINARY_NAME} PRIVATE
-      LL_OPENGL_ORACLE_CAPTURE=1
-  )
 endif()
 
 # add package files
@@ -2708,7 +2699,23 @@ target_link_libraries(${VIEWER_BINARY_NAME}
         )
 
 if(ENABLE_OPENGL_ORACLE_CAPTURE)
-  target_link_libraries(${VIEWER_BINARY_NAME} ll::openssl)
+  if(USE_CONAN)
+    set(ORACLE_BOOST_CHARCONV_LIBRARY ll::boost)
+  else()
+    find_library(ORACLE_BOOST_CHARCONV_LIBRARY
+      NAMES
+      boost_charconv
+      boost_charconv-mt
+      boost_charconv-mt${addrsfx}
+      PATHS "${ARCH_PREBUILT_DIRS_RELEASE}"
+      REQUIRED
+      NO_DEFAULT_PATH
+    )
+  endif()
+  target_link_libraries(${VIEWER_BINARY_NAME}
+    ll::openssl
+    ${ORACLE_BOOST_CHARCONV_LIBRARY}
+  )
 endif()
 
 if (USE_DISCORD)

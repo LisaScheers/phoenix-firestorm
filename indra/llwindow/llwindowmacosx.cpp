@@ -1101,13 +1101,19 @@ bool LLWindowMacOSX::setSizeImpl(const LLCoordWindow size)
 
 void LLWindowMacOSX::swapBuffers()
 {
+#if defined(LL_OPENGL_ORACLE_CAPTURE) && LL_OPENGL_ORACLE_CAPTURE
     (void)swapBuffersWithStatus();
+#else
+    CGLFlushDrawable(mContext);
+#endif
 }
 
+#if defined(LL_OPENGL_ORACLE_CAPTURE) && LL_OPENGL_ORACLE_CAPTURE
 bool LLWindowMacOSX::swapBuffersWithStatus()
 {
     return CGLFlushDrawable(mContext) == kCGLNoError;
 }
+#endif
 
 void LLWindowMacOSX::restoreGLContext()
 {
