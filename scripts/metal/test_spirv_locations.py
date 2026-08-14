@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import itertools
 import struct
 import sys
 import unittest
@@ -43,6 +44,10 @@ def _decorate(target_id: int, kind: int, *values: int) -> tuple[int, ...]:
 
 def _location(target_id: int, value: int) -> tuple[int, ...]:
     return _decorate(target_id, spirv_locations.DECORATION_LOCATION, value)
+
+
+def _variable(target_id: int, storage_class: int) -> tuple[int, ...]:
+    return _instruction(spirv_locations.OP_VARIABLE, 2, target_id, storage_class)
 
 
 def _entry_point(
@@ -104,7 +109,12 @@ class SpirvLocationTest(unittest.TestCase):
         )
         before = struct.unpack(f"<{len(original) // 4}I", original)
         after = struct.unpack(f"<{len(remapped) // 4}I", remapped)
-        differences = [(old, new) for old, new in zip(before, after) if old != new]
+        self.assertEqual(len(before), len(after))
+        differences = [
+            (old, new)
+            for old, new in itertools.zip_longest(before, after)
+            if old != new
+        ]
         self.assertEqual([(4, 0), (9, 1)], differences)
         self.assertEqual(len(original), len(remapped))
         self.assertEqual(
@@ -287,6 +297,58 @@ class SpirvLocationTest(unittest.TestCase):
                 spirv_locations.remap_interface_locations(
                     module, {"position": location}
                 )
+
+    def test_partial_mapping_rejects_only_same_storage_class_collision(self) -> None:
+        unknown_storage_class = _module(
+            _entry_point(3, 4),
+            _name(3, "position"),
+            _name(4, "normal"),
+            _location(3, 0),
+            _location(4, 1),
+        )
+        with self.assertRaisesRegex(
+            spirv_locations.SpirvLocationError,
+            "location 1.*collides with unchanged interface 'normal'",
+        ):
+            spirv_locations.remap_interface_locations(
+                unknown_storage_class, {"position": 1}
+            )
+
+        same_storage_class = _module(
+            _entry_point(3, 4, 5),
+            _name(3, "position"),
+            _name(4, "normal"),
+            _name(5, "varying"),
+            _location(3, 0),
+            _location(4, 1),
+            _location(5, 1),
+            _variable(3, 1),
+            _variable(4, 1),
+            _variable(5, 3),
+        )
+        with self.assertRaisesRegex(
+            spirv_locations.SpirvLocationError,
+            "location 1.*collides with unchanged interface 'normal'",
+        ):
+            spirv_locations.remap_interface_locations(
+                same_storage_class, {"position": 1}
+            )
+
+        different_storage_class = _module(
+            _entry_point(3, 5),
+            _name(3, "position"),
+            _name(5, "varying"),
+            _location(3, 0),
+            _location(5, 1),
+            _variable(3, 1),
+            _variable(5, 3),
+        )
+        self.assertEqual(
+            (spirv_locations.LocationRemap("position", 3, 0, 1),),
+            spirv_locations.describe_location_remap(
+                different_storage_class, {"position": 1}
+            ),
+        )
 
     def test_rejects_indirect_and_member_level_interface_layouts(self) -> None:
         indirect = _module(

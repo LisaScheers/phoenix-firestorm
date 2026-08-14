@@ -1,6 +1,8 @@
 # -*- cmake -*-
 
-cmake_minimum_required(VERSION 3.16.0 FATAL_ERROR)
+if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+  cmake_minimum_required(VERSION 3.16.0 FATAL_ERROR)
+endif ()
 
 if (NOT CMAKE_HOST_APPLE)
   message(FATAL_ERROR "The Firestorm Metal bootstrap requires a macOS host")

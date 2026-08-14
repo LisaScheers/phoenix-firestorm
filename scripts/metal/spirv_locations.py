@@ -10,6 +10,7 @@ from typing import Final
 SPIRV_MAGIC: Final = 0x07230203
 OP_NAME: Final = 5
 OP_ENTRY_POINT: Final = 15
+OP_VARIABLE: Final = 59
 OP_DECORATE: Final = 71
 OP_MEMBER_DECORATE: Final = 72
 OP_DECORATION_GROUP: Final = 73
@@ -129,12 +130,14 @@ class _ParsedModule:
     decorations: dict[int, list[_Decoration]]
     entry_points: list[_EntryPoint]
     member_decorations: list[_MemberDecoration]
+    variable_storage_classes: dict[int, int]
 
 
 @dataclass(frozen=True)
 class _InspectedInterface:
     public: EntryPointInterface
     location_decoration: _Decoration
+    storage_class: int | None
 
 
 def _read_words(module: bytes) -> tuple[int, ...]:
@@ -229,6 +232,7 @@ def _parse_module(words: tuple[int, ...]) -> _ParsedModule:
     decorations: dict[int, list[_Decoration]] = {}
     entry_points: list[_EntryPoint] = []
     member_decorations: list[_MemberDecoration] = []
+    variable_storage_classes: dict[int, int] = {}
     decoration_groups: set[int] = set()
     group_applications: list[_GroupApplication] = []
     group_member_applications: list[_GroupMemberApplication] = []
@@ -361,6 +365,19 @@ def _parse_module(words: tuple[int, ...]) -> _ParsedModule:
             group_member_applications.append(
                 _GroupMemberApplication(group_id=group_id, targets=targets)
             )
+        elif opcode == OP_VARIABLE:
+            if word_count not in {4, 5}:
+                raise SpirvLocationError(
+                    "OpVariable must contain a result type, result ID, storage "
+                    "class, and optional initializer"
+                )
+            result_type = words[offset + 1]
+            result_id = words[offset + 2]
+            _validate_id(result_type, bound, "OpVariable result type")
+            _validate_id(result_id, bound, "OpVariable result")
+            if result_id in variable_storage_classes:
+                raise SpirvLocationError(f"duplicate OpVariable result ID {result_id}")
+            variable_storage_classes[result_id] = words[offset + 3]
 
         offset = end
 
@@ -407,6 +424,7 @@ def _parse_module(words: tuple[int, ...]) -> _ParsedModule:
         decorations=decorations,
         entry_points=entry_points,
         member_decorations=member_decorations,
+        variable_storage_classes=variable_storage_classes,
     )
 
 
@@ -570,6 +588,7 @@ def _inspect_module(module: bytes) -> tuple[_InspectedInterface, ...]:
                     semantics=semantics,
                 ),
                 location_decoration=location,
+                storage_class=parsed.variable_storage_classes.get(target_id),
             )
         )
 
@@ -620,6 +639,7 @@ def _resolve_location_remap(
     inspected: tuple[_InspectedInterface, ...], requested: Mapping[str, int]
 ) -> tuple[tuple[_InspectedInterface, LocationRemap], ...]:
     interfaces = {item.public.name: item for item in inspected}
+    requested_names = set(requested)
     resolved: list[tuple[_InspectedInterface, LocationRemap]] = []
     for name, new_location in sorted(requested.items()):
         interface = interfaces.get(name)
@@ -639,6 +659,25 @@ def _resolve_location_remap(
                 f"requested interface {name!r} uses unsupported "
                 + " and ".join(unsupported)
                 + " decoration"
+            )
+        conflicting_interface = next(
+            (
+                item
+                for item in inspected
+                if item.public.name not in requested_names
+                and item.public.location == new_location
+                and (
+                    interface.storage_class is None
+                    or item.storage_class is None
+                    or item.storage_class == interface.storage_class
+                )
+            ),
+            None,
+        )
+        if conflicting_interface is not None:
+            raise SpirvLocationError(
+                f"requested location {new_location} for {name!r} collides with "
+                f"unchanged interface {conflicting_interface.public.name!r}"
             )
         resolved.append(
             (

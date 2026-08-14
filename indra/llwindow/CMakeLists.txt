@@ -192,5 +192,9 @@ endif (llwindow_HEADER_FILES)
 
 if (DARWIN)
   target_link_libraries(llwindow ${CARBON_LIBRARY})
-  add_subdirectory(metal)
+  option(FIRESTORM_BUILD_METAL_BOOTSTRAP
+         "Configure the developer-only Metal presentation bootstrap" OFF)
+  if (FIRESTORM_BUILD_METAL_BOOTSTRAP)
+    add_subdirectory(metal)
+  endif ()
 endif (DARWIN)

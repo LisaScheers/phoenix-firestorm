@@ -314,10 +314,17 @@ def _most_frequent(
 def reference_inventory(
     sources: Mapping[str, str], pattern: re.Pattern[str]
 ) -> dict[str, object]:
+    matches_by_file = {path: pattern.findall(sources[path]) for path in sorted(sources)}
+    return _reference_inventory_from_matches(matches_by_file)
+
+
+def _reference_inventory_from_matches(
+    matches_by_file: Mapping[str, Sequence[str]],
+) -> dict[str, object]:
     file_histogram: dict[str, int] = {}
     names: list[str] = []
-    for path in sorted(sources):
-        matches = pattern.findall(sources[path])
+    for path in sorted(matches_by_file):
+        matches = matches_by_file[path]
         if matches:
             file_histogram[path] = len(matches)
             names.extend(matches)
@@ -347,11 +354,14 @@ def _opengl_api_category(name: str) -> str:
 
 
 def opengl_call_inventory(sources: Mapping[str, str]) -> dict[str, object]:
-    result = reference_inventory(sources, OPENGL_API_CALL_RE)
+    matches_by_file = {
+        path: OPENGL_API_CALL_RE.findall(sources[path]) for path in sorted(sources)
+    }
+    result = _reference_inventory_from_matches(matches_by_file)
     occurrences_by_api: Counter[str] = Counter()
     files_by_api: dict[str, set[str]] = {"cgl": set(), "gl": set(), "glu": set()}
-    for path in sorted(sources):
-        for name in OPENGL_API_CALL_RE.findall(sources[path]):
+    for path, matches in matches_by_file.items():
+        for name in matches:
             category = _opengl_api_category(name)
             occurrences_by_api[category] += 1
             files_by_api[category].add(path)

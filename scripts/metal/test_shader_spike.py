@@ -840,11 +840,10 @@ class ShaderSpikeTest(unittest.TestCase):
         shader_root = (
             shader_spike.repository_root() / "indra/newview/app_settings/shaders"
         )
-        declarations = [
-            path.read_text()
-            for path in shader_root.rglob("*.glsl")
-            if "calcDiffuseSpecular" in path.read_text()
-        ]
+        sources = (
+            path.read_text(encoding="utf-8") for path in shader_root.rglob("*.glsl")
+        )
+        declarations = [source for source in sources if "calcDiffuseSpecular" in source]
         joined = "\n".join(declarations)
         self.assertNotIn("inout vec3 diffuseColor", joined)
         self.assertGreaterEqual(joined.count("out vec3 diffuseColor"), 5)

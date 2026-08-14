@@ -15,7 +15,9 @@ import subprocess
 import sys
 import tempfile
 import zlib
+from collections import Counter
 from datetime import datetime, timezone
+from itertools import zip_longest
 from pathlib import Path
 from typing import Final
 
@@ -477,18 +479,19 @@ def _decode_png_bytes(
             raise OracleError(f"capture has an invalid PNG row filter: {label}")
         row = bytearray(scanlines[source_offset : source_offset + row_bytes])
         source_offset += row_bytes
-        for index, encoded in enumerate(row):
-            left = row[index - channels] if index >= channels else 0
-            up = previous[index]
-            upper_left = previous[index - channels] if index >= channels else 0
-            if filter_type == 1:
-                row[index] = (encoded + left) & 0xFF
-            elif filter_type == 2:
-                row[index] = (encoded + up) & 0xFF
-            elif filter_type == 3:
-                row[index] = (encoded + ((left + up) // 2)) & 0xFF
-            elif filter_type == 4:
-                row[index] = (encoded + _paeth(left, up, upper_left)) & 0xFF
+        if filter_type:
+            for index, encoded in enumerate(row):
+                left = row[index - channels] if index >= channels else 0
+                up = previous[index]
+                upper_left = previous[index - channels] if index >= channels else 0
+                if filter_type == 1:
+                    row[index] = (encoded + left) & 0xFF
+                elif filter_type == 2:
+                    row[index] = (encoded + up) & 0xFF
+                elif filter_type == 3:
+                    row[index] = (encoded + ((left + up) // 2)) & 0xFF
+                elif filter_type == 4:
+                    row[index] = (encoded + _paeth(left, up, upper_left)) & 0xFF
         if channels == 4:
             rgba[output_offset : output_offset + width * 4] = row
         else:
@@ -537,23 +540,24 @@ def _self_variance(captures: list[bytes]) -> dict[str, object]:
         for right_index in range(left_index + 1, len(ordered_captures)):
             left_capture = ordered_captures[left_index]
             right_capture = ordered_captures[right_index]
-            for pixel_offset in range(0, reference_size, 4):
-                if (
-                    left_capture[pixel_offset : pixel_offset + 4]
-                    == right_capture[pixel_offset : pixel_offset + 4]
-                ):
-                    identical_pixels += 1
-                for channel in range(4):
-                    left_byte = left_capture[pixel_offset + channel]
-                    right_byte = right_capture[pixel_offset + channel]
+            identical_pixels += sum(
+                left_pixel == right_pixel
+                for left_pixel, right_pixel in zip_longest(
+                    struct.iter_unpack("<I", left_capture),
+                    struct.iter_unpack("<I", right_capture),
+                )
+            )
+            for channel in range(4):
+                pair_counts = Counter(
+                    zip_longest(left_capture[channel::4], right_capture[channel::4])
+                )
+                counts = (
+                    alpha_difference_counts if channel == 3 else rgb_difference_counts
+                )
+                for (left_byte, right_byte), count in pair_counts.items():
                     low = min(left_byte, right_byte)
                     high = max(left_byte, right_byte)
-                    counts = (
-                        alpha_difference_counts
-                        if channel == 3
-                        else rgb_difference_counts
-                    )
-                    counts[(low << 8) | high] += 1
+                    counts[(low << 8) | high] += count
     channel_sample_count = pixel_count * 4 * comparison_count
     pixel_sample_count = pixel_count * comparison_count
 
@@ -1713,7 +1717,10 @@ def record_slot(
     )
     if slot is None:
         raise OracleError(f"unknown slot: {slot_id}")
-    if slot["evidence"]["status"] != "missing":
+    evidence = slot.get("evidence")
+    if not isinstance(evidence, dict):
+        raise OracleError(f"slot {slot_id} evidence is invalid; start a new session")
+    if evidence.get("status") != "missing":
         raise OracleError(f"slot {slot_id} already has evidence; start a new session")
     if slot.get("definition_status") != "ready":
         raise OracleError(f"slot {slot_id} is blocked by its corpus definition")

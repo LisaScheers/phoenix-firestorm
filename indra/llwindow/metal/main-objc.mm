@@ -31,6 +31,7 @@
 #include <iostream>
 #include <memory>
 #include <string>
+#include <thread>
 
 @interface NSView (LLMetalBootstrapSelfTest)
 
@@ -220,6 +221,22 @@ int runSelfTest(
         return 1;
     }
 
+    auto background_submission = firestorm::metal::FrameSubmission::submitted;
+    std::string background_error;
+    std::thread background_draw([&] {
+        @autoreleasepool
+        {
+            background_submission = bootstrap.drawFrame(&background_error);
+        }
+    });
+    background_draw.join();
+    if (background_submission != firestorm::metal::FrameSubmission::failed ||
+        background_error != "Metal frames must be submitted on the AppKit main thread")
+    {
+        std::cerr << "self-test failed: off-main draw was not rejected\n";
+        return 1;
+    }
+
     std::cout << "Self-test: submitted " << bootstrap.submittedFrameCount()
               << ", completed " << bootstrap.completedFrameCount()
               << ", presented " << bootstrap.presentedFrameCount() << " frame\n";
@@ -228,6 +245,12 @@ int runSelfTest(
     {
         const std::uint64_t submitted_before_retry = bootstrap.submittedFrameCount();
         NSView* native_view = (__bridge NSView*)bootstrap.nativeView();
+        if (![native_view respondsToSelector:
+                @selector(simulateDrawableUnavailableOnceForSelfTest)])
+        {
+            std::cerr << "drawable-retry self-test failed: view lacks the test hook\n";
+            return 1;
+        }
         [native_view simulateDrawableUnavailableOnceForSelfTest];
         [native_view updateLayer];
         if (bootstrap.submittedFrameCount() != submitted_before_retry)

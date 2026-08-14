@@ -725,6 +725,12 @@ void LLMetalBootstrap::requestFrame() noexcept
 
 FrameSubmission LLMetalBootstrap::drawFrame(std::string* error) noexcept
 {
+    if (![NSThread isMainThread])
+    {
+        assignError(error, "Metal frames must be submitted on the AppKit main thread");
+        return FrameSubmission::failed;
+    }
+
     return [mImpl->view drawMetalFrameWithError:error];
 }
 

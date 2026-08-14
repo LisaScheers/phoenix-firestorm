@@ -837,48 +837,39 @@ bool validate_expected_arguments(NSDictionary* expected,
                                                 @"%@.access must be read_only, read_write, or write_only",
                                                 path]);
                 }
-                if (argument[@"buffer_size"] != nil)
+                NSUInteger unused_size = 0;
+                if (!require_unsigned_integer(argument,
+                                              @"buffer_size",
+                                              path,
+                                              &unused_size,
+                                              error))
                 {
-                    NSUInteger unused = 0;
-                    if (!require_unsigned_integer(argument,
-                                                  @"buffer_size",
-                                                  path,
-                                                  &unused,
-                                                  error))
-                    {
-                        return false;
-                    }
+                    return false;
                 }
-                if (argument[@"buffer_alignment"] != nil)
+                NSUInteger alignment = 0;
+                if (!require_unsigned_integer(argument,
+                                              @"buffer_alignment",
+                                              path,
+                                              &alignment,
+                                              error))
                 {
-                    NSUInteger alignment = 0;
-                    if (!require_unsigned_integer(argument,
-                                                  @"buffer_alignment",
-                                                  path,
-                                                  &alignment,
-                                                  error))
-                    {
-                        return false;
-                    }
-                    if (alignment == 0)
-                    {
-                        return reject(error,
-                                      [NSString stringWithFormat:
-                                                    @"%@.buffer_alignment must be greater than zero",
-                                                    path]);
-                    }
+                    return false;
                 }
-                if (argument[@"members"] != nil)
+                if (alignment == 0)
                 {
-                    NSArray* members = require_array(argument, @"members", path, error);
-                    if (members == nil
-                        || !validate_member_array(members,
-                                                  [path stringByAppendingString:@".members"],
-                                                  0,
-                                                  error))
-                    {
-                        return false;
-                    }
+                    return reject(error,
+                                  [NSString stringWithFormat:
+                                                @"%@.buffer_alignment must be greater than zero",
+                                                path]);
+                }
+                NSArray* members = require_array(argument, @"members", path, error);
+                if (members == nil
+                    || !validate_member_array(members,
+                                              [path stringByAppendingString:@".members"],
+                                              0,
+                                              error))
+                {
+                    return false;
                 }
             }
             else if (type == MTLBindingTypeTexture)

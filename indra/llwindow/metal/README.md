@@ -32,13 +32,10 @@ completed and presented.
 
 ## Firestorm build integration
 
-The same CMake file can be included from `indra/llwindow/CMakeLists.txt`:
-
-```cmake
-if (DARWIN)
-  add_subdirectory(metal)
-endif ()
-```
+The same CMake file can be included from `indra/llwindow/CMakeLists.txt` by
+configuring the viewer with `-DFIRESTORM_BUILD_METAL_BOOTSTRAP=ON`. The option
+defaults to off so ordinary viewer configuration does not require the optional
+Metal shader toolchain.
 
 The bootstrap's architecture, deployment target, ARC flag, shader build, and
 framework dependencies are target-scoped. They do not change existing

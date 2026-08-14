@@ -295,6 +295,26 @@ class OracleCorpusTest(unittest.TestCase):
                 any("opaque_region: definition is blocked" in error for error in errors)
             )
 
+    def test_record_rejects_session_slot_without_evidence_cleanly(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            session_path = self._initialize(directory)
+            session = json.loads(session_path.read_text(encoding="utf-8"))
+            login = next(slot for slot in session["slots"] if slot["id"] == "login_ui")
+            login.pop("evidence")
+            session_path.write_text(json.dumps(session), encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                oracle.OracleError, "slot login_ui evidence is invalid"
+            ):
+                oracle.record_slot(
+                    self.manifest,
+                    session_path,
+                    "login_ui",
+                    [],
+                    directory / "missing.json",
+                )
+
     def test_initialize_rejects_requests_symlink_without_overwriting_outside(
         self,
     ) -> None:
@@ -460,6 +480,13 @@ class OracleCorpusTest(unittest.TestCase):
     def test_png_decoder_rejects_undecodable_or_color_ambiguous_inputs(self) -> None:
         valid = _png_bytes()
         self.assertEqual(oracle._decode_png_bytes(valid, "valid")[:2], (4, 3))
+        for filter_type in range(5):
+            with self.subTest(filter_type=filter_type):
+                _, _, decoded = oracle._decode_png_bytes(
+                    _png_bytes(pixel=(0, 0, 0, 0), filter_type=filter_type),
+                    f"filter-{filter_type}",
+                )
+                self.assertEqual(decoded, bytes(4 * 3 * 4))
         self.assertEqual(
             oracle._decode_png_bytes(
                 _png_bytes(include_srgb=False), "contract-defined-srgb"
@@ -900,14 +927,15 @@ class OracleCorpusTest(unittest.TestCase):
             oracle.validate_manifest(manifest)
 
     def test_tools_artifacts_reject_empty_truncated_and_invalid_depth(self) -> None:
-        for case in (
-            "empty_png",
-            "short_color",
-            "long_color",
-            "invalid_depth",
-            "color_mismatch",
-            "alpha_mismatch",
-        ):
+        cases = {
+            "empty_png": "is not a PNG",
+            "short_color": "has 47 bytes; expected 48",
+            "long_color": "exceeds the 48-byte limit",
+            "invalid_depth": "contains an invalid depth value",
+            "color_mismatch": "do not match raw_color",
+            "alpha_mismatch": "do not match raw_color",
+        }
+        for case, expected in cases.items():
             with self.subTest(case=case), tempfile.TemporaryDirectory() as temporary:
                 directory = Path(temporary)
                 manifest, fixture_root = self._ready_manifest(
@@ -934,7 +962,7 @@ class OracleCorpusTest(unittest.TestCase):
                         color_type=6,
                     )
                     supporting["raw_color"].write_bytes(bytes((30, 20, 10, 127)) * 12)
-                with self.assertRaises(oracle.OracleError):
+                with self.assertRaisesRegex(oracle.OracleError, expected):
                     self._record(
                         manifest,
                         fixture_root,
