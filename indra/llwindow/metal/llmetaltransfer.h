@@ -124,6 +124,7 @@ public:
 
     MetalTransferStatus uploadPrivateBuffer(MetalByteView source, std::string label, PublishBuffer publish);
 
+    /** Creates a texture and uploads mip zero. Higher mip levels remain undefined. */
     MetalTransferStatus uploadPrivateTexture2D(const MetalTexture2DDescriptor& descriptor,
                                                MetalTextureUpload2D            source,
                                                PublishTexture                  publish);
@@ -136,6 +137,7 @@ public:
     /**
      * Reads one in-bounds region. Current resources are 2D and single-slice, so
      * slice must be zero. Returned row zero is Metal y=region.y; no flip occurs.
+     * Returned rows use bytesPerRow, which may exceed the tight row size.
      */
     MetalTransferStatus readbackTexture2D(const MetalPrivateTexture2D& source, MetalTextureRegion region, PublishTextureReadback publish);
 

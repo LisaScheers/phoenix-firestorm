@@ -270,6 +270,8 @@ struct MetalTransferBatch::Impl
 
     MetalTransferStatus uploadTexture(const MetalTexture2DDescriptor& descriptor,
                                       MetalTextureUpload2D             source,
+                                      const SubresourceLayout&         tight_layout,
+                                      const SubresourceLayout&         staging_layout,
                                       MetalPrivateTexture2D            texture,
                                       PublishTexture                   publish)
     {
@@ -278,11 +280,8 @@ struct MetalTransferBatch::Impl
             return MetalTransferStatus::invalid_state;
         }
 
-        SubresourceLayout tight_layout;
-        SubresourceLayout staging_layout;
         if (!publish || !texture.valid() ||
-            !resourceBelongsToDevice(texture.nativeHandle(), @protocol(MTLTexture)) ||
-            !validTextureSource(descriptor, source, tight_layout, staging_layout))
+            !resourceBelongsToDevice(texture.nativeHandle(), @protocol(MTLTexture)))
         {
             return MetalTransferStatus::invalid_argument;
         }
@@ -682,6 +681,8 @@ MetalTransferStatus MetalTransferBatch::uploadPrivateTexture2D(
     }
     return mImpl->uploadTexture(descriptor,
                                 source,
+                                tight_layout,
+                                staging_layout,
                                 std::move(*texture),
                                 std::move(publish));
 }

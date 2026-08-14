@@ -110,12 +110,12 @@ The contract tests are also excluded from an embedded default build. They can
 be requested explicitly without registering tests in the viewer's CTest tree:
 
 ```sh
+# Single-config generators:
 cmake --build BUILD_DIR --target \
   firestorm_metal_frame_contracts_test \
   firestorm_metal_resource_layout_test \
   firestorm_metal_frame_context_test \
   firestorm_metal_resource_transfer_test
-# Single-config generators:
 BUILD_DIR/llwindow/metal/firestorm_metal_frame_contracts_test
 BUILD_DIR/llwindow/metal/firestorm_metal_resource_layout_test
 env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
@@ -123,6 +123,11 @@ env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
 env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
   BUILD_DIR/llwindow/metal/firestorm_metal_resource_transfer_test
 # Multi-config generators such as Xcode:
+cmake --build BUILD_DIR --config CONFIG --target \
+  firestorm_metal_frame_contracts_test \
+  firestorm_metal_resource_layout_test \
+  firestorm_metal_frame_context_test \
+  firestorm_metal_resource_transfer_test
 BUILD_DIR/llwindow/metal/CONFIG/firestorm_metal_frame_contracts_test
 BUILD_DIR/llwindow/metal/CONFIG/firestorm_metal_resource_layout_test
 env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
