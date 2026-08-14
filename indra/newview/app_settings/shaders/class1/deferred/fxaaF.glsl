@@ -2102,7 +2102,9 @@ half4 FxaaPixelShader(
 #endif
 
 uniform sampler2D diffuseMap;
+#ifndef FXAA_NO_DEPTH_WRITE
 uniform sampler2D depthMap;
+#endif
 
 uniform vec2 rcp_screen_res;
 uniform vec4 rcp_frame_opt;
@@ -2133,5 +2135,7 @@ void main()
 
     frag_color = diff;
 
+#ifndef FXAA_NO_DEPTH_WRITE
     gl_FragDepth = texture(depthMap, vary_fragcoord.xy).r;
+#endif
 }

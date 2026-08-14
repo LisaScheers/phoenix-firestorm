@@ -192,5 +192,5 @@ endif (llwindow_HEADER_FILES)
 
 if (DARWIN)
   target_link_libraries(llwindow ${CARBON_LIBRARY})
+  add_subdirectory(metal)
 endif (DARWIN)
-

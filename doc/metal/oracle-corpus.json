@@ -1,0 +1,971 @@
+{
+  "schema": 1,
+  "kind": "firestorm-opengl-oracle-corpus",
+  "baseline": {
+    "remote": "https://github.com/FirestormViewer/phoenix-firestorm",
+    "commit": "1e8fd5491bde91fe6daca7d78f217a4d46084a5b",
+    "renderer": "OpenGL"
+  },
+  "capture_contract": {
+    "repetitions": 3,
+    "warmup_frames": 300,
+    "measurement_frames": 600,
+    "capture_format": "png",
+    "capture_encoding": "rgb_or_rgba8_srgb",
+    "png_interlaced": false,
+    "self_variance_method": "linear_srgb_rgba8_all_pairs_v1",
+    "platform": {
+      "os": "macOS",
+      "architecture": "arm64"
+    },
+    "notes": [
+      "Capture repetitions without moving the camera or changing settings.",
+      "Interpret wholly untagged baseline RGB/RGBA PNG samples as sRGB under this contract; reject partial or conflicting color declarations.",
+      "Compute self-variance across every unordered capture pair after applying the standard sRGB-to-linear transfer to RGB; alpha remains linear.",
+      "Record CPU and GPU timing from the same 600-frame window.",
+      "Do not use a production account, production region, or daily-driver build channel."
+    ]
+  },
+  "slots": [
+    {
+      "id": "login_ui",
+      "group": "login_ui",
+      "required": true,
+      "features": ["login", "ui", "font"],
+      "required_supporting_artifacts": {},
+      "description": "Logged-out login panel, menus, icons, text, and font atlas composition.",
+      "definition_status": "blocked",
+      "definition_blockers": [
+        "A static local login-page fixture for ForceLoginURL has not been added and hashed."
+      ],
+      "conditions": {
+        "settings": {
+          "Language": "en",
+          "RenderFSAASamples": 0,
+          "RenderFSAAType": 0,
+          "RenderUIBuffer": false,
+          "UIScaleFactor": 1.0
+        },
+        "camera": {
+          "mode": "not_applicable",
+          "position_m": null,
+          "look_at_m": null,
+          "vertical_fov_degrees": null
+        },
+        "content": {
+          "fixture_id": "firestorm_metal_oracle_login",
+          "fixture_revision": "v1-static-page",
+          "availability": "missing",
+          "asset_manifest_path": null,
+          "asset_manifest_bytes": null,
+          "asset_manifest_sha256": null,
+          "requirements": [
+            "Fresh settings directory with no saved credentials",
+            "Default English login layout with ForceLoginURL set to a static local page",
+            "No modal dialog or transient notification"
+          ]
+        },
+        "environment": {
+          "mode": "not_applicable",
+          "time_of_day": null,
+          "weather": null,
+          "asset_id": null
+        },
+        "display": {
+          "width_px": 1920,
+          "height_px": 1080,
+          "scale_factor": 2.0,
+          "color_space": "sRGB",
+          "window_mode": "windowed_no_occlusion"
+        }
+      },
+      "evidence": {
+        "status": "missing",
+        "captures": [],
+        "supporting_artifacts": [],
+        "self_variance": null,
+        "frame_timing_ms": null,
+        "memory_mib": null,
+        "hardware_os": null,
+        "known_quirks": null
+      }
+    },
+    {
+      "id": "opaque_region",
+      "group": "opaque_region",
+      "required": true,
+      "features": ["opaque_geometry", "terrain", "legacy_material"],
+      "required_supporting_artifacts": {},
+      "description": "Static opaque prim, mesh, terrain, and legacy material scene with stable occlusion.",
+      "definition_status": "blocked",
+      "definition_blockers": [
+        "The offline oracle region fixture and its asset manifest have not been published.",
+        "The fixed EEP environment asset has not been selected and hashed."
+      ],
+      "conditions": {
+        "settings": {
+          "RenderEnableEmissiveBuffer": false,
+          "RenderHDREnabled": true,
+          "RenderDeferred": true,
+          "RenderFSAASamples": 0,
+          "RenderFSAAType": 0,
+          "RenderMaxTextureIndex": 16,
+          "RenderResolutionDivisor": 1,
+          "RenderShadowDetail": 0,
+          "RenderTerrainDetail": 1,
+          "RenderUIBuffer": false,
+          "RenderUseAdvancedAtmospherics": false,
+          "UIScaleFactor": 1.0
+        },
+        "camera": {
+          "mode": "fixture_relative_locked",
+          "position_m": [128.0, 96.0, 28.0],
+          "look_at_m": [128.0, 128.0, 24.0],
+          "vertical_fov_degrees": 60.0
+        },
+        "content": {
+          "fixture_id": "firestorm_metal_oracle_region",
+          "fixture_revision": "v1-opaque",
+          "availability": "missing",
+          "asset_manifest_path": null,
+          "asset_manifest_bytes": null,
+          "asset_manifest_sha256": null,
+          "requirements": [
+            "Four textured opaque prims using every fixed-function face mode",
+            "One rig-free mesh with multiple indexed material faces",
+            "Terrain patch showing all four detail texture blends",
+            "Static occluder and partially hidden object"
+          ]
+        },
+        "environment": {
+          "mode": "fixed_eep",
+          "time_of_day": "12:00:00",
+          "weather": "clear_no_cloud_motion",
+          "asset_id": null
+        },
+        "display": {
+          "width_px": 1920,
+          "height_px": 1080,
+          "scale_factor": 2.0,
+          "color_space": "sRGB",
+          "window_mode": "windowed_no_occlusion"
+        }
+      },
+      "evidence": {
+        "status": "missing",
+        "captures": [],
+        "supporting_artifacts": [],
+        "self_variance": null,
+        "frame_timing_ms": null,
+        "memory_mib": null,
+        "hardware_os": null,
+        "known_quirks": null
+      }
+    },
+    {
+      "id": "pbr_materials",
+      "group": "pbr_material_avatar_alpha",
+      "required": true,
+      "features": ["pbr", "legacy_material", "alpha_mask", "alpha_blend"],
+      "required_supporting_artifacts": {},
+      "description": "PBR and legacy material grid spanning opaque, masked, and blended alpha modes.",
+      "definition_status": "blocked",
+      "definition_blockers": [
+        "The material fixture assets and exact texture payload hashes do not exist yet.",
+        "The fixed EEP environment asset has not been selected and hashed."
+      ],
+      "conditions": {
+        "settings": {
+          "RenderEnableEmissiveBuffer": false,
+          "RenderHDREnabled": true,
+          "RenderDeferred": true,
+          "RenderFSAASamples": 0,
+          "RenderFSAAType": 0,
+          "RenderMaxTextureIndex": 16,
+          "RenderReflectionProbeDetail": 1,
+          "RenderResolutionDivisor": 1,
+          "RenderShadowDetail": 2,
+          "RenderUIBuffer": false,
+          "RenderUseAdvancedAtmospherics": true,
+          "UIScaleFactor": 1.0
+        },
+        "camera": {
+          "mode": "fixture_relative_locked",
+          "position_m": [96.0, 128.0, 24.0],
+          "look_at_m": [128.0, 128.0, 24.0],
+          "vertical_fov_degrees": 50.0
+        },
+        "content": {
+          "fixture_id": "firestorm_metal_oracle_region",
+          "fixture_revision": "v1-materials",
+          "availability": "missing",
+          "asset_manifest_path": null,
+          "asset_manifest_bytes": null,
+          "asset_manifest_sha256": null,
+          "requirements": [
+            "PBR metallic-roughness grid with base color, normal, emissive, and ORM maps",
+            "Legacy diffuse, normal, and specular materials beside matching PBR samples",
+            "Opaque, alpha-mask, and alpha-blend versions of the same geometry",
+            "Overlapping transparent surfaces with a fixed draw-order challenge"
+          ]
+        },
+        "environment": {
+          "mode": "fixed_eep",
+          "time_of_day": "12:00:00",
+          "weather": "clear_no_cloud_motion",
+          "asset_id": null
+        },
+        "display": {
+          "width_px": 1920,
+          "height_px": 1080,
+          "scale_factor": 2.0,
+          "color_space": "sRGB",
+          "window_mode": "windowed_no_occlusion"
+        }
+      },
+      "evidence": {
+        "status": "missing",
+        "captures": [],
+        "supporting_artifacts": [],
+        "self_variance": null,
+        "frame_timing_ms": null,
+        "memory_mib": null,
+        "hardware_os": null,
+        "known_quirks": null
+      }
+    },
+    {
+      "id": "avatar_alpha",
+      "group": "pbr_material_avatar_alpha",
+      "required": true,
+      "features": ["avatar_skinning", "alpha_mask", "alpha_blend"],
+      "required_supporting_artifacts": {},
+      "description": "Pinned avatar pose with skinned mesh, system layers, hair alpha, and attachment alpha.",
+      "definition_status": "blocked",
+      "definition_blockers": [
+        "A redistributable avatar outfit, pose, and baked-texture fixture has not been published.",
+        "The offline test account and region are not provisioned."
+      ],
+      "conditions": {
+        "settings": {
+          "RenderEnableEmissiveBuffer": false,
+          "RenderHDREnabled": true,
+          "RenderAvatarMaxComplexity": 0,
+          "RenderDeferred": true,
+          "RenderFSAASamples": 0,
+          "RenderFSAAType": 0,
+          "RenderResolutionDivisor": 1,
+          "RenderShadowDetail": 2,
+          "RenderUIBuffer": false,
+          "RenderUseAdvancedAtmospherics": true,
+          "UIScaleFactor": 1.0
+        },
+        "camera": {
+          "mode": "fixture_relative_locked",
+          "position_m": [120.0, 118.0, 23.0],
+          "look_at_m": [128.0, 128.0, 22.0],
+          "vertical_fov_degrees": 40.0
+        },
+        "content": {
+          "fixture_id": "firestorm_metal_oracle_avatar",
+          "fixture_revision": "v1-neutral-pose",
+          "availability": "missing",
+          "asset_manifest_path": null,
+          "asset_manifest_bytes": null,
+          "asset_manifest_sha256": null,
+          "requirements": [
+            "One frozen Bento avatar animation at a documented frame",
+            "System skin, eyes, and clothing bake layers",
+            "Rigged mesh body and garment with normal and specular maps",
+            "Alpha-masked hair and alpha-blended attachment"
+          ]
+        },
+        "environment": {
+          "mode": "fixed_eep",
+          "time_of_day": "12:00:00",
+          "weather": "clear_no_cloud_motion",
+          "asset_id": null
+        },
+        "display": {
+          "width_px": 1920,
+          "height_px": 1080,
+          "scale_factor": 2.0,
+          "color_space": "sRGB",
+          "window_mode": "windowed_no_occlusion"
+        }
+      },
+      "evidence": {
+        "status": "missing",
+        "captures": [],
+        "supporting_artifacts": [],
+        "self_variance": null,
+        "frame_timing_ms": null,
+        "memory_mib": null,
+        "hardware_os": null,
+        "known_quirks": null
+      }
+    },
+    {
+      "id": "water_sky_shadows",
+      "group": "water_sky_shadows_probes_post",
+      "required": true,
+      "features": ["water", "sky", "shadows"],
+      "required_supporting_artifacts": {},
+      "description": "Fixed horizon, water reflection/refraction, clouds, sun, and cascaded shadow composition.",
+      "definition_status": "blocked",
+      "definition_blockers": [
+        "The water/sky fixture and fixed EEP asset have not been published.",
+        "Cloud motion must be disabled in a purpose-built environment asset."
+      ],
+      "conditions": {
+        "settings": {
+          "RenderEnableEmissiveBuffer": false,
+          "RenderHDREnabled": true,
+          "RenderDeferred": true,
+          "RenderFSAASamples": 0,
+          "RenderFSAAType": 0,
+          "RenderResolutionDivisor": 1,
+          "RenderShadowDetail": 2,
+          "RenderUIBuffer": false,
+          "RenderUseAdvancedAtmospherics": true,
+          "RenderWater": true,
+          "UIScaleFactor": 1.0
+        },
+        "camera": {
+          "mode": "fixture_relative_locked",
+          "position_m": [128.0, 32.0, 26.0],
+          "look_at_m": [128.0, 160.0, 24.0],
+          "vertical_fov_degrees": 60.0
+        },
+        "content": {
+          "fixture_id": "firestorm_metal_oracle_region",
+          "fixture_revision": "v1-water-sky-shadows",
+          "availability": "missing",
+          "asset_manifest_path": null,
+          "asset_manifest_bytes": null,
+          "asset_manifest_sha256": null,
+          "requirements": [
+            "Still water plane crossing the horizon and foreground geometry",
+            "Opaque and alpha-masked shadow casters spanning cascade boundaries",
+            "Reflective objects above and below the water line",
+            "No scripted, physical, animated, or network-updated object"
+          ]
+        },
+        "environment": {
+          "mode": "fixed_eep",
+          "time_of_day": "16:00:00",
+          "weather": "fixed_clouds_zero_motion",
+          "asset_id": null
+        },
+        "display": {
+          "width_px": 1920,
+          "height_px": 1080,
+          "scale_factor": 2.0,
+          "color_space": "sRGB",
+          "window_mode": "windowed_no_occlusion"
+        }
+      },
+      "evidence": {
+        "status": "missing",
+        "captures": [],
+        "supporting_artifacts": [],
+        "self_variance": null,
+        "frame_timing_ms": null,
+        "memory_mib": null,
+        "hardware_os": null,
+        "known_quirks": null
+      }
+    },
+    {
+      "id": "reflection_probes",
+      "group": "water_sky_shadows_probes_post",
+      "required": true,
+      "features": ["reflection_probes", "pbr"],
+      "required_supporting_artifacts": {},
+      "description": "Static and dynamic reflection probe volumes with glossy PBR reference objects.",
+      "definition_status": "blocked",
+      "definition_blockers": [
+        "The reflection-probe fixture and capture-order settling procedure do not exist yet.",
+        "The fixed EEP environment asset has not been selected and hashed."
+      ],
+      "conditions": {
+        "settings": {
+          "RenderEnableEmissiveBuffer": false,
+          "RenderHDREnabled": true,
+          "RenderDeferred": true,
+          "RenderFSAASamples": 0,
+          "RenderFSAAType": 0,
+          "RenderReflectionProbeDetail": 1,
+          "RenderResolutionDivisor": 1,
+          "RenderShadowDetail": 2,
+          "RenderUIBuffer": false,
+          "RenderUseAdvancedAtmospherics": true,
+          "UIScaleFactor": 1.0
+        },
+        "camera": {
+          "mode": "fixture_relative_locked",
+          "position_m": [96.0, 160.0, 24.0],
+          "look_at_m": [128.0, 160.0, 24.0],
+          "vertical_fov_degrees": 50.0
+        },
+        "content": {
+          "fixture_id": "firestorm_metal_oracle_region",
+          "fixture_revision": "v1-reflection-probes",
+          "availability": "missing",
+          "asset_manifest_path": null,
+          "asset_manifest_bytes": null,
+          "asset_manifest_sha256": null,
+          "requirements": [
+            "Overlapping static reflection probe volumes with visible boundaries",
+            "One dynamic reflection probe with a documented update completion state",
+            "Roughness ladder from mirror to fully diffuse PBR spheres",
+            "Reference object both inside and outside each probe influence volume"
+          ]
+        },
+        "environment": {
+          "mode": "fixed_eep",
+          "time_of_day": "12:00:00",
+          "weather": "clear_no_cloud_motion",
+          "asset_id": null
+        },
+        "display": {
+          "width_px": 1920,
+          "height_px": 1080,
+          "scale_factor": 2.0,
+          "color_space": "sRGB",
+          "window_mode": "windowed_no_occlusion"
+        }
+      },
+      "evidence": {
+        "status": "missing",
+        "captures": [],
+        "supporting_artifacts": [],
+        "self_variance": null,
+        "frame_timing_ms": null,
+        "memory_mib": null,
+        "hardware_os": null,
+        "known_quirks": null
+      }
+    },
+    {
+      "id": "post_processing",
+      "group": "water_sky_shadows_probes_post",
+      "required": true,
+      "features": ["post_processing"],
+      "required_supporting_artifacts": {},
+      "description": "High-contrast geometry and subpixel edges through the pinned post-processing configuration.",
+      "definition_status": "blocked",
+      "definition_blockers": [
+        "The post-processing edge/chart fixture has not been published.",
+        "The final parity AA mode must be selected before this slot can become ready."
+      ],
+      "conditions": {
+        "settings": {
+          "RenderEnableEmissiveBuffer": false,
+          "RenderHDREnabled": true,
+          "RenderDeferred": true,
+          "RenderFSAASamples": 3,
+          "RenderFSAAType": 1,
+          "RenderResolutionDivisor": 1,
+          "RenderShadowDetail": 2,
+          "RenderUIBuffer": false,
+          "RenderUseAdvancedAtmospherics": true,
+          "UIScaleFactor": 1.0
+        },
+        "camera": {
+          "mode": "fixture_relative_locked",
+          "position_m": [96.0, 192.0, 24.0],
+          "look_at_m": [128.0, 192.0, 24.0],
+          "vertical_fov_degrees": 45.0
+        },
+        "content": {
+          "fixture_id": "firestorm_metal_oracle_region",
+          "fixture_revision": "v1-post-processing",
+          "availability": "missing",
+          "asset_manifest_path": null,
+          "asset_manifest_bytes": null,
+          "asset_manifest_sha256": null,
+          "requirements": [
+            "Black-white slanted-edge chart at multiple pixel widths",
+            "HDR intensity ramp spanning tone-map shoulder and toe",
+            "Near/far depth discontinuities and thin alpha-masked geometry",
+            "No temporal or animated content"
+          ]
+        },
+        "environment": {
+          "mode": "fixed_eep",
+          "time_of_day": "12:00:00",
+          "weather": "clear_no_cloud_motion",
+          "asset_id": null
+        },
+        "display": {
+          "width_px": 1920,
+          "height_px": 1080,
+          "scale_factor": 2.0,
+          "color_space": "sRGB",
+          "window_mode": "windowed_no_occlusion"
+        }
+      },
+      "evidence": {
+        "status": "missing",
+        "captures": [],
+        "supporting_artifacts": [],
+        "self_variance": null,
+        "frame_timing_ms": null,
+        "memory_mib": null,
+        "hardware_os": null,
+        "known_quirks": null
+      }
+    },
+    {
+      "id": "tools_readback",
+      "group": "tools_readback",
+      "required": true,
+      "features": ["tools", "readback", "ui"],
+      "required_supporting_artifacts": {
+        "local_snapshot": {
+          "kind": "png",
+          "encoding": "rgb_or_rgba8_srgb_encoded",
+          "width_px": 1920,
+          "height_px": 1080,
+          "interlaced": false
+        },
+        "raw_color": {
+          "kind": "raw",
+          "encoding": "bgra8_unorm_srgb_encoded",
+          "origin": "top_left",
+          "width_px": 1920,
+          "height_px": 1080,
+          "row_pitch_bytes": 7680,
+          "bytes": 8294400
+        },
+        "raw_depth": {
+          "kind": "raw",
+          "encoding": "depth32_float_le_zero_to_one",
+          "origin": "top_left",
+          "width_px": 1920,
+          "height_px": 1080,
+          "row_pitch_bytes": 7680,
+          "bytes": 8294400
+        }
+      },
+      "description": "Selection, build tools, overlays, local snapshot, and framebuffer readback behavior.",
+      "definition_status": "blocked",
+      "definition_blockers": [
+        "The deterministic tool-action script and selected-object fixture do not exist yet.",
+        "A machine capture hook must emit the snapshot, raw color, and raw depth together from one frame without relying on a daily-driver viewer."
+      ],
+      "conditions": {
+        "settings": {
+          "RenderEnableEmissiveBuffer": false,
+          "RenderHDREnabled": true,
+          "RenderDeferred": true,
+          "RenderFSAASamples": 0,
+          "RenderFSAAType": 0,
+          "RenderResolutionDivisor": 1,
+          "RenderShadowDetail": 0,
+          "RenderUIBuffer": false,
+          "RenderUseAdvancedAtmospherics": false,
+          "UIScaleFactor": 1.0
+        },
+        "camera": {
+          "mode": "fixture_relative_locked",
+          "position_m": [96.0, 224.0, 24.0],
+          "look_at_m": [128.0, 224.0, 24.0],
+          "vertical_fov_degrees": 50.0
+        },
+        "content": {
+          "fixture_id": "firestorm_metal_oracle_region",
+          "fixture_revision": "v1-tools-readback",
+          "availability": "missing",
+          "asset_manifest_path": null,
+          "asset_manifest_bytes": null,
+          "asset_manifest_sha256": null,
+          "requirements": [
+            "One selected prim with translate, rotate, and scale manipulators visible",
+            "Parcel boundary and object highlight overlays",
+            "Build floater open at a documented tab and control state",
+            "Local PNG snapshot and raw color/depth readback from the same frame"
+          ]
+        },
+        "environment": {
+          "mode": "fixed_eep",
+          "time_of_day": "12:00:00",
+          "weather": "clear_no_cloud_motion",
+          "asset_id": null
+        },
+        "display": {
+          "width_px": 1920,
+          "height_px": 1080,
+          "scale_factor": 2.0,
+          "color_space": "sRGB",
+          "window_mode": "windowed_no_occlusion"
+        }
+      },
+      "evidence": {
+        "status": "missing",
+        "captures": [],
+        "supporting_artifacts": [],
+        "self_variance": null,
+        "frame_timing_ms": null,
+        "memory_mib": null,
+        "hardware_os": null,
+        "known_quirks": null
+      }
+    },
+    {
+      "id": "hud_name_tags",
+      "group": "hud_name_tags",
+      "required": true,
+      "features": ["hud", "name_tags", "ui", "font"],
+      "required_supporting_artifacts": {},
+      "description": "Pinned HUD attachments, HUD text, avatar name tags, group titles, and speaking/typing indicators.",
+      "definition_status": "blocked",
+      "definition_blockers": [
+        "Redistributable HUD attachments and deterministic nearby-avatar identities have not been published.",
+        "The offline test identities and fixed indicator states are not provisioned."
+      ],
+      "conditions": {
+        "settings": {
+          "RenderEnableEmissiveBuffer": false,
+          "RenderHDREnabled": true,
+          "NameTagShowDisplayNames": true,
+          "NameTagShowGroupTitles": true,
+          "NameTagShowUsernames": true,
+          "RenderDeferred": true,
+          "RenderFSAASamples": 0,
+          "RenderFSAAType": 0,
+          "RenderNameShowSelf": true,
+          "RenderUIBuffer": false,
+          "UIScaleFactor": 1.0
+        },
+        "camera": {
+          "mode": "fixture_relative_locked",
+          "position_m": [120.0, 240.0, 23.0],
+          "look_at_m": [128.0, 248.0, 22.0],
+          "vertical_fov_degrees": 45.0
+        },
+        "content": {
+          "fixture_id": "firestorm_metal_oracle_hud_names",
+          "fixture_revision": "v1",
+          "availability": "missing",
+          "asset_manifest_path": null,
+          "asset_manifest_bytes": null,
+          "asset_manifest_sha256": null,
+          "requirements": [
+            "One opaque, one alpha-masked, and one alpha-blended HUD attachment",
+            "Self and nearby avatar name tags with display name, username, and group title",
+            "Frozen speaking and typing indicators with documented states",
+            "No live voice session, chat traffic, or changing account data"
+          ]
+        },
+        "environment": {
+          "mode": "fixed_eep",
+          "time_of_day": "12:00:00",
+          "weather": "clear_no_cloud_motion",
+          "asset_id": null
+        },
+        "display": {
+          "width_px": 1920,
+          "height_px": 1080,
+          "scale_factor": 2.0,
+          "color_space": "sRGB",
+          "window_mode": "windowed_no_occlusion"
+        }
+      },
+      "evidence": {
+        "status": "missing",
+        "captures": [],
+        "supporting_artifacts": [],
+        "self_variance": null,
+        "frame_timing_ms": null,
+        "memory_mib": null,
+        "hardware_os": null,
+        "known_quirks": null
+      }
+    },
+    {
+      "id": "impostors_particles",
+      "group": "impostors_particles",
+      "required": true,
+      "features": ["impostors", "particles", "avatar_skinning", "alpha_blend"],
+      "required_supporting_artifacts": {},
+      "description": "Near skinned avatars, forced distant impostors, and a fixed-phase particle system in one depth-ordered scene.",
+      "definition_status": "blocked",
+      "definition_blockers": [
+        "The multi-avatar fixture, forced-impostor placement, and deterministic particle payload do not exist yet.",
+        "A capture hook for freezing the particle simulation at a named phase is required."
+      ],
+      "conditions": {
+        "settings": {
+          "RenderEnableEmissiveBuffer": false,
+          "RenderHDREnabled": true,
+          "RenderAvatarMaxComplexity": 0,
+          "RenderAvatarMaxNonImpostors": 1,
+          "RenderAvatarMaxVisible": 12,
+          "RenderDeferred": true,
+          "RenderFSAASamples": 0,
+          "RenderFSAAType": 0,
+          "RenderMaxPartCount": 4096,
+          "RenderUIBuffer": false,
+          "UIScaleFactor": 1.0
+        },
+        "camera": {
+          "mode": "fixture_relative_locked",
+          "position_m": [80.0, 80.0, 24.0],
+          "look_at_m": [144.0, 144.0, 22.0],
+          "vertical_fov_degrees": 55.0
+        },
+        "content": {
+          "fixture_id": "firestorm_metal_oracle_impostors_particles",
+          "fixture_revision": "v1-frozen-phase",
+          "availability": "missing",
+          "asset_manifest_path": null,
+          "asset_manifest_bytes": null,
+          "asset_manifest_sha256": null,
+          "requirements": [
+            "One fully skinned foreground avatar and at least two forced impostors",
+            "Opaque, alpha-masked, and alpha-blended attachments on the reference avatars",
+            "Seeded particle emitter with fixed textures, blend modes, and simulation phase",
+            "Particles overlapping both geometry and an avatar impostor"
+          ]
+        },
+        "environment": {
+          "mode": "fixed_eep",
+          "time_of_day": "12:00:00",
+          "weather": "clear_no_cloud_motion",
+          "asset_id": null
+        },
+        "display": {
+          "width_px": 1920,
+          "height_px": 1080,
+          "scale_factor": 2.0,
+          "color_space": "sRGB",
+          "window_mode": "windowed_no_occlusion"
+        }
+      },
+      "evidence": {
+        "status": "missing",
+        "captures": [],
+        "supporting_artifacts": [],
+        "self_variance": null,
+        "frame_timing_ms": null,
+        "memory_mib": null,
+        "hardware_os": null,
+        "known_quirks": null
+      }
+    },
+    {
+      "id": "media_previews",
+      "group": "media_previews",
+      "required": true,
+      "features": ["media", "previews", "ui"],
+      "required_supporting_artifacts": {
+        "local_media_payload": {
+          "kind": "blob",
+          "min_bytes": 1,
+          "max_bytes": 16777216
+        }
+      },
+      "description": "Local media-on-a-prim plus deterministic texture, material, and mesh preview floaters.",
+      "definition_status": "blocked",
+      "definition_blockers": [
+        "A versioned localhost media payload and redistributable preview assets have not been published.",
+        "A deterministic action script for opening and positioning each preview floater is required."
+      ],
+      "conditions": {
+        "settings": {
+          "RenderEnableEmissiveBuffer": false,
+          "RenderHDREnabled": true,
+          "MediaOnAPrimUI": true,
+          "MediaTentativeAutoPlay": false,
+          "PrimMediaMasterEnabled": true,
+          "RenderDeferred": true,
+          "RenderFSAASamples": 0,
+          "RenderFSAAType": 0,
+          "RenderUIBuffer": false,
+          "UIScaleFactor": 1.0
+        },
+        "camera": {
+          "mode": "fixture_relative_locked",
+          "position_m": [96.0, 64.0, 24.0],
+          "look_at_m": [128.0, 64.0, 24.0],
+          "vertical_fov_degrees": 50.0
+        },
+        "content": {
+          "fixture_id": "firestorm_metal_oracle_media_previews",
+          "fixture_revision": "v1-localhost",
+          "availability": "missing",
+          "asset_manifest_path": null,
+          "asset_manifest_bytes": null,
+          "asset_manifest_sha256": null,
+          "requirements": [
+            "Media-on-a-prim showing a static localhost HTML color and text chart",
+            "Texture preview with alpha checkerboard and channel controls visible",
+            "PBR material preview with fixed lighting and model rotation",
+            "Mesh preview at a pinned camera and LOD selection"
+          ]
+        },
+        "environment": {
+          "mode": "fixed_eep",
+          "time_of_day": "12:00:00",
+          "weather": "clear_no_cloud_motion",
+          "asset_id": null
+        },
+        "display": {
+          "width_px": 1920,
+          "height_px": 1080,
+          "scale_factor": 2.0,
+          "color_space": "sRGB",
+          "window_mode": "windowed_no_occlusion"
+        }
+      },
+      "evidence": {
+        "status": "missing",
+        "captures": [],
+        "supporting_artifacts": [],
+        "self_variance": null,
+        "frame_timing_ms": null,
+        "memory_mib": null,
+        "hardware_os": null,
+        "known_quirks": null
+      }
+    },
+    {
+      "id": "day_environment",
+      "group": "day_night",
+      "required": true,
+      "features": ["day_night", "sky", "water", "shadows"],
+      "required_supporting_artifacts": {},
+      "description": "Daylight member of the paired day/night environment corpus at the identical camera and content state.",
+      "definition_status": "blocked",
+      "definition_blockers": [
+        "The paired day/night EEP assets and shared scene manifest have not been published."
+      ],
+      "conditions": {
+        "settings": {
+          "RenderEnableEmissiveBuffer": false,
+          "RenderHDREnabled": true,
+          "RenderDeferred": true,
+          "RenderFSAASamples": 0,
+          "RenderFSAAType": 0,
+          "RenderShadowDetail": 2,
+          "RenderUIBuffer": false,
+          "RenderUseAdvancedAtmospherics": true,
+          "RenderWater": true,
+          "UIScaleFactor": 1.0
+        },
+        "camera": {
+          "mode": "fixture_relative_locked",
+          "position_m": [160.0, 32.0, 28.0],
+          "look_at_m": [160.0, 160.0, 24.0],
+          "vertical_fov_degrees": 60.0
+        },
+        "content": {
+          "fixture_id": "firestorm_metal_oracle_day_night",
+          "fixture_revision": "v1-shared-scene",
+          "availability": "missing",
+          "asset_manifest_path": null,
+          "asset_manifest_bytes": null,
+          "asset_manifest_sha256": null,
+          "requirements": [
+            "Shared static scene used unchanged by day_environment and night_environment",
+            "Water horizon, terrain, PBR reference objects, and alpha-masked shadow casters",
+            "No scripted, animated, physical, or network-updated object"
+          ]
+        },
+        "environment": {
+          "mode": "fixed_eep",
+          "time_of_day": "12:00:00",
+          "weather": "day_clear_zero_motion",
+          "asset_id": null
+        },
+        "display": {
+          "width_px": 1920,
+          "height_px": 1080,
+          "scale_factor": 2.0,
+          "color_space": "sRGB",
+          "window_mode": "windowed_no_occlusion"
+        }
+      },
+      "evidence": {
+        "status": "missing",
+        "captures": [],
+        "supporting_artifacts": [],
+        "self_variance": null,
+        "frame_timing_ms": null,
+        "memory_mib": null,
+        "hardware_os": null,
+        "known_quirks": null
+      }
+    },
+    {
+      "id": "night_environment",
+      "group": "day_night",
+      "required": true,
+      "features": ["day_night", "sky", "water", "shadows"],
+      "required_supporting_artifacts": {},
+      "description": "Night member of the paired day/night environment corpus at the identical camera and content state.",
+      "definition_status": "blocked",
+      "definition_blockers": [
+        "The paired day/night EEP assets and shared scene manifest have not been published."
+      ],
+      "conditions": {
+        "settings": {
+          "RenderEnableEmissiveBuffer": false,
+          "RenderHDREnabled": true,
+          "RenderDeferred": true,
+          "RenderFSAASamples": 0,
+          "RenderFSAAType": 0,
+          "RenderShadowDetail": 2,
+          "RenderUIBuffer": false,
+          "RenderUseAdvancedAtmospherics": true,
+          "RenderWater": true,
+          "UIScaleFactor": 1.0
+        },
+        "camera": {
+          "mode": "fixture_relative_locked",
+          "position_m": [160.0, 32.0, 28.0],
+          "look_at_m": [160.0, 160.0, 24.0],
+          "vertical_fov_degrees": 60.0
+        },
+        "content": {
+          "fixture_id": "firestorm_metal_oracle_day_night",
+          "fixture_revision": "v1-shared-scene",
+          "availability": "missing",
+          "asset_manifest_path": null,
+          "asset_manifest_bytes": null,
+          "asset_manifest_sha256": null,
+          "requirements": [
+            "Shared static scene used unchanged by day_environment and night_environment",
+            "Water horizon, terrain, emissive PBR objects, and alpha-masked silhouettes",
+            "No scripted, animated, physical, or network-updated object"
+          ]
+        },
+        "environment": {
+          "mode": "fixed_eep",
+          "time_of_day": "00:00:00",
+          "weather": "night_clear_zero_motion",
+          "asset_id": null
+        },
+        "display": {
+          "width_px": 1920,
+          "height_px": 1080,
+          "scale_factor": 2.0,
+          "color_space": "sRGB",
+          "window_mode": "windowed_no_occlusion"
+        }
+      },
+      "evidence": {
+        "status": "missing",
+        "captures": [],
+        "supporting_artifacts": [],
+        "self_variance": null,
+        "frame_timing_ms": null,
+        "memory_mib": null,
+        "hardware_os": null,
+        "known_quirks": null
+      }
+    }
+  ]
+}

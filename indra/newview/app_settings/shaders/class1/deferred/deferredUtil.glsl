@@ -562,7 +562,7 @@ vec3 pbrCalcPointLightOrSpotLight(vec3 diffuseColor, vec3 specularColor,
     return color * final_scale;
 }
 
-void calcDiffuseSpecular(vec3 baseColor, float metallic, inout vec3 diffuseColor, inout vec3 specularColor)
+void calcDiffuseSpecular(vec3 baseColor, float metallic, out vec3 diffuseColor, out vec3 specularColor)
 {
     vec3 f0 = vec3(0.04);
     diffuseColor = baseColor*(vec3(1.0)-f0);
@@ -645,4 +645,3 @@ void waterClip(vec3 pos)
     }
 
 }
-
