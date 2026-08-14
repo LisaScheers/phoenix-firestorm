@@ -148,6 +148,9 @@
 #include "llnotificationmanager.h"
 #include "llnotifications.h"
 #include "llnotificationsutil.h"
+#if LL_OPENGL_ORACLE_CAPTURE
+#include "lloraclecapture.h"
+#endif
 
 #include "sanitycheck.h"
 #include "llleap.h"
@@ -2000,6 +2003,10 @@ void LLAppViewer::flushLFSIO()
 
 bool LLAppViewer::cleanup()
 {
+#if LL_OPENGL_ORACLE_CAPTURE
+    LLOracleCapture::shutdown();
+#endif
+
 #if LL_VELOPACK
     // Apply any pending Velopack update before shutdown
     if (velopack_is_update_pending())
@@ -3142,11 +3149,34 @@ bool LLAppViewer::initConfiguration()
 
     clp.configure(cmd_line_config, &gSavedSettings);
 
+#if LL_OPENGL_ORACLE_CAPTURE
+    clp.addOptionDesc(
+        "oracle-capture",
+        nullptr,
+        2,
+        "Developer-only OpenGL oracle acquisition from REQUEST into OUTPUT_DIRECTORY");
+#endif
+
     if (!initParseCommandLine(clp))
     {
         handleCommandLineError(clp);
         return false;
     }
+
+#if LL_OPENGL_ORACLE_CAPTURE
+    if (clp.hasOption("oracle-capture"))
+    {
+        const LLCommandLineParser::token_vector_t& values = clp.getOption("oracle-capture");
+        std::string error;
+        if (values.size() != 2 || !LLOracleCapture::configure(values[0], values[1], error))
+        {
+            LL_WARNS("OracleCapture") << "Cannot enable --oracle-capture: "
+                                       << (error.empty() ? "expected REQUEST OUTPUT_DIRECTORY" : error)
+                                       << LL_ENDL;
+            return false;
+        }
+    }
+#endif
 
     // - selectively apply settings
 

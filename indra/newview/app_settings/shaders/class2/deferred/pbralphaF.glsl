@@ -94,7 +94,7 @@ void sampleReflectionProbes(inout vec3 ambenv, inout vec3 glossenv,
 void mirrorClip(vec3 pos);
 void waterClip(vec3 pos);
 
-void calcDiffuseSpecular(vec3 baseColor, float metallic, inout vec3 diffuseColor, inout vec3 specularColor);
+void calcDiffuseSpecular(vec3 baseColor, float metallic, out vec3 diffuseColor, out vec3 specularColor);
 
 vec3 pbrBaseLight(vec3 diffuseColor,
                   vec3 specularColor,

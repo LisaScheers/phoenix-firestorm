@@ -912,6 +912,10 @@ set(viewer_SOURCE_FILES
     NACLfloaterexploresounds.cpp
     )
 
+if(ENABLE_OPENGL_ORACLE_CAPTURE)
+  list(APPEND viewer_SOURCE_FILES lloraclecapture.cpp)
+endif()
+
 # <FS:Ansariel> Group GLTF files into their subfolders
 set(viewer_GLTF_SOURCE_FILES
     gltf/asset.cpp
@@ -1420,6 +1424,7 @@ set(viewer_HEADER_FILES
     llnotificationlistview.h
     llnotificationmanager.h
     llnotificationstorage.h
+    lloraclecapture.h
     lloutfitgallery.h
     lloutfitslist.h
     lloutfitobserver.h
@@ -2288,6 +2293,63 @@ add_executable(${VIEWER_BINARY_NAME}
     ${viewer_SOURCE_FILES}
     )
 
+if(ENABLE_OPENGL_ORACLE_CAPTURE)
+  set(ORACLE_BUILD_ID_HEADER "${CMAKE_CURRENT_BINARY_DIR}/lloraclebuildidentity.h")
+  set(ORACLE_BUILD_ID_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/generate_lloraclebuildidentity.cmake")
+  file(GENERATE OUTPUT "${ORACLE_BUILD_ID_SCRIPT}" CONTENT [=[
+if(NOT DEFINED ORACLE_REPOSITORY OR NOT DEFINED ORACLE_HEADER)
+  message(FATAL_ERROR "Oracle build identity generator is missing its paths")
+endif()
+execute_process(
+    COMMAND git rev-parse HEAD
+    WORKING_DIRECTORY "${ORACLE_REPOSITORY}"
+    OUTPUT_VARIABLE ORACLE_COMMIT
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+    RESULT_VARIABLE ORACLE_GIT_RESULT
+)
+execute_process(
+    COMMAND git status --porcelain --untracked-files=normal
+    WORKING_DIRECTORY "${ORACLE_REPOSITORY}"
+    OUTPUT_VARIABLE ORACLE_GIT_STATUS
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+    RESULT_VARIABLE ORACLE_STATUS_RESULT
+)
+string(LENGTH "${ORACLE_COMMIT}" ORACLE_COMMIT_LENGTH)
+if(NOT ORACLE_GIT_RESULT EQUAL 0 OR
+   NOT ORACLE_STATUS_RESULT EQUAL 0 OR
+   NOT ORACLE_COMMIT_LENGTH EQUAL 40 OR
+   ORACLE_COMMIT MATCHES "[^0-9a-f]" OR
+   NOT ORACLE_GIT_STATUS STREQUAL "")
+  set(ORACLE_COMMIT "unavailable")
+endif()
+set(ORACLE_HEADER_CONTENT
+    "#ifndef LL_ORACLE_BUILD_IDENTITY_H\n#define LL_ORACLE_BUILD_IDENTITY_H\n#define LL_ORACLE_INSTRUMENTATION_COMMIT \"${ORACLE_COMMIT}\"\n#endif\n")
+set(ORACLE_TEMP_HEADER "${ORACLE_HEADER}.tmp")
+file(WRITE "${ORACLE_TEMP_HEADER}" "${ORACLE_HEADER_CONTENT}")
+execute_process(
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ORACLE_TEMP_HEADER}" "${ORACLE_HEADER}"
+    RESULT_VARIABLE ORACLE_COPY_RESULT
+)
+file(REMOVE "${ORACLE_TEMP_HEADER}")
+if(NOT ORACLE_COPY_RESULT EQUAL 0)
+  message(FATAL_ERROR "Cannot generate the oracle build identity header")
+endif()
+]=])
+  add_custom_target(${VIEWER_BINARY_NAME}_oracle_build_identity
+      COMMAND "${CMAKE_COMMAND}"
+          "-DORACLE_REPOSITORY:PATH=${CMAKE_SOURCE_DIR}/.."
+          "-DORACLE_HEADER:FILEPATH=${ORACLE_BUILD_ID_HEADER}"
+          -P "${ORACLE_BUILD_ID_SCRIPT}"
+      BYPRODUCTS "${ORACLE_BUILD_ID_HEADER}"
+      COMMENT "Checking the OpenGL oracle instrumentation source identity"
+      VERBATIM
+  )
+  add_dependencies(${VIEWER_BINARY_NAME} ${VIEWER_BINARY_NAME}_oracle_build_identity)
+  target_include_directories(${VIEWER_BINARY_NAME} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+endif()
+
 # add package files
 file(GLOB EVENT_HOST_SCRIPT_GLOB_LIST
      ${CMAKE_CURRENT_SOURCE_DIR}/../viewer_components/*.py)
@@ -2635,6 +2697,27 @@ target_link_libraries(${VIEWER_BINARY_NAME}
         fs::glod # <FS:Beq/> restore GLOD dependencies
         fs::discord # <FS:Ansariel> Discord  support
         )
+
+if(ENABLE_OPENGL_ORACLE_CAPTURE)
+  if(USE_CONAN)
+    set(ORACLE_BOOST_CHARCONV_LIBRARY ll::boost)
+  else()
+    find_library(ORACLE_BOOST_CHARCONV_LIBRARY
+      NAMES
+      boost_charconv
+      boost_charconv-mt
+      boost_charconv-mt${addrsfx}
+      PATHS "${ARCH_PREBUILT_DIRS_RELEASE}"
+      REQUIRED
+      NO_DEFAULT_PATH
+    )
+  endif()
+  set(ORACLE_CAPTURE_LIBRARIES
+    ll::openssl
+    ${ORACLE_BOOST_CHARCONV_LIBRARY}
+  )
+  target_link_libraries(${VIEWER_BINARY_NAME} ${ORACLE_CAPTURE_LIBRARIES})
+endif()
 
 if (USE_DISCORD)
    target_link_libraries(${VIEWER_BINARY_NAME} ll::discord_sdk )
@@ -3019,6 +3102,9 @@ if (LL_TESTS)
     llworldmap.cpp
     llworldmipmap.cpp
   )
+  if(ENABLE_OPENGL_ORACLE_CAPTURE)
+    list(APPEND viewer_TEST_SOURCE_FILES lloraclecapture.cpp)
+  endif()
 
   set_source_files_properties(
     llworldmap.cpp
@@ -3090,6 +3176,13 @@ if (LL_TESTS)
   )
 
   LL_ADD_PROJECT_UNIT_TESTS(${VIEWER_BINARY_NAME} "${viewer_TEST_SOURCE_FILES}")
+
+  if(ENABLE_OPENGL_ORACLE_CAPTURE)
+    set(ORACLE_CAPTURE_TEST_TARGET PROJECT_${VIEWER_BINARY_NAME}_TEST_lloraclecapture)
+    add_dependencies(${ORACLE_CAPTURE_TEST_TARGET} ${VIEWER_BINARY_NAME}_oracle_build_identity)
+    target_include_directories(${ORACLE_CAPTURE_TEST_TARGET} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+    target_link_libraries(${ORACLE_CAPTURE_TEST_TARGET} ${ORACLE_CAPTURE_LIBRARIES})
+  endif()
 
   #set(TEST_DEBUG on)
 

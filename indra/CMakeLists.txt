@@ -51,6 +51,23 @@ set(CMAKE_XCODE_GENERATE_TOP_LEVEL_PROJECT_ONLY ON)
 include(Variables)
 include(BuildVersion)
 
+set(ENABLE_OPENGL_ORACLE_CAPTURE OFF CACHE BOOL
+    "Enable the developer-only OpenGL oracle acquisition hook (macOS arm64 runtime only)")
+if(ENABLE_OPENGL_ORACLE_CAPTURE)
+  if(NOT DARWIN)
+    message(FATAL_ERROR "OpenGL oracle capture is supported only in macOS builds")
+  endif()
+  if(NOT "arm64" IN_LIST CMAKE_OSX_ARCHITECTURES)
+    message(FATAL_ERROR "OpenGL oracle capture requires an arm64 macOS build slice")
+  endif()
+  # Firestorm's normal macOS build is universal. The x86_64 slice remains
+  # buildable, but the acquisition hook rejects it at runtime because oracle
+  # evidence is defined only for Apple Silicon.
+  # The guarded LLWindow virtual interface is consumed across library boundaries,
+  # so every translation unit in this opt-in build must see the same definition.
+  add_compile_definitions(LL_OPENGL_ORACLE_CAPTURE=1)
+endif()
+
 if (NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release CACHE STRING
       "Build type.  One of: Release RelWithDebInfo" FORCE)
@@ -230,4 +247,3 @@ if (LL_TESTS)
   # individual apps can add themselves as dependencies
   add_subdirectory(${INTEGRATION_TESTS_PREFIX}integration_tests)
 endif (LL_TESTS)
-

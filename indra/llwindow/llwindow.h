@@ -146,6 +146,15 @@ public:
     virtual void gatherInput() = 0;
     virtual void delayInputProcessing() = 0;
     virtual void swapBuffers() = 0;
+#if defined(LL_OPENGL_ORACLE_CAPTURE) && LL_OPENGL_ORACLE_CAPTURE
+    // Backends with a presentation error channel override this; legacy
+    // backends retain their existing void-swap behavior.
+    virtual bool swapBuffersWithStatus()
+    {
+        swapBuffers();
+        return true;
+    }
+#endif
     virtual void bringToFront() = 0;
     virtual void focusClient() { };     // this may not have meaning or be required on other platforms, therefore, it's not abstract
     // handy coordinate space conversion routines

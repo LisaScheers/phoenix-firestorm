@@ -1,0 +1,847 @@
+{
+  "schema": 3,
+  "glsl_version": 400,
+  "baseline_commit": "1e8fd5491bde91fe6daca7d78f217a4d46084a5b",
+  "source_root": "indra/newview/app_settings/shaders",
+  "required_families": [
+    "Avatar skinning",
+    "Deferred diffuse",
+    "Depth write and copy",
+    "Indexed-texture material",
+    "PBR opaque and alpha",
+    "Reflection probe",
+    "SMAA or FXAA",
+    "Shadow alpha mask",
+    "Terrain",
+    "UI and font glyph"
+  ],
+  "source_contracts": [
+    {
+      "path": "indra/newview/pipeline.cpp",
+      "sha256": "02dfb1dbac396e3888adfe63afd438bcf9b409e1830a5c985a5d30a915266d16"
+    },
+    {
+      "path": "indra/newview/llviewershadermgr.cpp",
+      "sha256": "1e9d757a3f6c82a27583be76f619dd75dec44910f660d4bf54d727e1803bccd5"
+    },
+    {
+      "path": "indra/llrender/llvertexbuffer.cpp",
+      "sha256": "f337cc98a0b6554e5640b364dece1a5a9c19b5b354de3da809c3da2d033ab3fb"
+    },
+    {
+      "path": "indra/llrender/llvertexbuffer.h",
+      "sha256": "0a57d038c3b095b0bd995d63f0bac1ff9b4f999bcbb926072bde11315878f7b4"
+    },
+    {
+      "path": "indra/llrender/llshadermgr.cpp",
+      "sha256": "31dece02e6d91cfc6ef002c0d637e4370e9af9fc8034d10257e39e0acbd50424"
+    },
+    {
+      "path": "indra/newview/app_settings/settings.xml",
+      "sha256": "d211230433de13636a972823cce0103c9c162e2e7cb6b8784b355b902cd1d206"
+    },
+    {
+      "path": "indra/newview/app_settings/shaders/class1/deferred/fxaaF.glsl",
+      "sha256": "18b46a598aa196504e1e5ec56df3ab80a8b12a3bd643d70bd7bae665a1ca7823"
+    }
+  ],
+  "baseline_settings": {
+    "RenderAvatarCloth": false,
+    "RenderEnableEmissiveBuffer": false,
+    "RenderFSAAType": 0,
+    "RenderHDREnabled": true,
+    "RenderMirrors": false,
+    "RenderReflectionsEnabled": true,
+    "RenderReflectionProbeLevel": 3,
+    "RenderScreenSpaceReflections": false,
+    "RenderShadowDetail": 0,
+    "RenderUIBuffer": false
+  },
+  "global_defines": {
+    "REFMAP_LEVEL": "3",
+    "REF_SAMPLE_COUNT": "32"
+  },
+  "feature_classes": {
+    "avatar/avatarSkinV.glsl": 1,
+    "deferred/deferredUtil.glsl": 1,
+    "deferred/globalF.glsl": 1,
+    "deferred/reflectionProbeF.glsl": 3,
+    "deferred/screenSpaceReflUtil.glsl": 1,
+    "deferred/shadowUtil.glsl": 1,
+    "deferred/textureUtilV.glsl": 1,
+    "environment/srgbF.glsl": 1,
+    "environment/waterFogF.glsl": 3,
+    "objects/indexedTextureV.glsl": 1,
+    "objects/nonindexedTextureV.glsl": 1,
+    "windlight/atmosphericsF.glsl": 2,
+    "windlight/atmosphericsFuncs.glsl": 2,
+    "windlight/atmosphericsHelpersF.glsl": 2,
+    "windlight/atmosphericsHelpersV.glsl": 2,
+    "windlight/atmosphericsV.glsl": 2,
+    "windlight/atmosphericsVarsF.glsl": 2,
+    "windlight/atmosphericsVarsV.glsl": 2,
+    "windlight/gammaF.glsl": 2
+  },
+  "vertex_streams": {
+    "position": {
+      "buffer_index": 16,
+      "stride": 16,
+      "step_function": "per_vertex",
+      "attributes": [
+        {"name": "position", "location": 0, "format": "float3", "offset": 0}
+      ]
+    },
+    "position_indexed": {
+      "buffer_index": 16,
+      "stride": 16,
+      "step_function": "per_vertex",
+      "attributes": [
+        {"name": "position", "location": 0, "format": "float3", "offset": 0},
+        {"name": "texture_index", "location": 13, "format": "int", "offset": 12}
+      ]
+    },
+    "normal": {
+      "buffer_index": 17,
+      "stride": 16,
+      "step_function": "per_vertex",
+      "attributes": [
+        {"name": "normal", "location": 1, "format": "float3", "offset": 0}
+      ]
+    },
+    "texcoord0": {
+      "buffer_index": 18,
+      "stride": 8,
+      "step_function": "per_vertex",
+      "attributes": [
+        {"name": "texcoord0", "location": 2, "format": "float2", "offset": 0}
+      ]
+    },
+    "texcoord1": {
+      "buffer_index": 19,
+      "stride": 8,
+      "step_function": "per_vertex",
+      "attributes": [
+        {"name": "texcoord1", "location": 3, "format": "float2", "offset": 0}
+      ]
+    },
+    "color": {
+      "buffer_index": 20,
+      "stride": 4,
+      "step_function": "per_vertex",
+      "attributes": [
+        {"name": "diffuse_color", "location": 6, "format": "uchar4normalized", "offset": 0}
+      ]
+    },
+    "tangent": {
+      "buffer_index": 21,
+      "stride": 16,
+      "step_function": "per_vertex",
+      "attributes": [
+        {"name": "tangent", "location": 8, "format": "float4", "offset": 0}
+      ]
+    },
+    "weight": {
+      "buffer_index": 22,
+      "stride": 4,
+      "step_function": "per_vertex",
+      "attributes": [
+        {"name": "weight", "location": 9, "format": "float", "offset": 0}
+      ]
+    },
+    "clothing": {
+      "buffer_index": 23,
+      "stride": 16,
+      "step_function": "per_vertex",
+      "attributes": [
+        {"name": "clothing", "location": 11, "format": "float4", "offset": 0}
+      ]
+    }
+  },
+  "vertex_contracts": {
+    "position_only": ["position"],
+    "ui": ["position", "texcoord0", "color"],
+    "indexed": ["position_indexed", "normal", "texcoord0", "color"],
+    "deferred": ["position", "normal", "texcoord0", "color", "tangent"],
+    "terrain": ["position", "normal", "texcoord1"],
+    "avatar": ["position", "normal", "texcoord0", "weight", "clothing"],
+    "shadow": ["position_indexed", "texcoord0", "color"]
+  },
+  "programs": [
+    {
+      "id": "ui_font",
+      "family": "UI and font glyph",
+      "recipe_kind": "runtime",
+      "settings_overrides": {},
+      "semantic_parity": "not_run",
+      "source_reference": "indra/newview/llviewershadermgr.cpp:3247",
+      "source_symbol": "gUIProgram",
+      "shader_class": 2,
+      "defines": {},
+      "indexed_texture_channels": 0,
+      "required_reflection": {
+        "fragment": [
+          {"group": "textures", "name": "diffuseMap", "type": "sampler2D"}
+        ]
+      },
+      "pipeline": {
+        "color_formats": ["bgra8unorm"],
+        "depth_format": null,
+        "sample_count": 1,
+        "vertex_contract": "ui",
+        "source_evidence": [
+          {
+            "path": "indra/llwindow/metal/llmetalbootstrap-objc.mm",
+            "contains": "return MTLPixelFormatBGRA8Unorm;"
+          }
+        ]
+      },
+      "stages": {
+        "vertex": [
+          "interface/uiV.glsl",
+          "deferred/textureUtilV.glsl",
+          "objects/nonindexedTextureV.glsl"
+        ],
+        "fragment": ["interface/uiF.glsl", "deferred/globalF.glsl"]
+      }
+    },
+    {
+      "id": "indexed_material",
+      "family": "Indexed-texture material",
+      "recipe_kind": "runtime",
+      "settings_overrides": {},
+      "semantic_parity": "not_run",
+      "source_reference": "indra/newview/llviewershadermgr.cpp:1230",
+      "source_symbol": "gDeferredDiffuseProgram",
+      "shader_class": 3,
+      "defines": {},
+      "indexed_texture_channels": 4,
+      "required_reflection": {
+        "fragment": [
+          {"group": "textures", "name": "tex3", "type": "sampler2D"}
+        ]
+      },
+      "pipeline": {
+        "color_formats": [
+          "rgba8unorm",
+          "rgba8unorm",
+          "rgba16unorm"
+        ],
+        "depth_format": "depth32float",
+        "sample_count": 1,
+        "vertex_contract": "indexed",
+        "source_evidence": [
+          {
+            "path": "indra/newview/pipeline.cpp",
+            "contains": "mRT->deferredScreen.allocate(resX, resY, GL_RGBA, true)"
+          },
+          {
+            "path": "indra/newview/pipeline.cpp",
+            "contains": "U32 norm = GL_RGBA16;"
+          }
+        ]
+      },
+      "stages": {
+        "vertex": [
+          "deferred/diffuseV.glsl",
+          "deferred/textureUtilV.glsl",
+          "objects/indexedTextureV.glsl"
+        ],
+        "fragment": [
+          "deferred/diffuseIndexedF.glsl",
+          "deferred/globalF.glsl",
+          "environment/srgbF.glsl"
+        ]
+      }
+    },
+    {
+      "id": "indexed_material_stress_16",
+      "family": "Indexed-texture material",
+      "recipe_kind": "stress",
+      "settings_overrides": {},
+      "semantic_parity": "not_run",
+      "source_reference": "indra/newview/llviewershadermgr.cpp:574",
+      "source_symbol": "sIndexedTextureChannels",
+      "shader_class": 3,
+      "defines": {},
+      "indexed_texture_channels": 16,
+      "required_reflection": {
+        "fragment": [
+          {"group": "textures", "name": "tex15", "type": "sampler2D"}
+        ]
+      },
+      "pipeline": {
+        "color_formats": [
+          "rgba8unorm",
+          "rgba8unorm",
+          "rgba16unorm"
+        ],
+        "depth_format": "depth32float",
+        "sample_count": 1,
+        "vertex_contract": "indexed",
+        "source_evidence": [
+          {
+            "path": "indra/newview/pipeline.cpp",
+            "contains": "mRT->deferredScreen.allocate(resX, resY, GL_RGBA, true)"
+          },
+          {
+            "path": "indra/newview/pipeline.cpp",
+            "contains": "U32 norm = GL_RGBA16;"
+          }
+        ]
+      },
+      "stages": {
+        "vertex": [
+          "deferred/diffuseV.glsl",
+          "deferred/textureUtilV.glsl",
+          "objects/indexedTextureV.glsl"
+        ],
+        "fragment": [
+          "deferred/diffuseIndexedF.glsl",
+          "deferred/globalF.glsl",
+          "environment/srgbF.glsl"
+        ]
+      }
+    },
+    {
+      "id": "deferred_diffuse",
+      "family": "Deferred diffuse",
+      "recipe_kind": "runtime",
+      "settings_overrides": {},
+      "semantic_parity": "not_run",
+      "source_reference": "indra/newview/llviewershadermgr.cpp:1280",
+      "source_symbol": "gDeferredBumpProgram",
+      "shader_class": 3,
+      "defines": {},
+      "indexed_texture_channels": 0,
+      "required_reflection": {
+        "fragment": [
+          {"group": "outputs", "name": "frag_data", "type": "vec4"},
+          {"group": "textures", "name": "bumpMap", "type": "sampler2D"}
+        ]
+      },
+      "pipeline": {
+        "color_formats": [
+          "rgba8unorm",
+          "rgba8unorm",
+          "rgba16unorm"
+        ],
+        "depth_format": "depth32float",
+        "sample_count": 1,
+        "vertex_contract": "deferred",
+        "source_evidence": [
+          {
+            "path": "indra/newview/pipeline.cpp",
+            "contains": "mRT->deferredScreen.allocate(resX, resY, GL_RGBA, true)"
+          },
+          {
+            "path": "indra/newview/pipeline.cpp",
+            "contains": "U32 norm = GL_RGBA16;"
+          }
+        ]
+      },
+      "stages": {
+        "vertex": [
+          "deferred/bumpV.glsl",
+          "deferred/textureUtilV.glsl",
+          "objects/nonindexedTextureV.glsl"
+        ],
+        "fragment": ["deferred/bumpF.glsl", "deferred/globalF.glsl"]
+      }
+    },
+    {
+      "id": "pbr_opaque",
+      "family": "PBR opaque and alpha",
+      "recipe_kind": "runtime",
+      "settings_overrides": {},
+      "semantic_parity": "not_run",
+      "source_reference": "indra/newview/llviewershadermgr.cpp:1387",
+      "source_symbol": "gDeferredPBROpaqueProgram",
+      "shader_class": 3,
+      "defines": {},
+      "indexed_texture_channels": 0,
+      "required_reflection": {
+        "fragment": [
+          {"group": "textures", "name": "specularMap", "type": "sampler2D"}
+        ]
+      },
+      "pipeline": {
+        "color_formats": [
+          "rgba8unorm",
+          "rgba8unorm",
+          "rgba16unorm"
+        ],
+        "depth_format": "depth32float",
+        "sample_count": 1,
+        "vertex_contract": "deferred",
+        "source_evidence": [
+          {
+            "path": "indra/newview/pipeline.cpp",
+            "contains": "mRT->deferredScreen.allocate(resX, resY, GL_RGBA, true)"
+          },
+          {
+            "path": "indra/newview/pipeline.cpp",
+            "contains": "U32 norm = GL_RGBA16;"
+          }
+        ]
+      },
+      "stages": {
+        "vertex": [
+          "deferred/pbropaqueV.glsl",
+          "deferred/textureUtilV.glsl",
+          "objects/nonindexedTextureV.glsl"
+        ],
+        "fragment": [
+          "deferred/pbropaqueF.glsl",
+          "deferred/globalF.glsl",
+          "environment/srgbF.glsl"
+        ]
+      }
+    },
+    {
+      "id": "pbr_alpha",
+      "family": "PBR opaque and alpha",
+      "recipe_kind": "runtime",
+      "settings_overrides": {"RenderShadowDetail": 1},
+      "semantic_parity": "not_run",
+      "source_reference": "indra/newview/llviewershadermgr.cpp:1473",
+      "source_symbol": "gDeferredPBRAlphaProgram",
+      "shader_class": 3,
+      "defines": {
+        "DIFFUSE_ALPHA_MODE": "1",
+        "HAS_EMISSIVE_MAP": "1",
+        "HAS_NORMAL_MAP": "1",
+        "HAS_SPECULAR_MAP": "1",
+        "HAS_SUN_SHADOW": "1",
+        "USE_VERTEX_COLOR": "1"
+      },
+      "indexed_texture_channels": 0,
+      "required_reflection": {
+        "fragment": [
+          {
+            "group": "textures",
+            "name": "reflectionProbes",
+            "type": "samplerCubeArray"
+          },
+          {
+            "group": "textures",
+            "name": "shadowMap0",
+            "type": "sampler2DShadow"
+          },
+          {
+            "group": "textures",
+            "name": "shadowMap1",
+            "type": "sampler2DShadow"
+          },
+          {
+            "group": "textures",
+            "name": "shadowMap2",
+            "type": "sampler2DShadow"
+          },
+          {
+            "group": "textures",
+            "name": "shadowMap3",
+            "type": "sampler2DShadow"
+          }
+        ]
+      },
+      "pipeline": {
+        "color_formats": ["rgba16float"],
+        "depth_format": "depth32float",
+        "sample_count": 1,
+        "vertex_contract": "deferred",
+        "source_evidence": [
+          {
+            "path": "indra/newview/pipeline.cpp",
+            "contains": "mRT->screen.allocate(resX, resY, GL_RGBA16F)"
+          },
+          {
+            "path": "indra/newview/pipeline.cpp",
+            "contains": "mRT->deferredScreen.shareDepthBuffer(mRT->screen)"
+          },
+          {
+            "path": "indra/newview/llviewershadermgr.cpp",
+            "contains": "shader->mFeatures.hasGamma = true;\n        shader->mFeatures.hasShadows = use_sun_shadow;\n        shader->mFeatures.isDeferred = true; // include deferredUtils\n        shader->mFeatures.hasReflectionProbes = mShaderLevel[SHADER_DEFERRED];"
+          },
+          {
+            "path": "indra/newview/llviewershadermgr.cpp",
+            "contains": "if (use_sun_shadow)\n        {\n            shader->addPermutation(\"HAS_SUN_SHADOW\", \"1\");\n        }\n\n        shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];"
+          },
+          {
+            "path": "indra/llrender/llshadermgr.cpp",
+            "contains": "if (!shader->attachFragmentObject(\"deferred/shadowUtil.glsl\"))"
+          }
+        ]
+      },
+      "stages": {
+        "vertex": [
+          "deferred/pbralphaV.glsl",
+          "windlight/atmosphericsVarsV.glsl",
+          "windlight/atmosphericsHelpersV.glsl",
+          "environment/srgbF.glsl",
+          "windlight/atmosphericsFuncs.glsl",
+          "windlight/atmosphericsV.glsl",
+          "deferred/textureUtilV.glsl",
+          "objects/nonindexedTextureV.glsl"
+        ],
+        "fragment": [
+          "deferred/pbralphaF.glsl",
+          "deferred/globalF.glsl",
+          "environment/srgbF.glsl",
+          "windlight/atmosphericsVarsF.glsl",
+          "windlight/atmosphericsHelpersF.glsl",
+          "deferred/deferredUtil.glsl",
+          "deferred/screenSpaceReflUtil.glsl",
+          "deferred/shadowUtil.glsl",
+          "deferred/reflectionProbeF.glsl",
+          "windlight/gammaF.glsl",
+          "windlight/atmosphericsFuncs.glsl",
+          "windlight/atmosphericsF.glsl",
+          "environment/waterFogF.glsl"
+        ]
+      }
+    },
+    {
+      "id": "terrain",
+      "family": "Terrain",
+      "recipe_kind": "runtime",
+      "settings_overrides": {},
+      "semantic_parity": "not_run",
+      "source_reference": "indra/newview/llviewershadermgr.cpp:2366",
+      "source_symbol": "gDeferredTerrainProgram",
+      "shader_class": 3,
+      "defines": {},
+      "indexed_texture_channels": 0,
+      "required_reflection": {
+        "fragment": [
+          {"group": "textures", "name": "detail_3", "type": "sampler2D"}
+        ]
+      },
+      "pipeline": {
+        "color_formats": [
+          "rgba8unorm",
+          "rgba8unorm",
+          "rgba16unorm"
+        ],
+        "depth_format": "depth32float",
+        "sample_count": 1,
+        "vertex_contract": "terrain",
+        "source_evidence": [
+          {
+            "path": "indra/newview/pipeline.cpp",
+            "contains": "mRT->deferredScreen.allocate(resX, resY, GL_RGBA, true)"
+          },
+          {
+            "path": "indra/newview/pipeline.cpp",
+            "contains": "U32 norm = GL_RGBA16;"
+          }
+        ]
+      },
+      "stages": {
+        "vertex": [
+          "deferred/terrainV.glsl",
+          "windlight/atmosphericsVarsV.glsl",
+          "windlight/atmosphericsHelpersV.glsl",
+          "environment/srgbF.glsl",
+          "windlight/atmosphericsFuncs.glsl",
+          "windlight/atmosphericsV.glsl",
+          "deferred/textureUtilV.glsl",
+          "objects/nonindexedTextureV.glsl"
+        ],
+        "fragment": [
+          "deferred/terrainF.glsl",
+          "deferred/globalF.glsl",
+          "environment/srgbF.glsl",
+          "windlight/atmosphericsVarsF.glsl",
+          "windlight/atmosphericsHelpersF.glsl",
+          "windlight/gammaF.glsl",
+          "windlight/atmosphericsFuncs.glsl",
+          "windlight/atmosphericsF.glsl",
+          "environment/waterFogF.glsl"
+        ]
+      }
+    },
+    {
+      "id": "avatar_skinning",
+      "family": "Avatar skinning",
+      "recipe_kind": "runtime",
+      "settings_overrides": {},
+      "semantic_parity": "cpu_runtime_layout_open",
+      "source_reference": "indra/newview/llviewershadermgr.cpp:2386",
+      "source_symbol": "gDeferredAvatarProgram",
+      "shader_class": 3,
+      "defines": {"AVATAR_CLOTH": "0"},
+      "indexed_texture_channels": 0,
+      "required_reflection": {
+        "vertex": [
+          {"group": "inputs", "name": "clothing", "type": "vec4"},
+          {"group": "ubos", "name": "FirestormVertexUniforms"}
+        ]
+      },
+      "pipeline": {
+        "color_formats": [
+          "rgba8unorm",
+          "rgba8unorm",
+          "rgba16unorm"
+        ],
+        "depth_format": "depth32float",
+        "sample_count": 1,
+        "vertex_contract": "avatar",
+        "source_evidence": [
+          {
+            "path": "indra/newview/pipeline.cpp",
+            "contains": "mRT->deferredScreen.allocate(resX, resY, GL_RGBA, true)"
+          },
+          {
+            "path": "indra/newview/pipeline.cpp",
+            "contains": "U32 norm = GL_RGBA16;"
+          }
+        ]
+      },
+      "stages": {
+        "vertex": [
+          "deferred/avatarV.glsl",
+          "avatar/avatarSkinV.glsl",
+          "deferred/textureUtilV.glsl",
+          "objects/nonindexedTextureV.glsl"
+        ],
+        "fragment": ["deferred/avatarF.glsl", "deferred/globalF.glsl"]
+      }
+    },
+    {
+      "id": "shadow_alpha_mask",
+      "family": "Shadow alpha mask",
+      "recipe_kind": "runtime",
+      "settings_overrides": {"RenderShadowDetail": 2},
+      "semantic_parity": "not_run",
+      "source_reference": "indra/newview/llviewershadermgr.cpp:2283",
+      "source_symbol": "gDeferredShadowAlphaMaskProgram",
+      "shader_class": 3,
+      "defines": {},
+      "indexed_texture_channels": 4,
+      "required_reflection": {
+        "fragment": [
+          {"group": "textures", "name": "tex3", "type": "sampler2D"}
+        ]
+      },
+      "pipeline": {
+        "color_formats": [],
+        "depth_format": "depth32float",
+        "sample_count": 1,
+        "vertex_contract": "shadow",
+        "source_evidence": [
+          {
+            "path": "indra/newview/pipeline.cpp",
+            "contains": "mRT->shadow[i].allocate(sun_shadow_map_width, sun_shadow_map_height, 0, true)"
+          }
+        ]
+      },
+      "stages": {
+        "vertex": [
+          "deferred/shadowAlphaMaskV.glsl",
+          "deferred/textureUtilV.glsl",
+          "objects/indexedTextureV.glsl"
+        ],
+        "fragment": [
+          "deferred/shadowAlphaMaskF.glsl",
+          "deferred/globalF.glsl"
+        ]
+      }
+    },
+    {
+      "id": "reflection_probe",
+      "family": "Reflection probe",
+      "recipe_kind": "runtime",
+      "settings_overrides": {},
+      "semantic_parity": "not_run",
+      "source_reference": "indra/newview/llviewershadermgr.cpp:3568",
+      "source_symbol": "gRadianceGenProgram",
+      "shader_class": 2,
+      "defines": {"PROBE_FILTER_SAMPLES": "32"},
+      "indexed_texture_channels": 0,
+      "required_reflection": {
+        "fragment": [
+          {
+            "group": "textures",
+            "name": "reflectionProbes",
+            "type": "samplerCubeArray"
+          }
+        ]
+      },
+      "pipeline": {
+        "color_formats": ["rg11b10float"],
+        "depth_format": null,
+        "sample_count": 1,
+        "vertex_contract": "position_only",
+        "source_evidence": [
+          {
+            "path": "indra/newview/llreflectionmapmanager.cpp",
+            "contains": "mMipChain[i].allocate(res, res, render_hdr ? GL_R11F_G11F_B10F : GL_RGB8)"
+          }
+        ]
+      },
+      "stages": {
+        "vertex": [
+          "interface/radianceGenV.glsl",
+          "deferred/textureUtilV.glsl",
+          "objects/nonindexedTextureV.glsl"
+        ],
+        "fragment": ["interface/radianceGenF.glsl", "deferred/globalF.glsl"]
+      }
+    },
+    {
+      "id": "depth_copy",
+      "family": "Depth write and copy",
+      "recipe_kind": "runtime",
+      "settings_overrides": {},
+      "semantic_parity": "not_run",
+      "source_reference": "indra/newview/llviewershadermgr.cpp:3478",
+      "source_symbol": "gCopyDepthProgram",
+      "shader_class": 2,
+      "defines": {"COPY_DEPTH": "1"},
+      "indexed_texture_channels": 0,
+      "required_reflection": {
+        "fragment": [
+          {"group": "textures", "name": "depthMap", "type": "sampler2D"}
+        ]
+      },
+      "pipeline": {
+        "color_formats": ["rgba16float"],
+        "depth_format": "depth32float",
+        "sample_count": 1,
+        "vertex_contract": "position_only",
+        "source_evidence": [
+          {
+            "path": "indra/newview/pipeline.cpp",
+            "contains": "mWaterDis.allocate(resX, resY, screenFormat, true)"
+          },
+          {
+            "path": "indra/newview/pipeline.cpp",
+            "contains": "GLuint screenFormat = hdr ? GL_RGBA16F : GL_RGBA;"
+          }
+        ]
+      },
+      "stages": {
+        "vertex": [
+          "interface/copyV.glsl",
+          "deferred/textureUtilV.glsl",
+          "objects/nonindexedTextureV.glsl"
+        ],
+        "fragment": ["interface/copyF.glsl", "deferred/globalF.glsl"]
+      }
+    },
+    {
+      "id": "fxaa",
+      "family": "SMAA or FXAA",
+      "recipe_kind": "runtime",
+      "settings_overrides": {"RenderFSAAType": 1},
+      "semantic_parity": "not_run",
+      "source_reference": "indra/newview/llviewershadermgr.cpp:2620",
+      "source_symbol": "gFXAAProgram",
+      "shader_class": 3,
+      "defines": {
+        "FXAA_GLSL_400": "1",
+        "FXAA_NO_DEPTH_WRITE": "1",
+        "FXAA_QUALITY__PRESET": "39"
+      },
+      "indexed_texture_channels": 0,
+      "required_reflection": {
+        "fragment": [
+          {"group": "textures", "name": "diffuseMap", "type": "sampler2D"}
+        ]
+      },
+      "pipeline": {
+        "color_formats": ["rgba8unorm"],
+        "depth_format": null,
+        "sample_count": 1,
+        "vertex_contract": "position_only",
+        "source_evidence": [
+          {
+            "path": "indra/newview/pipeline.cpp",
+            "contains": "mPostPongMap.allocate(resX, resY, GL_RGBA)"
+          },
+          {
+            "path": "indra/newview/app_settings/shaders/class1/deferred/fxaaF.glsl",
+            "contains": "#ifndef FXAA_NO_DEPTH_WRITE\nuniform sampler2D depthMap;"
+          }
+        ]
+      },
+      "stages": {
+        "vertex": [
+          "deferred/postDeferredV.glsl",
+          "windlight/atmosphericsVarsV.glsl",
+          "deferred/textureUtilV.glsl",
+          "objects/nonindexedTextureV.glsl"
+        ],
+        "fragment": [
+          "deferred/fxaaF.glsl",
+          "deferred/globalF.glsl",
+          "environment/srgbF.glsl",
+          "windlight/atmosphericsVarsF.glsl",
+          "deferred/deferredUtil.glsl",
+          "windlight/gammaF.glsl",
+          "windlight/atmosphericsFuncs.glsl",
+          "windlight/atmosphericsF.glsl"
+        ]
+      }
+    },
+    {
+      "id": "fxaa_depth_write",
+      "family": "SMAA or FXAA",
+      "recipe_kind": "capability",
+      "settings_overrides": {"RenderFSAAType": 1},
+      "semantic_parity": "not_run",
+      "source_reference": "indra/newview/llviewershadermgr.cpp:2620",
+      "source_symbol": "gFXAAProgram",
+      "shader_class": 3,
+      "defines": {
+        "FXAA_GLSL_400": "1",
+        "FXAA_QUALITY__PRESET": "39"
+      },
+      "indexed_texture_channels": 0,
+      "required_reflection": {
+        "fragment": [
+          {"group": "textures", "name": "diffuseMap", "type": "sampler2D"},
+          {"group": "textures", "name": "depthMap", "type": "sampler2D"}
+        ]
+      },
+      "pipeline": {
+        "color_formats": ["rgba16float"],
+        "depth_format": "depth32float",
+        "sample_count": 1,
+        "vertex_contract": "position_only",
+        "source_evidence": [
+          {
+            "path": "indra/newview/pipeline.cpp",
+            "contains": "mRT->screen.allocate(resX, resY, GL_RGBA16F)"
+          },
+          {
+            "path": "indra/newview/app_settings/shaders/class1/deferred/fxaaF.glsl",
+            "contains": "gl_FragDepth = texture(depthMap, vary_fragcoord.xy).r;"
+          },
+          {
+            "path": "indra/newview/pipeline.cpp",
+            "contains": "gGL.getTexUnit(depth_channel)->bind(&mRT->deferredScreen, true);"
+          }
+        ]
+      },
+      "stages": {
+        "vertex": [
+          "deferred/postDeferredV.glsl",
+          "windlight/atmosphericsVarsV.glsl",
+          "deferred/textureUtilV.glsl",
+          "objects/nonindexedTextureV.glsl"
+        ],
+        "fragment": [
+          "deferred/fxaaF.glsl",
+          "deferred/globalF.glsl",
+          "environment/srgbF.glsl",
+          "windlight/atmosphericsVarsF.glsl",
+          "deferred/deferredUtil.glsl",
+          "windlight/gammaF.glsl",
+          "windlight/atmosphericsFuncs.glsl",
+          "windlight/atmosphericsF.glsl"
+        ]
+      }
+    }
+  ]
+}
