@@ -2712,10 +2712,11 @@ if(ENABLE_OPENGL_ORACLE_CAPTURE)
       NO_DEFAULT_PATH
     )
   endif()
-  target_link_libraries(${VIEWER_BINARY_NAME}
+  set(ORACLE_CAPTURE_LIBRARIES
     ll::openssl
     ${ORACLE_BOOST_CHARCONV_LIBRARY}
   )
+  target_link_libraries(${VIEWER_BINARY_NAME} ${ORACLE_CAPTURE_LIBRARIES})
 endif()
 
 if (USE_DISCORD)
@@ -3094,7 +3095,6 @@ if (LL_TESTS)
     lldateutil.cpp
 #    llmediadataclient.cpp
     lllogininstance.cpp
-    lloraclecapture.cpp
 #    llremoteparcelrequest.cpp
     llviewerhelputil.cpp
     llversioninfo.cpp
@@ -3102,6 +3102,9 @@ if (LL_TESTS)
     llworldmap.cpp
     llworldmipmap.cpp
   )
+  if(ENABLE_OPENGL_ORACLE_CAPTURE)
+    list(APPEND viewer_TEST_SOURCE_FILES lloraclecapture.cpp)
+  endif()
 
   set_source_files_properties(
     llworldmap.cpp
@@ -3173,6 +3176,13 @@ if (LL_TESTS)
   )
 
   LL_ADD_PROJECT_UNIT_TESTS(${VIEWER_BINARY_NAME} "${viewer_TEST_SOURCE_FILES}")
+
+  if(ENABLE_OPENGL_ORACLE_CAPTURE)
+    set(ORACLE_CAPTURE_TEST_TARGET PROJECT_${VIEWER_BINARY_NAME}_TEST_lloraclecapture)
+    add_dependencies(${ORACLE_CAPTURE_TEST_TARGET} ${VIEWER_BINARY_NAME}_oracle_build_identity)
+    target_include_directories(${ORACLE_CAPTURE_TEST_TARGET} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+    target_link_libraries(${ORACLE_CAPTURE_TEST_TARGET} ${ORACLE_CAPTURE_LIBRARIES})
+  endif()
 
   #set(TEST_DEBUG on)
 
