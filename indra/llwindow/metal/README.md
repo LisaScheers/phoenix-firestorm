@@ -74,12 +74,19 @@ submission serial only after cleanup makes the slot available again. The
 runtime path does not wait for GPU completion; bounded waits exist only in the
 focused test.
 
+`MetalTransferBatch` records bounded uploads into immutable private buffers and
+2D textures using only the current frame lease's shared arena. Asynchronous
+readbacks use a separate explicit byte budget. The caller owns the command
+buffer and queue; the batch never commits or waits, and resources or bytes are
+published only by the frame context's successful completion action.
+
 ```sh
 cmake --build .build/metal-core --target \
   firestorm_metal_resource_layout_test \
-  firestorm_metal_frame_context_test
+  firestorm_metal_frame_context_test \
+  firestorm_metal_resource_transfer_test
 (cd .build/metal-core && \
-  ctest -R '^firestorm_metal_(resource_layout|frame_context)$' \
+  ctest -R '^firestorm_metal_(resource_layout|frame_context|resource_transfer)$' \
     --output-on-failure)
 ```
 
@@ -106,15 +113,20 @@ be requested explicitly without registering tests in the viewer's CTest tree:
 cmake --build BUILD_DIR --target \
   firestorm_metal_frame_contracts_test \
   firestorm_metal_resource_layout_test \
-  firestorm_metal_frame_context_test
+  firestorm_metal_frame_context_test \
+  firestorm_metal_resource_transfer_test
 # Single-config generators:
 BUILD_DIR/llwindow/metal/firestorm_metal_frame_contracts_test
 BUILD_DIR/llwindow/metal/firestorm_metal_resource_layout_test
 env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
   BUILD_DIR/llwindow/metal/firestorm_metal_frame_context_test
+env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
+  BUILD_DIR/llwindow/metal/firestorm_metal_resource_transfer_test
 # Multi-config generators such as Xcode:
 BUILD_DIR/llwindow/metal/CONFIG/firestorm_metal_frame_contracts_test
 BUILD_DIR/llwindow/metal/CONFIG/firestorm_metal_resource_layout_test
 env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
   BUILD_DIR/llwindow/metal/CONFIG/firestorm_metal_frame_context_test
+env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
+  BUILD_DIR/llwindow/metal/CONFIG/firestorm_metal_resource_transfer_test
 ```

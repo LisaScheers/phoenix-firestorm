@@ -27,7 +27,13 @@ endif ()
 set(FIRESTORM_METAL_BOOTSTRAP_MIN_MACOS "13.0")
 set(FIRESTORM_METAL_BOOTSTRAP_METAL_STANDARD "2.3")
 
-find_program(FIRESTORM_XCRUN_EXECUTABLE xcrun)
+# Nix's SDK compatibility shim is also named xcrun, but it cannot discover
+# Xcode's separately installed Metal toolchain. The system launcher respects
+# DEVELOPER_DIR and Apple's MobileAsset Metal toolchain installation.
+find_program(FIRESTORM_XCRUN_EXECUTABLE xcrun
+  PATHS /usr/bin
+  NO_DEFAULT_PATH
+  )
 find_library(FIRESTORM_APPKIT_FRAMEWORK AppKit)
 find_library(FIRESTORM_FOUNDATION_FRAMEWORK Foundation)
 find_library(FIRESTORM_METAL_FRAMEWORK Metal)
@@ -103,8 +109,11 @@ set_source_files_properties(
   frame-context-test-objc.mm
   llmetalbootstrap-objc.mm
   llmetalframecontext-objc.mm
+  llmetalresource-objc.mm
+  llmetaltransfer-objc.mm
   main-objc.mm
   offscreen-test-objc.mm
+  resource-transfer-test-objc.mm
   PROPERTIES SKIP_PRECOMPILE_HEADERS TRUE
   )
 
@@ -303,6 +312,55 @@ set_target_properties(firestorm_metal_frame_context_test PROPERTIES
       "${FIRESTORM_METAL_BOOTSTRAP_MIN_MACOS}"
   )
 
+add_executable(firestorm_metal_resource_transfer_test
+  ${FIRESTORM_METAL_CPU_TEST_EXCLUDE_FROM_ALL}
+  llmetalformat.cpp
+  llmetalformat.h
+  llmetalframecontext-objc.mm
+  llmetalframecontext.h
+  llmetalframeslots.cpp
+  llmetalframeslots.h
+  llmetalresource-objc.mm
+  llmetalresource.h
+  llmetaltransfer-objc.mm
+  llmetaltransfer.h
+  llmetaltransientarena.cpp
+  llmetaltransientarena.h
+  resource-transfer-test-objc.mm
+  )
+target_compile_features(firestorm_metal_resource_transfer_test PRIVATE cxx_std_17)
+target_compile_options(firestorm_metal_resource_transfer_test PRIVATE
+  "$<$<COMPILE_LANGUAGE:CXX,OBJCXX>:-Wall>"
+  "$<$<COMPILE_LANGUAGE:CXX,OBJCXX>:-Wextra>"
+  "$<$<COMPILE_LANGUAGE:CXX,OBJCXX>:-Wpedantic>"
+  "$<$<COMPILE_LANGUAGE:CXX,OBJCXX>:-Werror>"
+  "$<$<COMPILE_LANGUAGE:CXX,OBJCXX>:-Wconversion>"
+  "$<$<COMPILE_LANGUAGE:CXX,OBJCXX>:-Wsign-conversion>"
+  "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
+  "$<$<COMPILE_LANGUAGE:OBJCXX>:-mmacosx-version-min=${FIRESTORM_METAL_BOOTSTRAP_MIN_MACOS}>"
+  )
+if (NOT FIRESTORM_METAL_BOOTSTRAP_IS_STANDALONE)
+  target_compile_options(firestorm_metal_resource_transfer_test PRIVATE
+    -Wno-overriding-option
+    )
+endif ()
+target_link_options(firestorm_metal_resource_transfer_test PRIVATE
+  "-mmacosx-version-min=${FIRESTORM_METAL_BOOTSTRAP_MIN_MACOS}"
+  )
+target_link_libraries(firestorm_metal_resource_transfer_test PRIVATE
+  "${FIRESTORM_FOUNDATION_FRAMEWORK}"
+  "${FIRESTORM_METAL_FRAMEWORK}"
+  )
+set_target_properties(firestorm_metal_resource_transfer_test PROPERTIES
+  CXX_EXTENSIONS OFF
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON
+  OSX_ARCHITECTURES "arm64"
+  XCODE_ATTRIBUTE_CLANG_ENABLE_OBJC_ARC YES
+  XCODE_ATTRIBUTE_MACOSX_DEPLOYMENT_TARGET
+      "${FIRESTORM_METAL_BOOTSTRAP_MIN_MACOS}"
+  )
+
 if (FIRESTORM_METAL_BOOTSTRAP_IS_STANDALONE)
   message(STATUS "Configuring the standalone Firestorm Metal bootstrap")
 
@@ -329,6 +387,19 @@ if (FIRESTORM_METAL_BOOTSTRAP_IS_STANDALONE)
       )
     set_tests_properties(
       firestorm_metal_frame_context
+      PROPERTIES
+        LABELS "metal;gpu"
+        TIMEOUT 30
+      )
+    add_test(
+      NAME firestorm_metal_resource_transfer
+      COMMAND "${CMAKE_COMMAND}" -E env
+              MTL_DEBUG_LAYER=1
+              MTL_SHADER_VALIDATION=1
+              "$<TARGET_FILE:firestorm_metal_resource_transfer_test>"
+      )
+    set_tests_properties(
+      firestorm_metal_resource_transfer
       PROPERTIES
         LABELS "metal;gpu"
         TIMEOUT 30
