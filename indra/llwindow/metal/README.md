@@ -110,21 +110,24 @@ strongly owns each immutable native depth state by its canonical key. Cull mode
 and front-face winding remain explicit typed dynamic encoder state; no
 desired-state tracker or pipeline cache is introduced by this slice.
 
-`MetalRenderPipelineFamilyCache` fixes one generated-vertex shader pair, one
-color format, optional depth format, and one sample. Only a canonical single
-blend attachment varies between its strongly owned pipeline entries. Disabled,
+`MetalRenderPipelineFamilyCache` fixes one generated-vertex shader pair, zero
+to four ordered color formats, an optional depth format, and one sample. Zero
+colors requires depth. An equally sized ordered set of canonical blend
+attachments varies between its strongly owned pipeline entries. Disabled,
 masked, format-absent, and otherwise ignored blend fields share entries without
-introducing a global pipeline cache, desired-state tracker, or render-pass
-abstraction.
+introducing a global pipeline cache or desired-state tracker.
 
-`MetalRenderTarget` strongly groups one private, render-target-capable,
-single-sample color texture and an optional matching private Depth32Float
-texture. This slice attaches only mip zero of one-slice 2D textures and rejects
-textures with additional mips. `MetalRenderPass` maps typed load, store, and
-clear actions into a movable RAII encoder scope. It validates the complete
-target, descriptor, label, and command-buffer relationship before creating the
-native encoder. Finite HDR color clears are accepted; a selected depth clear
-must be finite and in `[0, 1]`; unselected clear payloads are ignored.
+`MetalRenderTarget` strongly groups zero to four ordered private,
+render-target-capable, single-sample color textures and an optional matching
+private Depth32Float texture. A target must contain at least one attachment;
+all native resources must be unique and share one device and extent. This slice
+attaches only mip zero of one-slice 2D textures and rejects textures with
+additional mips. `MetalRenderPass` maps an exactly matching ordered set of typed
+load, store, and clear actions into a movable RAII encoder scope. It validates
+the complete target, descriptor, label, and command-buffer relationship before
+creating the native encoder. Finite HDR color clears are accepted; a selected
+depth clear must be finite and in `[0, 1]`; unselected clear payloads are
+ignored.
 
 The pass borrows the command buffer and never commits, waits, submits, or owns a
 frame. Callers externally serialize pass creation/use/end with enqueue and
@@ -145,9 +148,10 @@ cmake --build .build/metal-core --target \
   firestorm_metal_depth_raster_test \
   firestorm_metal_blend_pipeline_test \
   firestorm_metal_render_pass_test \
+  firestorm_metal_mrt_test \
   firestorm_metal_color_gamma_test
 (cd .build/metal-core && \
-  ctest -R '^firestorm_metal_(resource_layout|frame_context|resource_transfer|texture_subresources|sampler|depth_raster|blend_pipeline|render_pass|color_gamma)$' \
+  ctest -R '^firestorm_metal_(resource_layout|frame_context|resource_transfer|texture_subresources|sampler|depth_raster|blend_pipeline|render_pass|mrt|color_gamma)$' \
     --output-on-failure)
 ```
 
@@ -182,6 +186,13 @@ uses `Less` with depth writes disabled, and draws green at depth `0.25` then
 `0.75` into separate one-pixel scissors. Its asynchronous 256-byte-pitch
 readback must publish only on successful completion and begin with exact
 green-then-red RGBA bytes.
+
+The MRT test validates bounded ordered attachment and pipeline descriptors,
+including invalid requests that leave cache telemetry untouched. One command
+buffer renders four private 1x1 attachments with distinct formats and per-slot
+blend/write masks, then renders a separate depth-only pass. One transfer batch
+publishes raw RGBA red, BGRA cyan, RGBA magenta, BGRA green, and exact depth
+`0.25` readbacks in registration order under one submission serial.
 
 The color/gamma test renders a linear RGBA8 constant, samples it into an sRGB
 attachment for automatic encoding, samples that attachment back into linear
@@ -225,6 +236,7 @@ cmake --build BUILD_DIR --target \
   firestorm_metal_depth_raster_test \
   firestorm_metal_blend_pipeline_test \
   firestorm_metal_render_pass_test \
+  firestorm_metal_mrt_test \
   firestorm_metal_color_gamma_test
 # Single-config executables:
 BUILD_DIR/llwindow/metal/firestorm_metal_frame_contracts_test
@@ -248,6 +260,9 @@ env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
   BUILD_DIR/llwindow/metal/firestorm_metal_render_pass_test \
     --metallib BUILD_DIR/llwindow/metal/generated/bootstrap.metallib
 env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
+  BUILD_DIR/llwindow/metal/firestorm_metal_mrt_test \
+    --metallib BUILD_DIR/llwindow/metal/generated/bootstrap.metallib
+env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
   BUILD_DIR/llwindow/metal/firestorm_metal_color_gamma_test \
     --metallib BUILD_DIR/llwindow/metal/generated/bootstrap.metallib
 # Multi-config generators such as Xcode:
@@ -261,6 +276,7 @@ cmake --build BUILD_DIR --config CONFIG --target \
   firestorm_metal_depth_raster_test \
   firestorm_metal_blend_pipeline_test \
   firestorm_metal_render_pass_test \
+  firestorm_metal_mrt_test \
   firestorm_metal_color_gamma_test
 BUILD_DIR/llwindow/metal/CONFIG/firestorm_metal_frame_contracts_test
 BUILD_DIR/llwindow/metal/CONFIG/firestorm_metal_resource_layout_test
@@ -281,6 +297,9 @@ env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
     --metallib BUILD_DIR/llwindow/metal/generated/bootstrap.metallib
 env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
   BUILD_DIR/llwindow/metal/CONFIG/firestorm_metal_render_pass_test \
+    --metallib BUILD_DIR/llwindow/metal/generated/bootstrap.metallib
+env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
+  BUILD_DIR/llwindow/metal/CONFIG/firestorm_metal_mrt_test \
     --metallib BUILD_DIR/llwindow/metal/generated/bootstrap.metallib
 env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
   BUILD_DIR/llwindow/metal/CONFIG/firestorm_metal_color_gamma_test \

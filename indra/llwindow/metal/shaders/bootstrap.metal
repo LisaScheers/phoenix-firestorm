@@ -248,3 +248,46 @@ fragment float4 firestorm_color_gamma_final_fragment(
         linear_rgb > 0.0031308f);
     return float4(encoded, linear.a);
 }
+
+struct MrtVertex
+{
+    float4 position [[position]];
+};
+
+vertex MrtVertex firestorm_mrt_vertex(
+    uint vertex_id [[vertex_id]],
+    constant float& depth [[buffer(0)]])
+{
+    constexpr float2 positions[] =
+    {
+        float2(-1.0f, -1.0f),
+        float2(-1.0f,  3.0f),
+        float2( 3.0f, -1.0f),
+    };
+
+    MrtVertex output;
+    output.position = float4(positions[vertex_id], depth, 1.0f);
+    return output;
+}
+
+struct MrtColors
+{
+    float4 color0 [[color(0)]];
+    float4 color1 [[color(1)]];
+    float4 color2 [[color(2)]];
+    float4 color3 [[color(3)]];
+};
+
+fragment MrtColors firestorm_mrt_fragment()
+{
+    MrtColors output;
+    output.color0 = float4(1.0f, 0.0f, 0.0f, 1.0f);
+    output.color1 = float4(0.0f, 1.0f, 0.0f, 1.0f);
+    output.color2 = float4(1.0f, 0.5f, 1.0f, 0.25f);
+    output.color3 = float4(0.75f, 1.0f, 0.5f, 0.25f);
+    return output;
+}
+
+fragment void firestorm_mrt_depth_fragment()
+{
+}

@@ -59,6 +59,7 @@ void expect(bool condition, const char* expression, int line)
 using firestorm::metal::AttachmentLoadAction;
 using firestorm::metal::AttachmentStoreAction;
 using firestorm::metal::BlendAttachmentDesc;
+using firestorm::metal::MetalColorAttachmentDesc;
 using firestorm::metal::MetalFrameContext;
 using firestorm::metal::MetalPrivateTexture;
 using firestorm::metal::MetalRenderPassDesc;
@@ -189,7 +190,7 @@ pipelineDescriptor(const char* fragment_function, PixelFormat format)
     MetalRenderPipelineFamilyDesc descriptor;
     descriptor.vertexFunction = VERTEX_FUNCTION;
     descriptor.fragmentFunction = fragment_function;
-    descriptor.colorFormat = format;
+    descriptor.colorFormats = { format };
     return descriptor;
 }
 
@@ -200,8 +201,11 @@ bool encodePass(id<MTLCommandBuffer> command_buffer,
                 const char* label)
 {
     MetalRenderPassDesc descriptor;
-    descriptor.color.load = AttachmentLoadAction::dont_care;
-    descriptor.color.store = AttachmentStoreAction::store;
+    descriptor.colors = { MetalColorAttachmentDesc{
+        AttachmentLoadAction::dont_care,
+        AttachmentStoreAction::store,
+        {}
+    } };
     descriptor.label = label;
 
     auto pass = beginRenderPass((__bridge void*)command_buffer,
@@ -313,10 +317,10 @@ void runColorGammaOracle(id<MTLDevice> device,
         return;
     }
 
-    const auto linear_target = makeRenderTarget(*linear);
-    const auto srgb_target = makeRenderTarget(*srgb);
-    const auto decoded_target = makeRenderTarget(*decoded);
-    const auto display_target = makeRenderTarget(*display);
+    const auto linear_target = makeRenderTarget({ *linear });
+    const auto srgb_target = makeRenderTarget({ *srgb });
+    const auto decoded_target = makeRenderTarget({ *decoded });
+    const auto display_target = makeRenderTarget({ *display });
     EXPECT(linear_target.has_value());
     EXPECT(srgb_target.has_value());
     EXPECT(decoded_target.has_value());
@@ -348,13 +352,13 @@ void runColorGammaOracle(id<MTLDevice> device,
     EXPECT(final_pipeline_cache.valid());
 
     const auto linear_pipeline =
-        linear_pipeline_cache.pipeline(BlendAttachmentDesc{});
+        linear_pipeline_cache.pipeline({ BlendAttachmentDesc{} });
     const auto srgb_pipeline =
-        srgb_pipeline_cache.pipeline(BlendAttachmentDesc{});
+        srgb_pipeline_cache.pipeline({ BlendAttachmentDesc{} });
     const auto decoded_pipeline =
-        decoded_pipeline_cache.pipeline(BlendAttachmentDesc{});
+        decoded_pipeline_cache.pipeline({ BlendAttachmentDesc{} });
     const auto final_pipeline =
-        final_pipeline_cache.pipeline(BlendAttachmentDesc{});
+        final_pipeline_cache.pipeline({ BlendAttachmentDesc{} });
     EXPECT(linear_pipeline.has_value());
     EXPECT(srgb_pipeline.has_value());
     EXPECT(decoded_pipeline.has_value());

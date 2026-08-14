@@ -27,10 +27,12 @@
 #include "llmetalresource.h"
 #include "llmetalstate.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace firestorm::metal
 {
@@ -71,8 +73,9 @@ struct MetalDepthAttachmentDesc
 };
 
 /**
- * Strongly owns one private mip-zero, single-sample color attachment and an
- * optional matching Depth32Float attachment.
+ * Strongly owns zero-to-four ordered private mip-zero, single-sample color
+ * attachments and an optional matching Depth32Float attachment. A valid target
+ * always owns at least one attachment.
  */
 class MetalRenderTarget final
 {
@@ -88,11 +91,12 @@ public:
     std::uint32_t width() const noexcept;
     std::uint32_t height() const noexcept;
     std::uint32_t sampleCount() const noexcept;
-    PixelFormat colorFormat() const noexcept;
+    std::size_t colorCount() const noexcept;
+    std::optional<PixelFormat> colorFormat(std::size_t index) const noexcept;
     std::optional<PixelFormat> depthFormat() const noexcept;
 
     /** Returned values are additional strong owners of the attachments. */
-    MetalPrivateTexture colorTexture() const noexcept;
+    std::optional<MetalPrivateTexture> colorTexture(std::size_t index) const noexcept;
     std::optional<MetalPrivateTexture> depthTexture() const noexcept;
 
 private:
@@ -103,22 +107,23 @@ private:
     std::shared_ptr<const Impl> mImpl;
 
     friend std::optional<MetalRenderTarget>
-    makeRenderTarget(MetalPrivateTexture,
+    makeRenderTarget(std::vector<MetalPrivateTexture>,
                      std::optional<MetalPrivateTexture>);
 };
 
 /**
  * Validates and groups existing private textures without allocating or
- * changing either texture. Both attachments must be render-target capable,
- * mip-zero, single-sample 2D resources on one device and with one extent.
+ * changing any texture. Every attachment must be a unique render-target
+ * capable, mip-zero, single-sample 2D resource on one device and with one
+ * extent. Zero colors is valid only with depth; at most four colors are valid.
  */
 std::optional<MetalRenderTarget>
-makeRenderTarget(MetalPrivateTexture color,
+makeRenderTarget(std::vector<MetalPrivateTexture> colors,
                  std::optional<MetalPrivateTexture> depth = std::nullopt);
 
 struct MetalRenderPassDesc
 {
-    MetalColorAttachmentDesc color;
+    std::vector<MetalColorAttachmentDesc> colors;
     std::optional<MetalDepthAttachmentDesc> depth;
     std::string label;
 };

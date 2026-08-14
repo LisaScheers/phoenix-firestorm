@@ -119,6 +119,7 @@ set_source_files_properties(
   llmetalstate-objc.mm
   llmetaltransfer-objc.mm
   main-objc.mm
+  mrt-test-objc.mm
   offscreen-test-objc.mm
   render-pass-test-objc.mm
   resource-transfer-test-objc.mm
@@ -596,6 +597,55 @@ set_target_properties(firestorm_metal_render_pass_test PROPERTIES
       "${FIRESTORM_METAL_BOOTSTRAP_MIN_MACOS}"
   )
 
+add_executable(firestorm_metal_mrt_test
+  ${FIRESTORM_METAL_CPU_TEST_EXCLUDE_FROM_ALL}
+  ${FIRESTORM_METAL_RESOURCE_TEST_SOURCES}
+  llmetalpipeline-objc.mm
+  llmetalpipeline.cpp
+  llmetalpipeline.h
+  llmetalrenderpass-objc.mm
+  llmetalrenderpass.h
+  llmetalstate-objc.mm
+  llmetalstate.h
+  mrt-test-objc.mm
+  )
+add_dependencies(
+  firestorm_metal_mrt_test
+  firestorm_metal_bootstrap_shader_library
+  )
+target_compile_features(firestorm_metal_mrt_test PRIVATE cxx_std_17)
+target_compile_options(firestorm_metal_mrt_test PRIVATE
+  "$<$<COMPILE_LANGUAGE:CXX,OBJCXX>:-Wall>"
+  "$<$<COMPILE_LANGUAGE:CXX,OBJCXX>:-Wextra>"
+  "$<$<COMPILE_LANGUAGE:CXX,OBJCXX>:-Wpedantic>"
+  "$<$<COMPILE_LANGUAGE:CXX,OBJCXX>:-Werror>"
+  "$<$<COMPILE_LANGUAGE:CXX,OBJCXX>:-Wconversion>"
+  "$<$<COMPILE_LANGUAGE:CXX,OBJCXX>:-Wsign-conversion>"
+  "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
+  "$<$<COMPILE_LANGUAGE:CXX,OBJCXX>:-mmacosx-version-min=${FIRESTORM_METAL_BOOTSTRAP_MIN_MACOS}>"
+  )
+if (NOT FIRESTORM_METAL_BOOTSTRAP_IS_STANDALONE)
+  target_compile_options(firestorm_metal_mrt_test PRIVATE
+    -Wno-overriding-option
+    )
+endif ()
+target_link_options(firestorm_metal_mrt_test PRIVATE
+  "-mmacosx-version-min=${FIRESTORM_METAL_BOOTSTRAP_MIN_MACOS}"
+  )
+target_link_libraries(firestorm_metal_mrt_test PRIVATE
+  "${FIRESTORM_FOUNDATION_FRAMEWORK}"
+  "${FIRESTORM_METAL_FRAMEWORK}"
+  )
+set_target_properties(firestorm_metal_mrt_test PROPERTIES
+  CXX_EXTENSIONS OFF
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON
+  OSX_ARCHITECTURES "arm64"
+  XCODE_ATTRIBUTE_CLANG_ENABLE_OBJC_ARC YES
+  XCODE_ATTRIBUTE_MACOSX_DEPLOYMENT_TARGET
+      "${FIRESTORM_METAL_BOOTSTRAP_MIN_MACOS}"
+  )
+
 add_executable(firestorm_metal_color_gamma_test
   ${FIRESTORM_METAL_CPU_TEST_EXCLUDE_FROM_ALL}
   ${FIRESTORM_METAL_RESOURCE_TEST_SOURCES}
@@ -751,6 +801,20 @@ if (FIRESTORM_METAL_BOOTSTRAP_IS_STANDALONE)
       )
     set_tests_properties(
       firestorm_metal_render_pass
+      PROPERTIES
+        LABELS "metal;gpu"
+        TIMEOUT 30
+      )
+    add_test(
+      NAME firestorm_metal_mrt
+      COMMAND "${CMAKE_COMMAND}" -E env
+              MTL_DEBUG_LAYER=1
+              MTL_SHADER_VALIDATION=1
+              "$<TARGET_FILE:firestorm_metal_mrt_test>"
+              --metallib "${FIRESTORM_METAL_LIBRARY}"
+      )
+    set_tests_properties(
+      firestorm_metal_mrt
       PROPERTIES
         LABELS "metal;gpu"
         TIMEOUT 30

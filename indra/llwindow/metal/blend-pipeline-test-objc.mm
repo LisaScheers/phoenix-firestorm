@@ -217,7 +217,7 @@ MetalRenderPipelineFamilyDesc familyDescriptor()
     MetalRenderPipelineFamilyDesc descriptor;
     descriptor.vertexFunction = VERTEX_FUNCTION;
     descriptor.fragmentFunction = FRAGMENT_FUNCTION;
-    descriptor.colorFormat = PixelFormat::rgba8_unorm;
+    descriptor.colorFormats = { PixelFormat::rgba8_unorm };
     return descriptor;
 }
 
@@ -442,7 +442,7 @@ void testKeyContract()
 void expectInvalidFamily(MetalRenderPipelineFamilyCache& cache)
 {
     EXPECT(!cache.valid());
-    EXPECT(!cache.pipeline(BlendAttachmentDesc{}).has_value());
+    EXPECT(!cache.pipeline({ BlendAttachmentDesc{} }).has_value());
     EXPECT(cache.hitCount() == 0);
     EXPECT(cache.missCount() == 0);
     EXPECT(cache.entryCount() == 0);
@@ -491,7 +491,7 @@ void testInvalidFamilies(id<MTLDevice> device, id<MTLLibrary> library)
     expectInvalidFamily(invalid_utf8_cache);
 
     auto depth_as_color = valid_descriptor;
-    depth_as_color.colorFormat = PixelFormat::depth32_float;
+    depth_as_color.colorFormats = { PixelFormat::depth32_float };
     MetalRenderPipelineFamilyCache depth_as_color_cache(
         (__bridge void*)device, (__bridge void*)library, depth_as_color);
     expectInvalidFamily(depth_as_color_cache);
@@ -503,7 +503,7 @@ void testInvalidFamilies(id<MTLDevice> device, id<MTLLibrary> library)
     expectInvalidFamily(color_as_depth_cache);
 
     auto invalid_color = valid_descriptor;
-    invalid_color.colorFormat = static_cast<PixelFormat>(255);
+    invalid_color.colorFormats = { static_cast<PixelFormat>(255) };
     MetalRenderPipelineFamilyCache invalid_color_cache(
         (__bridge void*)device, (__bridge void*)library, invalid_color);
     expectInvalidFamily(invalid_color_cache);
@@ -513,12 +513,12 @@ void testInvalidFamilies(id<MTLDevice> device, id<MTLLibrary> library)
     MetalRenderPipelineFamilyCache depth_family(
         (__bridge void*)device, (__bridge void*)library, depth_descriptor);
     EXPECT(depth_family.valid());
-    EXPECT(depth_family.pipeline(BlendAttachmentDesc{}).has_value());
+    EXPECT(depth_family.pipeline({ BlendAttachmentDesc{} }).has_value());
     EXPECT(depth_family.missCount() == 1);
     EXPECT(depth_family.entryCount() == 1);
 
     auto alpha_less_descriptor = valid_descriptor;
-    alpha_less_descriptor.colorFormat = PixelFormat::rg11b10_float;
+    alpha_less_descriptor.colorFormats = { PixelFormat::rg11b10_float };
     MetalRenderPipelineFamilyCache alpha_less_family(
         (__bridge void*)device,
         (__bridge void*)library,
@@ -538,9 +538,9 @@ void testInvalidFamilies(id<MTLDevice> device, id<MTLLibrary> library)
     alpha_less_rgb.sourceAlphaFactor = BlendFactor::zero;
     alpha_less_rgb.writeMask = RGB_WRITE_MASK;
     const auto alpha_less_all_pipeline =
-        alpha_less_family.pipeline(alpha_less_all);
+        alpha_less_family.pipeline({ alpha_less_all });
     const auto alpha_less_rgb_pipeline =
-        alpha_less_family.pipeline(alpha_less_rgb);
+        alpha_less_family.pipeline({ alpha_less_rgb });
     EXPECT(alpha_less_all_pipeline.has_value());
     EXPECT(alpha_less_rgb_pipeline == alpha_less_all_pipeline);
 
@@ -551,15 +551,15 @@ void testInvalidFamilies(id<MTLDevice> device, id<MTLLibrary> library)
     BlendAttachmentDesc no_write_no_storage;
     no_write_no_storage.writeMask = ColorWriteMask::none;
     const auto alpha_only_pipeline =
-        alpha_less_family.pipeline(alpha_only_no_storage);
+        alpha_less_family.pipeline({ alpha_only_no_storage });
     const auto no_write_pipeline =
-        alpha_less_family.pipeline(no_write_no_storage);
+        alpha_less_family.pipeline({ no_write_no_storage });
     EXPECT(alpha_only_pipeline.has_value());
     EXPECT(no_write_pipeline == alpha_only_pipeline);
     BlendAttachmentDesc hidden_invalid;
     hidden_invalid.writeMask =
         ColorWriteMask::alpha | static_cast<ColorWriteMask>(16);
-    EXPECT(!alpha_less_family.pipeline(hidden_invalid).has_value());
+    EXPECT(!alpha_less_family.pipeline({ hidden_invalid }).has_value());
     EXPECT(alpha_less_family.hitCount() == 2);
     EXPECT(alpha_less_family.missCount() == 2);
     EXPECT(alpha_less_family.entryCount() == 2);
@@ -643,7 +643,7 @@ MetalRenderPipelineHandle requirePipeline(
     MetalRenderPipelineFamilyCache& cache,
     const BlendAttachmentDesc&      descriptor)
 {
-    const auto pipeline = cache.pipeline(descriptor);
+    const auto pipeline = cache.pipeline({ descriptor });
     EXPECT(pipeline.has_value());
     return pipeline ? *pipeline : nullptr;
 }
@@ -654,7 +654,7 @@ PipelineSet preparePipelines(MetalRenderPipelineFamilyCache& cache)
 
     BlendAttachmentDesc invalid;
     invalid.writeMask = static_cast<ColorWriteMask>(16);
-    EXPECT(!cache.pipeline(invalid).has_value());
+    EXPECT(!cache.pipeline({ invalid }).has_value());
     EXPECT(cache.hitCount() == 0);
     EXPECT(cache.missCount() == 0);
     EXPECT(cache.entryCount() == 0);
@@ -747,7 +747,7 @@ PipelineSet preparePipelines(MetalRenderPipelineFamilyCache& cache)
     const auto entries_before = cache.entryCount();
     invalid = BlendAttachmentDesc{};
     invalid.alphaOperation = static_cast<BlendOperation>(255);
-    EXPECT(!cache.pipeline(invalid).has_value());
+    EXPECT(!cache.pipeline({ invalid }).has_value());
     EXPECT(cache.hitCount() == hits_before);
     EXPECT(cache.missCount() == misses_before);
     EXPECT(cache.entryCount() == entries_before);

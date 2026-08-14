@@ -27,14 +27,19 @@
 
 #include "llmetalrenderpass.h"
 
+#include <array>
 #include <cmath>
 #include <optional>
+#include <unordered_set>
 #include <utility>
+#include <vector>
 
 namespace firestorm::metal
 {
 namespace
 {
+
+constexpr std::size_t MAX_COLOR_ATTACHMENTS = 4;
 
 bool conformsToMetalProtocol(void* handle, Protocol* protocol)
 {
@@ -159,14 +164,14 @@ bool validNativeTexture(id<MTLTexture> texture,
 
 struct MetalRenderTarget::Impl
 {
-    Impl(MetalPrivateTexture native_color,
+    Impl(std::vector<MetalPrivateTexture> native_colors,
          std::optional<MetalPrivateTexture> native_depth) :
-        color(std::move(native_color)),
+        colors(std::move(native_colors)),
         depth(std::move(native_depth))
     {
     }
 
-    MetalPrivateTexture color;
+    std::vector<MetalPrivateTexture> colors;
     std::optional<MetalPrivateTexture> depth;
 };
 
@@ -177,18 +182,42 @@ MetalRenderTarget::MetalRenderTarget(std::shared_ptr<const Impl> impl) noexcept 
 
 bool MetalRenderTarget::valid() const noexcept
 {
-    return mImpl != nullptr && mImpl->color.valid() &&
-           (!mImpl->depth || mImpl->depth->valid());
+    if (mImpl == nullptr || (mImpl->colors.empty() && !mImpl->depth) ||
+        mImpl->colors.size() > MAX_COLOR_ATTACHMENTS ||
+        (mImpl->depth && !mImpl->depth->valid()))
+    {
+        return false;
+    }
+    for (const MetalPrivateTexture& color : mImpl->colors)
+    {
+        if (!color.valid())
+        {
+            return false;
+        }
+    }
+    return true;
 }
 
 std::uint32_t MetalRenderTarget::width() const noexcept
 {
-    return valid() ? mImpl->color.width() : 0;
+    if (!valid())
+    {
+        return 0;
+    }
+    return mImpl->colors.empty()
+        ? mImpl->depth->width()
+        : mImpl->colors.front().width();
 }
 
 std::uint32_t MetalRenderTarget::height() const noexcept
 {
-    return valid() ? mImpl->color.height() : 0;
+    if (!valid())
+    {
+        return 0;
+    }
+    return mImpl->colors.empty()
+        ? mImpl->depth->height()
+        : mImpl->colors.front().height();
 }
 
 std::uint32_t MetalRenderTarget::sampleCount() const noexcept
@@ -196,9 +225,17 @@ std::uint32_t MetalRenderTarget::sampleCount() const noexcept
     return valid() ? 1U : 0U;
 }
 
-PixelFormat MetalRenderTarget::colorFormat() const noexcept
+std::size_t MetalRenderTarget::colorCount() const noexcept
 {
-    return valid() ? mImpl->color.format() : PixelFormat::rgba8_unorm;
+    return valid() ? mImpl->colors.size() : 0;
+}
+
+std::optional<PixelFormat>
+MetalRenderTarget::colorFormat(std::size_t index) const noexcept
+{
+    return valid() && index < mImpl->colors.size()
+        ? std::optional<PixelFormat>(mImpl->colors[index].format())
+        : std::nullopt;
 }
 
 std::optional<PixelFormat> MetalRenderTarget::depthFormat() const noexcept
@@ -208,9 +245,12 @@ std::optional<PixelFormat> MetalRenderTarget::depthFormat() const noexcept
         : std::nullopt;
 }
 
-MetalPrivateTexture MetalRenderTarget::colorTexture() const noexcept
+std::optional<MetalPrivateTexture>
+MetalRenderTarget::colorTexture(std::size_t index) const noexcept
 {
-    return valid() ? mImpl->color : MetalPrivateTexture{};
+    return valid() && index < mImpl->colors.size()
+        ? std::optional<MetalPrivateTexture>(mImpl->colors[index])
+        : std::nullopt;
 }
 
 std::optional<MetalPrivateTexture>
@@ -220,65 +260,100 @@ MetalRenderTarget::depthTexture() const noexcept
 }
 
 std::optional<MetalRenderTarget>
-makeRenderTarget(MetalPrivateTexture color,
+makeRenderTarget(std::vector<MetalPrivateTexture> colors,
                  std::optional<MetalPrivateTexture> depth)
 {
-    if (!color.valid() || !isColorFormat(color.format()) ||
-        color.kind() != MetalTextureKind::texture_2d ||
-        color.arrayCount() != 1 || color.sliceCount() != 1 ||
-        !hasUsage(color.usage(), MetalTextureUsage::render_target) ||
-        color.mipLevels() != 1)
+    if (colors.size() > MAX_COLOR_ATTACHMENTS ||
+        (colors.empty() && !depth))
     {
         return std::nullopt;
     }
 
-    const auto expected_color_format = nativePixelFormat(color.format());
-    if (!expected_color_format ||
-        !conformsToMetalProtocol(color.nativeHandle(), @protocol(MTLTexture)))
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+    std::unordered_set<MetalTextureHandle> handles;
+    for (const MetalPrivateTexture& color : colors)
+    {
+        if (!color.valid() || !isColorFormat(color.format()) ||
+            color.kind() != MetalTextureKind::texture_2d ||
+            color.arrayCount() != 1 || color.sliceCount() != 1 ||
+            !hasUsage(color.usage(), MetalTextureUsage::render_target) ||
+            color.mipLevels() != 1 ||
+            !handles.emplace(color.nativeHandle()).second)
+        {
+            return std::nullopt;
+        }
+        if (width == 0)
+        {
+            width = color.width();
+            height = color.height();
+        }
+        else if (color.width() != width || color.height() != height)
+        {
+            return std::nullopt;
+        }
+    }
+
+    if (depth &&
+        (!depth->valid() || !isDepthFormat(depth->format()) ||
+         depth->kind() != MetalTextureKind::texture_2d ||
+         depth->arrayCount() != 1 || depth->sliceCount() != 1 ||
+         !hasUsage(depth->usage(), MetalTextureUsage::render_target) ||
+         depth->mipLevels() != 1 ||
+         !handles.emplace(depth->nativeHandle()).second))
+    {
+        return std::nullopt;
+    }
+    if (colors.empty())
+    {
+        width = depth->width();
+        height = depth->height();
+    }
+    else if (depth &&
+             (depth->width() != width || depth->height() != height))
     {
         return std::nullopt;
     }
 
-    id<MTLTexture> native_color =
-        (__bridge id<MTLTexture>)color.nativeHandle();
-    if (!validNativeTexture(native_color, color, *expected_color_format))
+    id<MTLDevice> native_device = nil;
+    for (const MetalPrivateTexture& color : colors)
     {
-        return std::nullopt;
+        const auto expected_format = nativePixelFormat(color.format());
+        if (!expected_format || !conformsToMetalProtocol(
+                color.nativeHandle(), @protocol(MTLTexture)))
+        {
+            return std::nullopt;
+        }
+        id<MTLTexture> native_color =
+            (__bridge id<MTLTexture>)color.nativeHandle();
+        if (!validNativeTexture(native_color, color, *expected_format) ||
+            (native_device != nil && native_color.device != native_device))
+        {
+            return std::nullopt;
+        }
+        native_device = native_color.device;
     }
 
     if (depth)
     {
-        if (!depth->valid() || !isDepthFormat(depth->format()) ||
-            depth->kind() != MetalTextureKind::texture_2d ||
-            depth->arrayCount() != 1 || depth->sliceCount() != 1 ||
-            !hasUsage(depth->usage(), MetalTextureUsage::render_target) ||
-            depth->mipLevels() != 1 || depth->width() != color.width() ||
-            depth->height() != color.height())
-        {
-            return std::nullopt;
-        }
-
         const auto expected_depth_format = nativePixelFormat(depth->format());
-        if (!expected_depth_format ||
-            !conformsToMetalProtocol(depth->nativeHandle(), @protocol(MTLTexture)))
+        if (!expected_depth_format || !conformsToMetalProtocol(
+                depth->nativeHandle(), @protocol(MTLTexture)))
         {
             return std::nullopt;
         }
-
         id<MTLTexture> native_depth =
             (__bridge id<MTLTexture>)depth->nativeHandle();
         if (!validNativeTexture(native_depth, *depth, *expected_depth_format) ||
-            native_depth.device != native_color.device ||
-            native_depth.width != native_color.width ||
-            native_depth.height != native_color.height ||
-            native_depth.sampleCount != native_color.sampleCount)
+            (native_device != nil && native_depth.device != native_device) ||
+            native_depth.width != width || native_depth.height != height)
         {
             return std::nullopt;
         }
     }
 
     MetalRenderTarget target(std::make_shared<const MetalRenderTarget::Impl>(
-        std::move(color), std::move(depth)));
+        std::move(colors), std::move(depth)));
     return std::optional<MetalRenderTarget>(std::move(target));
 }
 
@@ -343,6 +418,7 @@ beginRenderPass(MetalCommandBufferHandle command_buffer_handle,
                 const MetalRenderPassDesc& descriptor)
 {
     if (!target.valid() ||
+        descriptor.colors.size() != target.colorCount() ||
         descriptor.depth.has_value() != target.depthFormat().has_value() ||
         !conformsToMetalProtocol(command_buffer_handle,
                                 @protocol(MTLCommandBuffer)))
@@ -350,13 +426,24 @@ beginRenderPass(MetalCommandBufferHandle command_buffer_handle,
         return std::nullopt;
     }
 
-    const auto color_load = nativeLoadAction(descriptor.color.load);
-    const auto color_store = nativeStoreAction(descriptor.color.store);
-    if (!color_load || !color_store ||
-        (descriptor.color.load == AttachmentLoadAction::clear &&
-         !finite(descriptor.color.clear)))
+    struct NativeColorActions
     {
-        return std::nullopt;
+        MTLLoadAction load;
+        MTLStoreAction store;
+    };
+    std::vector<NativeColorActions> color_actions;
+    color_actions.reserve(descriptor.colors.size());
+    for (const MetalColorAttachmentDesc& color : descriptor.colors)
+    {
+        const auto load = nativeLoadAction(color.load);
+        const auto store = nativeStoreAction(color.store);
+        if (!load || !store ||
+            (color.load == AttachmentLoadAction::clear &&
+             !finite(color.clear)))
+        {
+            return std::nullopt;
+        }
+        color_actions.push_back(NativeColorActions{ *load, *store });
     }
 
     std::optional<MTLLoadAction> depth_load;
@@ -388,17 +475,27 @@ beginRenderPass(MetalCommandBufferHandle command_buffer_handle,
 
     id<MTLCommandBuffer> command_buffer =
         (__bridge id<MTLCommandBuffer>)command_buffer_handle;
-    MetalPrivateTexture color = target.colorTexture();
-    if (!color.valid() || !isPreCommit(command_buffer.status))
+    if (!isPreCommit(command_buffer.status))
     {
         return std::nullopt;
     }
 
-    id<MTLTexture> native_color =
-        (__bridge id<MTLTexture>)color.nativeHandle();
-    if (native_color == nil || command_buffer.device != native_color.device)
+    std::array<id<MTLTexture>, MAX_COLOR_ATTACHMENTS> native_colors{};
+    for (std::size_t index = 0; index < target.colorCount(); ++index)
     {
-        return std::nullopt;
+        const auto color = target.colorTexture(index);
+        if (!color)
+        {
+            return std::nullopt;
+        }
+        id<MTLTexture> native_color =
+            (__bridge id<MTLTexture>)color->nativeHandle();
+        if (native_color == nil ||
+            command_buffer.device != native_color.device)
+        {
+            return std::nullopt;
+        }
+        native_colors[index] = native_color;
     }
 
     std::optional<MetalPrivateTexture> depth = target.depthTexture();
@@ -413,20 +510,23 @@ beginRenderPass(MetalCommandBufferHandle command_buffer_handle,
 
     MTLRenderPassDescriptor* native_descriptor =
         [MTLRenderPassDescriptor renderPassDescriptor];
-    MTLRenderPassColorAttachmentDescriptor* color_attachment =
-        native_descriptor.colorAttachments[0];
-    color_attachment.texture = native_color;
-    color_attachment.level = 0;
-    color_attachment.slice = 0;
-    color_attachment.loadAction = *color_load;
-    color_attachment.storeAction = *color_store;
-    if (descriptor.color.load == AttachmentLoadAction::clear)
+    for (std::size_t index = 0; index < descriptor.colors.size(); ++index)
     {
-        color_attachment.clearColor = MTLClearColorMake(
-            descriptor.color.clear.red,
-            descriptor.color.clear.green,
-            descriptor.color.clear.blue,
-            descriptor.color.clear.alpha);
+        MTLRenderPassColorAttachmentDescriptor* color_attachment =
+            native_descriptor.colorAttachments[index];
+        color_attachment.texture = native_colors[index];
+        color_attachment.level = 0;
+        color_attachment.slice = 0;
+        color_attachment.loadAction = color_actions[index].load;
+        color_attachment.storeAction = color_actions[index].store;
+        if (descriptor.colors[index].load == AttachmentLoadAction::clear)
+        {
+            color_attachment.clearColor = MTLClearColorMake(
+                descriptor.colors[index].clear.red,
+                descriptor.colors[index].clear.green,
+                descriptor.colors[index].clear.blue,
+                descriptor.colors[index].clear.alpha);
+        }
     }
 
     if (descriptor.depth)

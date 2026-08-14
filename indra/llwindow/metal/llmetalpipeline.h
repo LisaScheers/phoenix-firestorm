@@ -1,6 +1,6 @@
 /**
  * @file llmetalpipeline.h
- * @brief Canonical one-attachment blend state and a narrow Metal pipeline family.
+ * @brief Canonical bounded attachment blend state and Metal pipeline families.
  *
  * $LicenseInfo:firstyear=2026&license=viewerlgpl$
  * Phoenix Firestorm Viewer Source Code
@@ -32,6 +32,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace firestorm::metal
 {
@@ -39,6 +40,8 @@ namespace firestorm::metal
 /** Unretained bridges to native Metal objects. */
 using MetalLibraryHandle        = void*;
 using MetalRenderPipelineHandle = void*;
+
+inline constexpr std::size_t kMaximumColorAttachments = 4;
 
 enum class BlendOperation : std::uint8_t
 {
@@ -138,24 +141,27 @@ std::optional<BlendAttachmentKey> makeBlendAttachmentKey(const BlendAttachmentDe
 /**
  * Immutable identity shared by every entry in one pipeline family.
  *
- * This slice always creates one-color, one-sample pipelines for generated
- * vertices. The native pipeline descriptor therefore has no vertex descriptor.
+ * This slice creates zero-to-four-color, one-sample pipelines for generated
+ * vertices. Zero colors requires a depth attachment. The native pipeline
+ * descriptor therefore has no vertex descriptor.
  */
 struct MetalRenderPipelineFamilyDesc
 {
     std::string                vertexFunction;
     std::string                fragmentFunction;
-    PixelFormat                colorFormat = PixelFormat::rgba8_unorm;
+    std::vector<PixelFormat>   colorFormats{ PixelFormat::rgba8_unorm };
     std::optional<PixelFormat> depthFormat;
 };
 
 /**
  * Strongly owns one fixed shader/attachment family of native pipeline states.
  *
- * Only the canonical blend attachment varies between entries. Returned handles
- * are borrowed and remain valid until this cache is destroyed. Invalid requests
- * do not affect telemetry; a valid absent key is one miss even if native
- * allocation fails. Calls require external serialization, like sibling caches.
+ * Only the ordered canonical blend attachments vary between entries. A request
+ * must provide exactly one blend descriptor per family color format. Returned
+ * handles are borrowed and remain valid until this cache is destroyed. Invalid
+ * requests do not affect telemetry; a valid absent key is one miss even if
+ * native allocation fails. Calls require external serialization, like sibling
+ * caches.
  */
 class MetalRenderPipelineFamilyCache final
 {
@@ -170,7 +176,8 @@ public:
 
     bool valid() const noexcept;
 
-    std::optional<MetalRenderPipelineHandle> pipeline(const BlendAttachmentDesc& descriptor);
+    std::optional<MetalRenderPipelineHandle> pipeline(
+        const std::vector<BlendAttachmentDesc>& descriptors);
 
     std::size_t hitCount() const noexcept;
     std::size_t missCount() const noexcept;

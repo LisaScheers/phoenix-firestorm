@@ -1,6 +1,6 @@
 /**
  * @file llmetalpipeline-objc.mm
- * @brief Native ownership for one-color generated-vertex Metal pipeline families.
+ * @brief Native ownership for bounded generated-vertex Metal pipeline families.
  *
  * $LicenseInfo:firstyear=2026&license=viewerlgpl$
  * Phoenix Firestorm Viewer Source Code
@@ -27,8 +27,10 @@
 
 #include "llmetalpipeline.h"
 
+#include <array>
 #include <optional>
 #include <unordered_map>
+#include <vector>
 
 namespace firestorm::metal
 {
@@ -184,6 +186,54 @@ struct NativePipeline
     __strong id<MTLRenderPipelineState> state;
 };
 
+struct PipelineKey
+{
+    std::size_t count = 0;
+    std::array<BlendAttachmentKey, kMaximumColorAttachments> attachments{};
+};
+
+bool operator==(const PipelineKey& lhs, const PipelineKey& rhs) noexcept
+{
+    if (lhs.count != rhs.count)
+    {
+        return false;
+    }
+    for (std::size_t index = 0; index < lhs.count; ++index)
+    {
+        if (lhs.attachments[index] != rhs.attachments[index])
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+struct PipelineKeyHash
+{
+    std::size_t operator()(const PipelineKey& key) const noexcept
+    {
+        std::size_t hash = key.count;
+        for (std::size_t index = 0; index < key.count; ++index)
+        {
+            const std::size_t attachment_hash =
+                BlendAttachmentKeyHash{}(key.attachments[index]);
+            hash ^= attachment_hash + 0x9e3779b97f4a7c15ULL +
+                    (hash << 6U) + (hash >> 2U);
+        }
+        return hash;
+    }
+};
+
+struct NativeBlendState
+{
+    MTLBlendOperation rgbOperation;
+    MTLBlendFactor sourceRGB;
+    MTLBlendFactor destinationRGB;
+    MTLBlendOperation alphaOperation;
+    MTLBlendFactor sourceAlpha;
+    MTLBlendFactor destinationAlpha;
+};
+
 } // namespace
 
 struct MetalRenderPipelineFamilyCache::Impl
@@ -192,15 +242,15 @@ struct MetalRenderPipelineFamilyCache::Impl
          id<MTLLibrary>                 native_library,
          id<MTLFunction>                native_vertex,
          id<MTLFunction>                native_fragment,
-         PixelFormat                    source_color_format,
-         MTLPixelFormat                 native_color_format,
+         std::vector<PixelFormat>        source_color_formats,
+         std::vector<MTLPixelFormat>     native_color_formats,
          std::optional<MTLPixelFormat>  native_depth_format) :
         device(native_device),
         library(native_library),
         vertex(native_vertex),
         fragment(native_fragment),
-        sourceColorFormat(source_color_format),
-        colorFormat(native_color_format),
+        sourceColorFormats(std::move(source_color_formats)),
+        colorFormats(std::move(native_color_formats)),
         depthFormat(native_depth_format)
     {
     }
@@ -209,12 +259,12 @@ struct MetalRenderPipelineFamilyCache::Impl
     __strong id<MTLLibrary> library;
     __strong id<MTLFunction> vertex;
     __strong id<MTLFunction> fragment;
-    PixelFormat sourceColorFormat;
-    MTLPixelFormat colorFormat;
+    std::vector<PixelFormat> sourceColorFormats;
+    std::vector<MTLPixelFormat> colorFormats;
     std::optional<MTLPixelFormat> depthFormat;
-    std::unordered_map<BlendAttachmentKey,
+    std::unordered_map<PipelineKey,
                        NativePipeline,
-                       BlendAttachmentKeyHash> entries;
+                       PipelineKeyHash> entries;
     std::size_t hits   = 0;
     std::size_t misses = 0;
 };
@@ -227,7 +277,8 @@ MetalRenderPipelineFamilyCache::MetalRenderPipelineFamilyCache(
     if (!isMetalDevice(device) || !isMetalLibrary(library) ||
         descriptor.vertexFunction.empty() ||
         descriptor.fragmentFunction.empty() ||
-        !isColorFormat(descriptor.colorFormat) ||
+        descriptor.colorFormats.size() > kMaximumColorAttachments ||
+        (descriptor.colorFormats.empty() && !descriptor.depthFormat) ||
         (descriptor.depthFormat &&
          !isDepthFormat(*descriptor.depthFormat)))
     {
@@ -241,11 +292,21 @@ MetalRenderPipelineFamilyCache::MetalRenderPipelineFamilyCache(
         return;
     }
 
-    const auto color_format = nativePixelFormat(descriptor.colorFormat);
+    std::vector<MTLPixelFormat> color_formats;
+    color_formats.reserve(descriptor.colorFormats.size());
+    for (PixelFormat format : descriptor.colorFormats)
+    {
+        const auto native_format = nativePixelFormat(format);
+        if (!isColorFormat(format) || !native_format)
+        {
+            return;
+        }
+        color_formats.push_back(*native_format);
+    }
     const auto depth_format = descriptor.depthFormat
         ? nativePixelFormat(*descriptor.depthFormat)
         : std::optional<MTLPixelFormat>{};
-    if (!color_format || (descriptor.depthFormat && !depth_format))
+    if (descriptor.depthFormat && !depth_format)
     {
         return;
     }
@@ -272,8 +333,8 @@ MetalRenderPipelineFamilyCache::MetalRenderPipelineFamilyCache(
                                    native_library,
                                    vertex,
                                    fragment,
-                                   descriptor.colorFormat,
-                                   *color_format,
+                                   descriptor.colorFormats,
+                                   std::move(color_formats),
                                    depth_format);
 }
 
@@ -288,21 +349,54 @@ bool MetalRenderPipelineFamilyCache::valid() const noexcept
 
 std::optional<MetalRenderPipelineHandle>
 MetalRenderPipelineFamilyCache::pipeline(
-    const BlendAttachmentDesc& descriptor)
+    const std::vector<BlendAttachmentDesc>& descriptors)
 {
-    if (!valid())
+    if (!valid() || descriptors.size() != mImpl->sourceColorFormats.size())
     {
         return std::nullopt;
     }
 
-    const auto key = makeBlendAttachmentKey(descriptor,
-                                            mImpl->sourceColorFormat);
-    if (!key)
+    PipelineKey key;
+    key.count = descriptors.size();
+    std::array<NativeBlendState, kMaximumColorAttachments> native_states{};
+    for (std::size_t index = 0; index < descriptors.size(); ++index)
     {
-        return std::nullopt;
+        const auto attachment_key = makeBlendAttachmentKey(
+            descriptors[index], mImpl->sourceColorFormats[index]);
+        if (!attachment_key)
+        {
+            return std::nullopt;
+        }
+        key.attachments[index] = *attachment_key;
+
+        const auto rgb_operation =
+            nativeBlendOperation(attachment_key->rgbOperation);
+        const auto source_rgb =
+            nativeBlendFactor(attachment_key->sourceRGBFactor);
+        const auto destination_rgb =
+            nativeBlendFactor(attachment_key->destinationRGBFactor);
+        const auto alpha_operation =
+            nativeBlendOperation(attachment_key->alphaOperation);
+        const auto source_alpha =
+            nativeBlendFactor(attachment_key->sourceAlphaFactor);
+        const auto destination_alpha =
+            nativeBlendFactor(attachment_key->destinationAlphaFactor);
+        if (!rgb_operation || !source_rgb || !destination_rgb ||
+            !alpha_operation || !source_alpha || !destination_alpha)
+        {
+            return std::nullopt;
+        }
+        native_states[index] = NativeBlendState{
+            *rgb_operation,
+            *source_rgb,
+            *destination_rgb,
+            *alpha_operation,
+            *source_alpha,
+            *destination_alpha,
+        };
     }
 
-    const auto existing = mImpl->entries.find(*key);
+    const auto existing = mImpl->entries.find(key);
     if (existing != mImpl->entries.end())
     {
         ++mImpl->hits;
@@ -310,20 +404,6 @@ MetalRenderPipelineFamilyCache::pipeline(
     }
 
     ++mImpl->misses;
-    const auto rgb_operation = nativeBlendOperation(key->rgbOperation);
-    const auto source_rgb = nativeBlendFactor(key->sourceRGBFactor);
-    const auto destination_rgb =
-        nativeBlendFactor(key->destinationRGBFactor);
-    const auto alpha_operation = nativeBlendOperation(key->alphaOperation);
-    const auto source_alpha = nativeBlendFactor(key->sourceAlphaFactor);
-    const auto destination_alpha =
-        nativeBlendFactor(key->destinationAlphaFactor);
-    if (!rgb_operation || !source_rgb || !destination_rgb ||
-        !alpha_operation || !source_alpha || !destination_alpha)
-    {
-        return std::nullopt;
-    }
-
     MTLRenderPipelineDescriptor* native_descriptor =
         [[MTLRenderPipelineDescriptor alloc] init];
     native_descriptor.label = @"Firestorm cached render pipeline family entry";
@@ -335,17 +415,22 @@ MetalRenderPipelineFamilyCache::pipeline(
         ? *mImpl->depthFormat
         : MTLPixelFormatInvalid;
 
-    MTLRenderPipelineColorAttachmentDescriptor* attachment =
-        native_descriptor.colorAttachments[0];
-    attachment.pixelFormat = mImpl->colorFormat;
-    attachment.blendingEnabled = key->blendingEnabled;
-    attachment.rgbBlendOperation = *rgb_operation;
-    attachment.sourceRGBBlendFactor = *source_rgb;
-    attachment.destinationRGBBlendFactor = *destination_rgb;
-    attachment.alphaBlendOperation = *alpha_operation;
-    attachment.sourceAlphaBlendFactor = *source_alpha;
-    attachment.destinationAlphaBlendFactor = *destination_alpha;
-    attachment.writeMask = nativeWriteMask(key->writeMask);
+    for (std::size_t index = 0; index < key.count; ++index)
+    {
+        MTLRenderPipelineColorAttachmentDescriptor* attachment =
+            native_descriptor.colorAttachments[index];
+        const BlendAttachmentKey& attachment_key = key.attachments[index];
+        const NativeBlendState& native_state = native_states[index];
+        attachment.pixelFormat = mImpl->colorFormats[index];
+        attachment.blendingEnabled = attachment_key.blendingEnabled;
+        attachment.rgbBlendOperation = native_state.rgbOperation;
+        attachment.sourceRGBBlendFactor = native_state.sourceRGB;
+        attachment.destinationRGBBlendFactor = native_state.destinationRGB;
+        attachment.alphaBlendOperation = native_state.alphaOperation;
+        attachment.sourceAlphaBlendFactor = native_state.sourceAlpha;
+        attachment.destinationAlphaBlendFactor = native_state.destinationAlpha;
+        attachment.writeMask = nativeWriteMask(attachment_key.writeMask);
+    }
 
     NSError* error = nil;
     id<MTLRenderPipelineState> pipeline =
@@ -357,7 +442,7 @@ MetalRenderPipelineFamilyCache::pipeline(
     }
 
     const auto inserted =
-        mImpl->entries.emplace(*key, NativePipeline{ pipeline });
+        mImpl->entries.emplace(key, NativePipeline{ pipeline });
     if (!inserted.second)
     {
         return std::nullopt;

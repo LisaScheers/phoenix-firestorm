@@ -246,7 +246,7 @@ std::optional<TargetResources> createTarget(id<MTLDevice> device)
         return std::nullopt;
     }
 
-    const auto target = makeRenderTarget(*color, *depth);
+    const auto target = makeRenderTarget({ *color }, *depth);
     if (!target)
     {
         return std::nullopt;
@@ -260,9 +260,11 @@ MetalRenderPassDesc passDescriptor(AttachmentLoadAction color_load,
                                    AttachmentStoreAction depth_store)
 {
     MetalRenderPassDesc descriptor;
-    descriptor.color.load = color_load;
-    descriptor.color.store = color_store;
-    descriptor.color.clear = MetalClearColor{ 0.0, 0.0, 0.0, 1.0 };
+    descriptor.colors = { MetalColorAttachmentDesc{
+        color_load,
+        color_store,
+        MetalClearColor{ 0.0, 0.0, 0.0, 1.0 }
+    } };
     descriptor.depth = MetalDepthAttachmentDesc{
         depth_load, depth_store, 1.0
     };
@@ -277,10 +279,13 @@ void testTargetContract(id<MTLDevice> device)
     EXPECT(empty.width() == 0);
     EXPECT(empty.height() == 0);
     EXPECT(empty.sampleCount() == 0);
+    EXPECT(empty.colorCount() == 0);
+    EXPECT(!empty.colorFormat(0).has_value());
     EXPECT(!empty.depthFormat().has_value());
-    EXPECT(!empty.colorTexture().valid());
+    EXPECT(!empty.colorTexture(0).has_value());
     EXPECT(!empty.depthTexture().has_value());
-    EXPECT(!makeRenderTarget(MetalPrivateTexture{}).has_value());
+    EXPECT(!makeRenderTarget({ MetalPrivateTexture{} }).has_value());
+    EXPECT(!makeRenderTarget({}).has_value());
 
     const auto color = createTexture(device,
                                      PixelFormat::rgba8_unorm,
@@ -303,7 +308,7 @@ void testTargetContract(id<MTLDevice> device)
         return;
     }
 
-    const auto target = makeRenderTarget(*color, *depth);
+    const auto target = makeRenderTarget({ *color }, *depth);
     EXPECT(target.has_value());
     if (target)
     {
@@ -311,9 +316,17 @@ void testTargetContract(id<MTLDevice> device)
         EXPECT(target->width() == WIDTH);
         EXPECT(target->height() == HEIGHT);
         EXPECT(target->sampleCount() == 1);
-        EXPECT(target->colorFormat() == PixelFormat::rgba8_unorm);
+        EXPECT(target->colorCount() == 1);
+        EXPECT(target->colorFormat(0) == PixelFormat::rgba8_unorm);
+        EXPECT(!target->colorFormat(1).has_value());
         EXPECT(target->depthFormat() == PixelFormat::depth32_float);
-        EXPECT(target->colorTexture().nativeHandle() == color->nativeHandle());
+        EXPECT(target->colorTexture(0).has_value());
+        if (target->colorTexture(0))
+        {
+            EXPECT(target->colorTexture(0)->nativeHandle() ==
+                   color->nativeHandle());
+        }
+        EXPECT(!target->colorTexture(1).has_value());
         EXPECT(target->depthTexture().has_value());
         if (target->depthTexture())
         {
@@ -333,11 +346,11 @@ void testTargetContract(id<MTLDevice> device)
     EXPECT(shader_only_color.has_value());
     if (shader_only_color)
     {
-        EXPECT(!makeRenderTarget(*shader_only_color).has_value());
+        EXPECT(!makeRenderTarget({ *shader_only_color }).has_value());
     }
 
-    EXPECT(!makeRenderTarget(*depth).has_value());
-    EXPECT(!makeRenderTarget(*color, *color).has_value());
+    EXPECT(!makeRenderTarget({ *depth }).has_value());
+    EXPECT(!makeRenderTarget({ *color }, *color).has_value());
 
     const auto mismatched_depth = createTexture(
         device,
@@ -350,7 +363,7 @@ void testTargetContract(id<MTLDevice> device)
     EXPECT(mismatched_depth.has_value());
     if (mismatched_depth)
     {
-        EXPECT(!makeRenderTarget(*color, *mismatched_depth).has_value());
+        EXPECT(!makeRenderTarget({ *color }, *mismatched_depth).has_value());
     }
 
     const auto shader_only_depth = createTexture(
@@ -364,7 +377,7 @@ void testTargetContract(id<MTLDevice> device)
     EXPECT(shader_only_depth.has_value());
     if (shader_only_depth)
     {
-        EXPECT(!makeRenderTarget(*color, *shader_only_depth).has_value());
+        EXPECT(!makeRenderTarget({ *color }, *shader_only_depth).has_value());
     }
 
     const auto mipmapped_color = createTexture(
@@ -378,7 +391,7 @@ void testTargetContract(id<MTLDevice> device)
     EXPECT(mipmapped_color.has_value());
     if (mipmapped_color)
     {
-        EXPECT(!makeRenderTarget(*mipmapped_color).has_value());
+        EXPECT(!makeRenderTarget({ *mipmapped_color }).has_value());
     }
 
     MetalTextureDescriptor cube_descriptor;
@@ -395,7 +408,7 @@ void testTargetContract(id<MTLDevice> device)
     EXPECT(cube_color.has_value());
     if (cube_color)
     {
-        EXPECT(!makeRenderTarget(*cube_color).has_value());
+        EXPECT(!makeRenderTarget({ *cube_color }).has_value());
     }
 
     for (id<MTLDevice> other_device in MTLCopyAllDevices())
@@ -415,7 +428,7 @@ void testTargetContract(id<MTLDevice> device)
         EXPECT(other_depth.has_value());
         if (other_depth)
         {
-            EXPECT(!makeRenderTarget(*color, *other_depth).has_value());
+            EXPECT(!makeRenderTarget({ *color }, *other_depth).has_value());
         }
     }
 }
@@ -457,7 +470,7 @@ void testPassContract(id<MTLDevice> device,
                             resources->target,
                             invalid).has_value());
 
-    const auto color_only = makeRenderTarget(resources->color);
+    const auto color_only = makeRenderTarget({ resources->color });
     EXPECT(color_only.has_value());
     if (color_only)
     {
@@ -467,12 +480,12 @@ void testPassContract(id<MTLDevice> device,
     }
 
     invalid = descriptor;
-    invalid.color.load = static_cast<AttachmentLoadAction>(255);
+    invalid.colors[0].load = static_cast<AttachmentLoadAction>(255);
     EXPECT(!beginRenderPass((__bridge void*)command_buffer,
                             resources->target,
                             invalid).has_value());
     invalid = descriptor;
-    invalid.color.store = static_cast<AttachmentStoreAction>(255);
+    invalid.colors[0].store = static_cast<AttachmentStoreAction>(255);
     EXPECT(!beginRenderPass((__bridge void*)command_buffer,
                             resources->target,
                             invalid).has_value());
@@ -496,12 +509,12 @@ void testPassContract(id<MTLDevice> device,
     const double nan = std::numeric_limits<double>::quiet_NaN();
     const double infinity = std::numeric_limits<double>::infinity();
     invalid = descriptor;
-    invalid.color.load = AttachmentLoadAction::clear;
-    invalid.color.clear.red = nan;
+    invalid.colors[0].load = AttachmentLoadAction::clear;
+    invalid.colors[0].clear.red = nan;
     EXPECT(!beginRenderPass((__bridge void*)command_buffer,
                             resources->target,
                             invalid).has_value());
-    invalid.color.clear.red = infinity;
+    invalid.colors[0].clear.red = infinity;
     EXPECT(!beginRenderPass((__bridge void*)command_buffer,
                             resources->target,
                             invalid).has_value());
@@ -522,7 +535,9 @@ void testPassContract(id<MTLDevice> device,
                             invalid).has_value());
 
     auto ignored_clear = descriptor;
-    ignored_clear.color.clear = MetalClearColor{ nan, infinity, -infinity, nan };
+    ignored_clear.colors[0].clear = MetalClearColor{
+        nan, infinity, -infinity, nan
+    };
     ignored_clear.depth->clear = nan;
     auto ignored_pass = beginRenderPass((__bridge void*)command_buffer,
                                         resources->target,
@@ -534,8 +549,10 @@ void testPassContract(id<MTLDevice> device,
     }
 
     auto hdr_clear = descriptor;
-    hdr_clear.color.load = AttachmentLoadAction::clear;
-    hdr_clear.color.clear = MetalClearColor{ -2.0, 3.0, 100.0, 1.0 };
+    hdr_clear.colors[0].load = AttachmentLoadAction::clear;
+    hdr_clear.colors[0].clear = MetalClearColor{
+        -2.0, 3.0, 100.0, 1.0
+    };
     auto hdr_pass = beginRenderPass((__bridge void*)command_buffer,
                                     resources->target,
                                     hdr_clear);
@@ -667,7 +684,7 @@ MetalRenderPipelineFamilyDesc pipelineFamilyDescriptor()
     MetalRenderPipelineFamilyDesc descriptor;
     descriptor.vertexFunction = VERTEX_FUNCTION;
     descriptor.fragmentFunction = FRAGMENT_FUNCTION;
-    descriptor.colorFormat = PixelFormat::rgba8_unorm;
+    descriptor.colorFormats = { PixelFormat::rgba8_unorm };
     descriptor.depthFormat = PixelFormat::depth32_float;
     return descriptor;
 }
@@ -749,7 +766,7 @@ void runGpuOracle(id<MTLDevice> device,
         (__bridge void*)library,
         pipelineFamilyDescriptor());
     EXPECT(pipeline_cache.valid());
-    const auto pipeline = pipeline_cache.pipeline(BlendAttachmentDesc{});
+    const auto pipeline = pipeline_cache.pipeline({ BlendAttachmentDesc{} });
     EXPECT(pipeline.has_value());
 
     MetalDepthStateCache depth_cache((__bridge void*)device);
@@ -785,7 +802,9 @@ void runGpuOracle(id<MTLDevice> device,
         AttachmentStoreAction::store,
         AttachmentLoadAction::clear,
         AttachmentStoreAction::store);
-    clear_pass_descriptor.color.clear = MetalClearColor{ 1.0, 0.0, 0.0, 1.0 };
+    clear_pass_descriptor.colors[0].clear = MetalClearColor{
+        1.0, 0.0, 0.0, 1.0
+    };
     clear_pass_descriptor.depth->clear = 0.5;
     clear_pass_descriptor.label = "Firestorm clear/store attachments";
     auto clear_pass = beginRenderPass((__bridge void*)command_buffer,
