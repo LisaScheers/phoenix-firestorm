@@ -89,3 +89,53 @@ kernel void firestorm_sampler_test(
         : source.sample(clamp_sampler, outside_left);
     output.write(color, position);
 }
+
+struct DepthRasterDraw
+{
+    float depth;
+    uint reverse_winding;
+    uint color_index;
+    uint unused;
+};
+
+struct DepthRasterVertex
+{
+    float4 position [[position]];
+    half4 color;
+};
+
+vertex DepthRasterVertex firestorm_depth_raster_vertex(
+    uint vertex_id [[vertex_id]],
+    constant DepthRasterDraw& draw [[buffer(0)]])
+{
+    constexpr float2 positions[] =
+    {
+        float2(-1.0f, -1.0f),
+        float2(-1.0f,  3.0f),
+        float2( 3.0f, -1.0f),
+    };
+    constexpr half4 colors[] =
+    {
+        half4(0.0h, 1.0h, 0.0h, 1.0h),
+        half4(1.0h, 0.0h, 0.0h, 1.0h),
+        half4(0.0h, 0.0h, 1.0h, 1.0h),
+        half4(1.0h, 1.0h, 0.0h, 1.0h),
+    };
+
+    uint position_index = vertex_id;
+    if (draw.reverse_winding != 0 && vertex_id != 0)
+    {
+        position_index = 3 - vertex_id;
+    }
+
+    DepthRasterVertex output;
+    output.position = float4(positions[position_index], draw.depth, 1.0f);
+    output.color = colors[draw.color_index];
+    return output;
+}
+
+fragment half4 firestorm_depth_raster_fragment(
+    DepthRasterVertex input [[stage_in]])
+{
+    return input.color;
+}
