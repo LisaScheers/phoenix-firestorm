@@ -29,6 +29,7 @@ set(FIRESTORM_METAL_BOOTSTRAP_METAL_STANDARD "2.3")
 
 find_program(FIRESTORM_XCRUN_EXECUTABLE xcrun)
 find_library(FIRESTORM_APPKIT_FRAMEWORK AppKit)
+find_library(FIRESTORM_FOUNDATION_FRAMEWORK Foundation)
 find_library(FIRESTORM_METAL_FRAMEWORK Metal)
 find_library(FIRESTORM_QUARTZCORE_FRAMEWORK QuartzCore)
 
@@ -36,9 +37,11 @@ if (NOT FIRESTORM_XCRUN_EXECUTABLE)
   message(FATAL_ERROR "Could not find xcrun")
 endif ()
 if (NOT FIRESTORM_APPKIT_FRAMEWORK OR
+    NOT FIRESTORM_FOUNDATION_FRAMEWORK OR
     NOT FIRESTORM_METAL_FRAMEWORK OR
     NOT FIRESTORM_QUARTZCORE_FRAMEWORK)
-  message(FATAL_ERROR "Could not find the AppKit, Metal, and QuartzCore frameworks")
+  message(FATAL_ERROR
+          "Could not find the AppKit, Foundation, Metal, and QuartzCore frameworks")
 endif ()
 
 set(FIRESTORM_METAL_SHADER_SOURCE
@@ -99,6 +102,7 @@ set(FIRESTORM_METAL_BOOTSTRAP_SOURCES
 set_source_files_properties(
   llmetalbootstrap-objc.mm
   main-objc.mm
+  offscreen-test-objc.mm
   PROPERTIES SKIP_PRECOMPILE_HEADERS TRUE
   )
 
@@ -132,6 +136,58 @@ target_link_libraries(firestorm_metal_bootstrap PRIVATE
   "${FIRESTORM_METAL_FRAMEWORK}"
   "${FIRESTORM_QUARTZCORE_FRAMEWORK}"
   )
+
+add_executable(firestorm_metal_offscreen_test
+  ${FIRESTORM_METAL_BOOTSTRAP_EXCLUDE_FROM_ALL}
+  offscreen-test-objc.mm
+  )
+add_dependencies(
+  firestorm_metal_offscreen_test
+  firestorm_metal_bootstrap_shader_library
+  )
+target_compile_features(firestorm_metal_offscreen_test PRIVATE cxx_std_20)
+target_compile_options(firestorm_metal_offscreen_test PRIVATE
+  "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
+  "$<$<COMPILE_LANGUAGE:OBJCXX>:-Wall>"
+  "$<$<COMPILE_LANGUAGE:OBJCXX>:-Wextra>"
+  "$<$<COMPILE_LANGUAGE:OBJCXX>:-Wpedantic>"
+  "$<$<COMPILE_LANGUAGE:OBJCXX>:-mmacosx-version-min=${FIRESTORM_METAL_BOOTSTRAP_MIN_MACOS}>"
+  )
+target_link_options(firestorm_metal_offscreen_test PRIVATE
+  "-mmacosx-version-min=${FIRESTORM_METAL_BOOTSTRAP_MIN_MACOS}"
+  )
+target_link_libraries(firestorm_metal_offscreen_test PRIVATE
+  "${FIRESTORM_FOUNDATION_FRAMEWORK}"
+  "${FIRESTORM_METAL_FRAMEWORK}"
+  )
+set_target_properties(firestorm_metal_offscreen_test PROPERTIES
+  CXX_EXTENSIONS OFF
+  CXX_STANDARD 20
+  CXX_STANDARD_REQUIRED ON
+  OSX_ARCHITECTURES "arm64"
+  XCODE_ATTRIBUTE_MACOSX_DEPLOYMENT_TARGET
+      "${FIRESTORM_METAL_BOOTSTRAP_MIN_MACOS}"
+  )
+
+if (FIRESTORM_METAL_BOOTSTRAP_IS_STANDALONE)
+  include(CTest)
+  if (BUILD_TESTING)
+    add_test(
+      NAME firestorm_metal_offscreen_orientation
+      COMMAND "${CMAKE_COMMAND}" -E env
+              MTL_DEBUG_LAYER=1
+              MTL_SHADER_VALIDATION=1
+              "$<TARGET_FILE:firestorm_metal_offscreen_test>"
+              --metallib "${FIRESTORM_METAL_LIBRARY}"
+      )
+    set_tests_properties(
+      firestorm_metal_offscreen_orientation
+      PROPERTIES
+        LABELS "metal;gpu"
+        TIMEOUT 10
+      )
+  endif ()
+endif ()
 
 set_target_properties(firestorm_metal_bootstrap PROPERTIES
   CXX_EXTENSIONS OFF

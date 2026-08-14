@@ -43,6 +43,20 @@ of one recording/submission thread plus completion callbacks from any thread.
 `TransientArena` is thread-confined, supports any positive alignment, and
 retains its high-water mark across resets.
 
+## Deterministic offscreen validation
+
+The standalone build also provides a headless resource test. It renders exact
+corner colors into a private 2×2 texture, blits them into a shared buffer, and
+validates the top-to-bottom rows only after command-buffer completion. Metal
+API and GPU validation are enabled by the registered test.
+
+```sh
+cmake -S indra/llwindow/metal -B .build/metal-core -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+cmake --build .build/metal-core --target firestorm_metal_offscreen_test
+ctest --test-dir .build/metal-core --output-on-failure
+```
+
 ## Firestorm build integration
 
 The same CMake file can be included from `indra/llwindow/CMakeLists.txt` by
