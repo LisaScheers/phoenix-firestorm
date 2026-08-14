@@ -444,6 +444,7 @@
           }
         ]
       },
+      "comparison_sample_counts": {"fragment": 20},
       "pipeline": {
         "color_formats": ["rgba16float"],
         "depth_format": "depth32float",
@@ -688,6 +689,7 @@
           {"group": "textures", "name": "tex3", "type": "sampler2D"}
         ]
       },
+      "comparison_sample_counts": {"fragment": 20},
       "pipeline": {
         "color_formats": ["rgba16float"],
         "depth_format": "depth32float",

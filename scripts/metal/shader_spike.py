@@ -350,6 +350,7 @@ class ProgramRecipe:
     indexed_texture_channels: int
     stages: dict[str, tuple[str, ...]]
     required_reflection: dict[str, tuple[ReflectionRequirement, ...]]
+    comparison_sample_counts: dict[str, int]
     pipeline: PipelineSpec
     semantic_parity: str
     input_snapshot: InputSnapshot = field(compare=False, repr=False)
@@ -605,6 +606,36 @@ def _load_reflection_requirements(
     return result
 
 
+def _load_comparison_sample_counts(
+    value: object,
+    prefix: str,
+    reflection: dict[str, tuple[ReflectionRequirement, ...]],
+) -> dict[str, int]:
+    required_stages = {
+        stage
+        for stage, requirements in reflection.items()
+        if any(
+            requirement.resource_type is not None
+            and requirement.resource_type.endswith("Shadow")
+            for requirement in requirements
+        )
+    }
+    field = f"{prefix}.comparison_sample_counts"
+    if value is None:
+        if required_stages:
+            raise ManifestError(
+                f"{field} must cover shadow-sampling stages {sorted(required_stages)}"
+            )
+        return {}
+    if not isinstance(value, dict):
+        raise ManifestError(f"{field} must be an object")
+    _require_exact_keys(value, required_stages, field)
+    return {
+        stage: _require_int(count, f"{field}.{stage}", 1)
+        for stage, count in value.items()
+    }
+
+
 def _load_settings(
     value: object, field: str, *, require_all: bool
 ) -> dict[str, bool | int]:
@@ -829,25 +860,24 @@ def load_manifest(
         prefix = f"programs[{index}]"
         if not isinstance(value, dict):
             raise ManifestError(f"{prefix} must be an object")
-        _require_exact_keys(
-            value,
-            {
-                "defines",
-                "family",
-                "id",
-                "indexed_texture_channels",
-                "pipeline",
-                "recipe_kind",
-                "required_reflection",
-                "semantic_parity",
-                "settings_overrides",
-                "shader_class",
-                "source_reference",
-                "source_symbol",
-                "stages",
-            },
-            prefix,
-        )
+        program_keys = {
+            "defines",
+            "family",
+            "id",
+            "indexed_texture_channels",
+            "pipeline",
+            "recipe_kind",
+            "required_reflection",
+            "semantic_parity",
+            "settings_overrides",
+            "shader_class",
+            "source_reference",
+            "source_symbol",
+            "stages",
+        }
+        if "comparison_sample_counts" in value:
+            program_keys.add("comparison_sample_counts")
+        _require_exact_keys(value, program_keys, prefix)
         program_id = _require_string(value.get("id"), f"{prefix}.id")
         if not re.fullmatch(r"[a-z][a-z0-9_]*", program_id):
             raise ManifestError(f"{prefix}.id must be a stable snake_case identifier")
@@ -937,6 +967,10 @@ def load_manifest(
         if effective_settings["RenderShadowDetail"] >= 2:
             effective_global_defines["SPOT_SHADOW"] = "1"
 
+        required_reflection = _load_reflection_requirements(
+            value.get("required_reflection"), prefix
+        )
+
         programs.append(
             ProgramRecipe(
                 program_id=program_id,
@@ -960,8 +994,9 @@ def load_manifest(
                 feature_classes=feature_classes,
                 indexed_texture_channels=indexed_texture_channels,
                 stages=stages,
-                required_reflection=_load_reflection_requirements(
-                    value.get("required_reflection"), prefix
+                required_reflection=required_reflection,
+                comparison_sample_counts=_load_comparison_sample_counts(
+                    value.get("comparison_sample_counts"), prefix, required_reflection
                 ),
                 pipeline=_load_pipeline(
                     value.get("pipeline"), prefix, vertex_contracts
@@ -1441,18 +1476,19 @@ def count_msl_sample_compare_calls(source: str) -> int:
 
 
 def comparison_sample_errors(
-    required: bool, spirv_samples: int, msl_sample_compare_calls: int
+    expected: int | None, spirv_samples: int, msl_sample_compare_calls: int
 ) -> list[str]:
-    if not required:
+    if expected is None:
         return []
     errors = []
-    if spirv_samples == 0:
+    if spirv_samples != expected:
         errors.append(
-            "required depth-comparison texture has no SPIR-V comparison sample"
+            f"expected {expected} SPIR-V comparison samples; found {spirv_samples}"
         )
-    if msl_sample_compare_calls == 0:
+    if msl_sample_compare_calls != expected:
         errors.append(
-            "required depth-comparison texture has no generated MSL sample_compare call"
+            f"expected {expected} generated MSL sample_compare calls; "
+            f"found {msl_sample_compare_calls}"
         )
     return errors
 
@@ -2090,11 +2126,7 @@ def translate_program(
                 msl_path = program_root / f"{recipe.program_id}.{suffix}.metal"
                 air_path = program_root / f"{recipe.program_id}.{suffix}.air"
                 spirv_path.write_bytes(mapped)
-                comparison_required = any(
-                    requirement.resource_type is not None
-                    and requirement.resource_type.endswith("Shadow")
-                    for requirement in recipe.required_reflection.get(stage, ())
-                )
+                expected_comparison_samples = recipe.comparison_sample_counts.get(stage)
                 comparison_samples = count_comparison_sample_instructions(mapped)
 
                 validate_result = _run(
@@ -2166,7 +2198,7 @@ def translate_program(
                 )
                 reflection_errors.extend(
                     comparison_sample_errors(
-                        comparison_required,
+                        expected_comparison_samples,
                         comparison_samples,
                         msl_sample_compare_calls,
                     )

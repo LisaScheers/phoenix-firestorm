@@ -54,9 +54,9 @@ the remaining warnings accepted renderer behavior.
   indexed `gDeferredAlphaProgram` receiver. Its `HAS_SUN_SHADOW` entry shader
   links the `SUN_SHADOW` form of `shadowUtil.glsl`; the generated fragment stage
   contains 20 SPIR-V comparison-sample operations, 20 MSL `.sample_compare`
-  calls, and four reflected Metal depth-texture bindings. The gate requires
-  both instruction counts to remain positive for every declared shadow sampler
-  contract.
+  calls, and four reflected Metal depth-texture bindings. Each shadow-sampling
+  recipe owns an exact per-stage count in the manifest, so losing any of the
+  current cascade sampling work fails both frontend gates.
 - Metal defines `FXAA_NO_DEPTH_WRITE` for the real depthless post target. The
   source-controlled default depth-writing form remains covered by the separate
   capability recipe; it is not presented as a runtime Metal path.

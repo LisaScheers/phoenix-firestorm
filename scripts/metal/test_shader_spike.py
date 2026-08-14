@@ -131,6 +131,7 @@ class ShaderSpikeTest(unittest.TestCase):
         }
         for index in range(4):
             self.assertIn((f"shadowMap{index}", "sampler2DShadow"), required)
+        self.assertEqual({"fragment": 20}, recipe.comparison_sample_counts)
 
     def test_shadow_alpha_receiver_matches_real_indexed_program(self) -> None:
         _, programs = self._programs()
@@ -195,6 +196,7 @@ class ShaderSpikeTest(unittest.TestCase):
             },
             required,
         )
+        self.assertEqual({"fragment": 20}, recipe.comparison_sample_counts)
 
     def test_spirv_comparison_sampling_is_machine_counted(self) -> None:
         def module(opcode: int, word_count: int = 1) -> bytes:
@@ -212,24 +214,25 @@ class ShaderSpikeTest(unittest.TestCase):
         with self.assertRaisesRegex(shader_spike.ManifestError, "malformed"):
             shader_spike.count_comparison_sample_instructions(module(89, 0))
 
-    def test_msl_comparison_sampling_is_machine_counted_and_required(self) -> None:
+    def test_comparison_sampling_requires_exact_manifest_count(self) -> None:
         source = "a.sample_compare(x);\nb.sample_compare(y);\nc.sample(z);\n"
         self.assertEqual(2, shader_spike.count_msl_sample_compare_calls(source))
         self.assertEqual(0, shader_spike.count_msl_sample_compare_calls("a.sample(x);"))
         self.assertEqual(
             [
-                "required depth-comparison texture has no SPIR-V comparison sample",
-                "required depth-comparison texture has no generated MSL sample_compare call",
+                "expected 20 SPIR-V comparison samples; found 0",
+                "expected 20 generated MSL sample_compare calls; found 0",
             ],
-            shader_spike.comparison_sample_errors(True, 0, 0),
+            shader_spike.comparison_sample_errors(20, 0, 0),
         )
         self.assertEqual(
             [
-                "required depth-comparison texture has no generated MSL sample_compare call"
+                "expected 20 SPIR-V comparison samples; found 5",
+                "expected 20 generated MSL sample_compare calls; found 5",
             ],
-            shader_spike.comparison_sample_errors(True, 1, 0),
+            shader_spike.comparison_sample_errors(20, 5, 5),
         )
-        self.assertEqual([], shader_spike.comparison_sample_errors(False, 0, 0))
+        self.assertEqual([], shader_spike.comparison_sample_errors(None, 0, 0))
 
     def test_manifest_owns_soa_storage_and_position_index_alias(self) -> None:
         _, programs = self._programs()
