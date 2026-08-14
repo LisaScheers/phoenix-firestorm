@@ -109,9 +109,11 @@ cmake --build BUILD_DIR --target \
 # Single-config generators:
 BUILD_DIR/llwindow/metal/firestorm_metal_frame_contracts_test
 BUILD_DIR/llwindow/metal/firestorm_metal_resource_layout_test
-BUILD_DIR/llwindow/metal/firestorm_metal_frame_context_test
+env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
+  BUILD_DIR/llwindow/metal/firestorm_metal_frame_context_test
 # Multi-config generators such as Xcode:
 BUILD_DIR/llwindow/metal/CONFIG/firestorm_metal_frame_contracts_test
 BUILD_DIR/llwindow/metal/CONFIG/firestorm_metal_resource_layout_test
-BUILD_DIR/llwindow/metal/CONFIG/firestorm_metal_frame_context_test
+env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
+  BUILD_DIR/llwindow/metal/CONFIG/firestorm_metal_frame_context_test
 ```

@@ -24,6 +24,7 @@
 
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
+#import <objc/runtime.h>
 
 #include "llmetalframecontext.h"
 
@@ -51,7 +52,8 @@
 
 - (BOOL)conformsToProtocol:(Protocol*)protocol
 {
-    return protocol == @protocol(MTLCommandBuffer) || [super conformsToProtocol:protocol];
+    return protocol_isEqual(protocol, @protocol(MTLCommandBuffer)) ||
+        [super conformsToProtocol:protocol];
 }
 
 - (void)addCompletedHandler:(MTLCommandBufferHandler)handler

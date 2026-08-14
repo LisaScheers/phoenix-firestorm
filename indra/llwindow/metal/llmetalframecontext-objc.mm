@@ -227,19 +227,20 @@ struct MetalFrameContext::Impl final : std::enable_shared_from_this<MetalFrameCo
                 return;
             }
 
-            // Retire the exact generation and reset its CPU allocator before a
-            // producer can observe this slot as available again.
+            // Complete FrameSlots first so an invariant failure leaves this
+            // generation and its resources intact. mMutex prevents tryBegin()
+            // from observing availability until the remaining cleanup is done.
+            if (!mSlots.complete(token))
+            {
+                return;
+            }
+
             [context->retired removeAllObjects];
             context->arena.reset();
             submission_serial          = context->submission_serial;
             context->submission_serial = 0;
             completion_action          = std::move(context->completion_action);
             context->completion_action = {};
-            if (!mSlots.complete(token))
-            {
-                return;
-            }
-
             context->state = ContextState::available;
         }
 

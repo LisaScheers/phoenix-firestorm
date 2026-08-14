@@ -71,6 +71,8 @@ struct MetalFrameAllocation
  * Normal rendering never waits: tryBegin() reports back-pressure when all three
  * contexts are in flight. Completion handlers release generation-specific
  * retired resources, reset the arena, and only then publish a context for reuse.
+ * Submitted work keeps the shared implementation alive, so its completion
+ * action may run after the public MetalFrameContext object is destroyed.
  */
 class MetalFrameContext final
 {
