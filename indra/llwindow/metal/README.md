@@ -91,15 +91,22 @@ strongly owns each immutable native depth state by its canonical key. Cull mode
 and front-face winding remain explicit typed dynamic encoder state; no
 desired-state tracker or pipeline cache is introduced by this slice.
 
+`MetalRenderPipelineFamilyCache` fixes one generated-vertex shader pair, one
+color format, optional depth format, and one sample. Only a canonical single
+blend attachment varies between its strongly owned pipeline entries. Disabled,
+masked, and otherwise ignored blend fields share entries without introducing a
+global pipeline cache, desired-state tracker, or render-pass abstraction.
+
 ```sh
 cmake --build .build/metal-core --target \
   firestorm_metal_resource_layout_test \
   firestorm_metal_frame_context_test \
   firestorm_metal_resource_transfer_test \
   firestorm_metal_sampler_test \
-  firestorm_metal_depth_raster_test
+  firestorm_metal_depth_raster_test \
+  firestorm_metal_blend_pipeline_test
 (cd .build/metal-core && \
-  ctest -R '^firestorm_metal_(resource_layout|frame_context|resource_transfer|sampler|depth_raster)$' \
+  ctest -R '^firestorm_metal_(resource_layout|frame_context|resource_transfer|sampler|depth_raster|blend_pipeline)$' \
     --output-on-failure)
 ```
 
@@ -114,6 +121,11 @@ are green for `Less` with writes enabled, red for `Less` with writes disabled,
 blue for clockwise-front back-face culling, and yellow for
 counterclockwise-front back-face culling. Each cell uses a 1x1 scissor and two
 fullscreen triangles in one command buffer.
+
+The blend/pipeline test seeds and blends nine private RGBA8 cells with separate
+RGB and alpha equations, factors, operations, and write masks. It reads back the
+exact 9x1 byte row through the asynchronous frame-context transfer path. The
+registered test runs with Metal API and GPU validation enabled.
 
 ## Firestorm build integration
 
@@ -142,7 +154,8 @@ cmake --build BUILD_DIR --target \
   firestorm_metal_frame_context_test \
   firestorm_metal_resource_transfer_test \
   firestorm_metal_sampler_test \
-  firestorm_metal_depth_raster_test
+  firestorm_metal_depth_raster_test \
+  firestorm_metal_blend_pipeline_test
 # Single-config executables:
 BUILD_DIR/llwindow/metal/firestorm_metal_frame_contracts_test
 BUILD_DIR/llwindow/metal/firestorm_metal_resource_layout_test
@@ -156,6 +169,9 @@ env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
 env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
   BUILD_DIR/llwindow/metal/firestorm_metal_depth_raster_test \
     --metallib BUILD_DIR/llwindow/metal/generated/bootstrap.metallib
+env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
+  BUILD_DIR/llwindow/metal/firestorm_metal_blend_pipeline_test \
+    --metallib BUILD_DIR/llwindow/metal/generated/bootstrap.metallib
 # Multi-config generators such as Xcode:
 cmake --build BUILD_DIR --config CONFIG --target \
   firestorm_metal_frame_contracts_test \
@@ -163,7 +179,8 @@ cmake --build BUILD_DIR --config CONFIG --target \
   firestorm_metal_frame_context_test \
   firestorm_metal_resource_transfer_test \
   firestorm_metal_sampler_test \
-  firestorm_metal_depth_raster_test
+  firestorm_metal_depth_raster_test \
+  firestorm_metal_blend_pipeline_test
 BUILD_DIR/llwindow/metal/CONFIG/firestorm_metal_frame_contracts_test
 BUILD_DIR/llwindow/metal/CONFIG/firestorm_metal_resource_layout_test
 env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
@@ -175,5 +192,8 @@ env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
     --metallib BUILD_DIR/llwindow/metal/generated/bootstrap.metallib
 env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
   BUILD_DIR/llwindow/metal/CONFIG/firestorm_metal_depth_raster_test \
+    --metallib BUILD_DIR/llwindow/metal/generated/bootstrap.metallib
+env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
+  BUILD_DIR/llwindow/metal/CONFIG/firestorm_metal_blend_pipeline_test \
     --metallib BUILD_DIR/llwindow/metal/generated/bootstrap.metallib
 ```

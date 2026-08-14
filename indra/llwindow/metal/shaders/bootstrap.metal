@@ -139,3 +139,29 @@ fragment half4 firestorm_depth_raster_fragment(
 {
     return input.color;
 }
+
+struct BlendPipelineVertex
+{
+    float4 position [[position]];
+};
+
+vertex BlendPipelineVertex firestorm_blend_pipeline_vertex(
+    uint vertex_id [[vertex_id]])
+{
+    constexpr float2 positions[] =
+    {
+        float2(-1.0f, -1.0f),
+        float2( 3.0f, -1.0f),
+        float2(-1.0f,  3.0f),
+    };
+
+    BlendPipelineVertex output;
+    output.position = float4(positions[vertex_id], 0.0f, 1.0f);
+    return output;
+}
+
+fragment float4 firestorm_blend_pipeline_fragment(
+    constant uint4& color_bytes [[buffer(0)]])
+{
+    return float4(color_bytes) / 255.0f;
+}
