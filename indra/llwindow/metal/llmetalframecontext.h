@@ -93,6 +93,9 @@ public:
     /** Claims an available context for recording, or returns no value. */
     std::optional<MetalFrameLease> tryBegin();
 
+    /** Checks that the exact lease still belongs to this recording context. */
+    bool ownsRecordingLease(const MetalFrameLease& lease) const;
+
     /** Allocates a non-wrapping range from a matching recording context. */
     std::optional<MetalFrameAllocation> allocate(FrameToken token, std::size_t size, std::size_t alignment = 1);
 
@@ -102,18 +105,18 @@ public:
     /**
      * Marks a recording generation submitted and binds its completion handler.
      *
-     * The returned serial is globally monotonic across all three contexts. A
-     * non-empty completion action runs only after successful GPU completion,
-     * exact-generation cleanup, and publication of the reusable context. The
-     * action runs on Metal's completion-callback thread without the context
-     * mutex held. Actions may arrive out of submission order; consumers must
-     * compare the supplied serial before publishing newer state. Consumers
-     * should use the action, rather than slot availability, as their successful
-     * GPU-visibility signal. Exceptions from the action are contained after the
-     * context has been safely reclaimed. The recording thread must call submit()
-     * before it commits the command buffer and must not enqueue or commit that
-     * buffer concurrently with submit(). Rejection leaves the lease recording
-     * and cancellable.
+     * The returned serial is process-wide monotonic, including across separate
+     * MetalFrameContext lifetimes. A non-empty completion action runs only after
+     * successful GPU completion, exact-generation cleanup, and publication of
+     * the reusable context. The action runs on Metal's completion-callback
+     * thread without the context mutex held. Actions may arrive out of
+     * submission order; consumers must compare the supplied serial before
+     * publishing newer state. Consumers should use the action, rather than slot
+     * availability, as their successful GPU-visibility signal. Exceptions from
+     * the action are contained after the context has been safely reclaimed. The
+     * recording thread must call submit() before it commits the command buffer
+     * and must not enqueue or commit that buffer concurrently with submit().
+     * Rejection leaves the lease recording and cancellable.
      */
     std::optional<std::uint64_t> submit(FrameToken token, MetalCommandBufferHandle command_buffer, CompletionAction completion_action = {});
 

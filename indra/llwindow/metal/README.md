@@ -69,9 +69,10 @@ orientation.
 `MetalFrameContext` owns exactly three `MTLStorageModeShared` transient
 buffers. Generation-tagged leases prevent reuse while the GPU can still read a
 slot. Resources retired against a lease remain alive until that exact command
-buffer completes, and successful completion publishes a global submission
-serial only after cleanup makes the slot available again. The runtime path
-does not wait for GPU completion; bounded waits exist only in the focused test.
+buffer completes, and successful completion publishes a process-wide monotonic
+submission serial only after cleanup makes the slot available again. The
+runtime path does not wait for GPU completion; bounded waits exist only in the
+focused test.
 
 ```sh
 cmake --build .build/metal-core --target \

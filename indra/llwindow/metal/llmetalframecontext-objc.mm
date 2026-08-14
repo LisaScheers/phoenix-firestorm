@@ -28,6 +28,7 @@
 #include "llmetaltransientarena.h"
 
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <limits>
 #include <mutex>
@@ -38,6 +39,26 @@ namespace firestorm::metal
 
 namespace
 {
+
+std::atomic<std::uint64_t> gSubmissionSerial{ 0 };
+
+std::optional<std::uint64_t> nextSubmissionSerial() noexcept
+{
+    std::uint64_t current = gSubmissionSerial.load(std::memory_order_relaxed);
+    while (current != std::numeric_limits<std::uint64_t>::max())
+    {
+        const std::uint64_t next = current + 1;
+        if (gSubmissionSerial.compare_exchange_weak(current,
+                                                    next,
+                                                    std::memory_order_relaxed,
+                                                    std::memory_order_relaxed))
+        {
+            return next;
+        }
+    }
+
+    return std::nullopt;
+}
 
 bool conformsToMetalProtocol(void* handle, Protocol* protocol)
 {
@@ -121,6 +142,15 @@ struct MetalFrameContext::Impl final : std::enable_shared_from_this<MetalFrameCo
         return MetalFrameLease{ *token, (__bridge void*)context.buffer, mCapacity };
     }
 
+    bool ownsRecordingLease(const MetalFrameLease& lease)
+    {
+        std::lock_guard<std::mutex> lock(mMutex);
+        ContextStorage* const context = matching(lease.token, ContextState::recording);
+        return mValid && context != nullptr &&
+               lease.buffer == (__bridge void*)context->buffer &&
+               lease.capacity == mCapacity;
+    }
+
     std::optional<MetalFrameAllocation> allocate(FrameToken token,
                                                  std::size_t size,
                                                  std::size_t alignment)
@@ -166,21 +196,24 @@ struct MetalFrameContext::Impl final : std::enable_shared_from_this<MetalFrameCo
                                                           : command_buffer.status;
         if (context == nullptr || command_buffer == nil ||
             (command_status != MTLCommandBufferStatusNotEnqueued &&
-             command_status != MTLCommandBufferStatusEnqueued) ||
-            mSubmissionSerial == std::numeric_limits<std::uint64_t>::max())
+             command_status != MTLCommandBufferStatusEnqueued))
         {
             return std::nullopt;
         }
 
-        const std::uint64_t submission_serial = mSubmissionSerial + 1;
+        const std::optional<std::uint64_t> submission_serial = nextSubmissionSerial();
+        if (!submission_serial)
+        {
+            return std::nullopt;
+        }
+
         if (!mSlots.submit(token))
         {
             return std::nullopt;
         }
 
-        mSubmissionSerial          = submission_serial;
         context->state             = ContextState::submitted;
-        context->submission_serial = submission_serial;
+        context->submission_serial = *submission_serial;
         context->completion_action = std::move(completion_action);
         const std::shared_ptr<Impl> keep_alive = shared_from_this();
         [command_buffer addCompletedHandler:^(id<MTLCommandBuffer> completed_buffer) {
@@ -189,7 +222,7 @@ struct MetalFrameContext::Impl final : std::enable_shared_from_this<MetalFrameCo
                 keep_alive->complete(token, completed_buffer.status == MTLCommandBufferStatusCompleted);
             }
         }];
-        return submission_serial;
+        return *submission_serial;
     }
 
     bool cancel(FrameToken token)
@@ -279,7 +312,6 @@ private:
     std::array<ContextStorage, kContextCount> mContexts;
     std::size_t                           mCapacity = 0;
     bool                                  mValid    = false;
-    std::uint64_t                         mSubmissionSerial = 0;
     FrameSlots                            mSlots;
     std::mutex                            mMutex;
 };
@@ -302,6 +334,11 @@ bool MetalFrameContext::valid() const noexcept
 std::optional<MetalFrameLease> MetalFrameContext::tryBegin()
 {
     return mImpl == nullptr ? std::nullopt : mImpl->tryBegin();
+}
+
+bool MetalFrameContext::ownsRecordingLease(const MetalFrameLease& lease) const
+{
+    return mImpl != nullptr && mImpl->ownsRecordingLease(lease);
 }
 
 std::optional<MetalFrameAllocation> MetalFrameContext::allocate(FrameToken token,

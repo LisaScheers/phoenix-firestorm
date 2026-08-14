@@ -97,6 +97,7 @@ void expect(bool condition, const char* expression, int line)
 
 using firestorm::metal::FrameToken;
 using firestorm::metal::MetalFrameContext;
+using firestorm::metal::MetalFrameLease;
 
 void publishLatest(std::atomic<std::uint64_t>& published, std::uint64_t serial)
 {
@@ -148,6 +149,38 @@ void testValidationAndCancel(id<MTLDevice> device)
     {
         return;
     }
+    EXPECT(contexts.ownsRecordingLease(*first));
+    EXPECT(!contexts.ownsRecordingLease(MetalFrameLease{}));
+
+    MetalFrameLease forged_generation = *first;
+    ++forged_generation.token.generation;
+    EXPECT(!contexts.ownsRecordingLease(forged_generation));
+
+    MetalFrameLease forged_slot = *first;
+    forged_slot.token.slot = MetalFrameContext::kContextCount;
+    EXPECT(!contexts.ownsRecordingLease(forged_slot));
+
+    MetalFrameLease forged_buffer = *first;
+    id<MTLBuffer> unrelated_buffer = [device newBufferWithLength:first->capacity
+                                                         options:MTLResourceStorageModeShared];
+    forged_buffer.buffer = (__bridge void*)unrelated_buffer;
+    EXPECT(!contexts.ownsRecordingLease(forged_buffer));
+
+    MetalFrameLease forged_capacity = *first;
+    --forged_capacity.capacity;
+    EXPECT(!contexts.ownsRecordingLease(forged_capacity));
+
+    MetalFrameContext other_contexts((__bridge void*)device, first->capacity);
+    const auto other = other_contexts.tryBegin();
+    EXPECT(other.has_value());
+    if (other)
+    {
+        EXPECT(other_contexts.ownsRecordingLease(*other));
+        EXPECT(!contexts.ownsRecordingLease(*other));
+        EXPECT(!other_contexts.ownsRecordingLease(*first));
+        EXPECT(other_contexts.cancel(other->token));
+        EXPECT(!other_contexts.ownsRecordingLease(*other));
+    }
 
     const auto prefix = contexts.allocate(first->token, 4, 4);
     const auto aligned = contexts.allocate(first->token, 4, 16);
@@ -160,6 +193,7 @@ void testValidationAndCancel(id<MTLDevice> device)
     EXPECT(!contexts.submit(first->token, nullptr).has_value());
     EXPECT(!contexts.retire(first->token, (__bridge void*)not_metal));
     EXPECT(!contexts.submit(first->token, (__bridge void*)not_metal).has_value());
+    EXPECT(contexts.ownsRecordingLease(*first));
 
     const FrameToken wrong_generation{ first->token.slot, first->token.generation + 1 };
     id<MTLBuffer> resource = [device newBufferWithLength:16 options:MTLResourceStorageModeShared];
@@ -181,6 +215,7 @@ void testValidationAndCancel(id<MTLDevice> device)
     EXPECT(contexts.allocate(first->token, 1).has_value());
 
     EXPECT(contexts.cancel(first->token));
+    EXPECT(!contexts.ownsRecordingLease(*first));
     EXPECT(!contexts.cancel(first->token));
     EXPECT(!contexts.allocate(first->token, 1).has_value());
     EXPECT(!contexts.retire(first->token, (__bridge void*)resource));
@@ -194,7 +229,9 @@ void testValidationAndCancel(id<MTLDevice> device)
         const auto allocation = contexts.allocate(reused->token, 4, 16);
         EXPECT(allocation.has_value());
         EXPECT(allocation && allocation->offset == 0);
+        EXPECT(contexts.ownsRecordingLease(*reused));
         EXPECT(contexts.cancel(reused->token));
+        EXPECT(!contexts.ownsRecordingLease(*reused));
     }
 }
 
@@ -347,9 +384,58 @@ void testThreeInFlightAndOutOfOrderCompletion(id<MTLDevice> device)
             throw std::runtime_error("completion actions cannot strand reclaimed contexts");
         });
 
-    EXPECT(serial_a == std::optional<std::uint64_t>(1));
-    EXPECT(serial_b == std::optional<std::uint64_t>(2));
-    EXPECT(serial_c == std::optional<std::uint64_t>(3));
+    EXPECT(serial_a.has_value());
+    EXPECT(serial_b.has_value());
+    EXPECT(serial_c.has_value());
+    if (!serial_a || !serial_b || !serial_c)
+    {
+        if (serial_a)
+        {
+            [command_a commit];
+        }
+        else
+        {
+            EXPECT(contexts.cancel(frame_a->token));
+        }
+        if (serial_b)
+        {
+            [command_b commit];
+        }
+        else
+        {
+            EXPECT(contexts.cancel(frame_b->token));
+        }
+        if (serial_c)
+        {
+            [command_c commit];
+        }
+        else
+        {
+            EXPECT(contexts.cancel(frame_c->token));
+        }
+
+        gate_a.signaledValue = 1;
+        gate_b.signaledValue = 1;
+        gate_c.signaledValue = 1;
+        if (serial_a)
+        {
+            requireSignal(done_a, "first frame cleanup after submit failure");
+        }
+        if (serial_b)
+        {
+            requireSignal(done_b, "second frame cleanup after submit failure");
+        }
+        if (serial_c)
+        {
+            requireSignal(done_c, "third frame cleanup after submit failure");
+        }
+        return;
+    }
+    EXPECT(*serial_a < *serial_b);
+    EXPECT(*serial_b < *serial_c);
+    EXPECT(!contexts.ownsRecordingLease(*frame_a));
+    EXPECT(!contexts.ownsRecordingLease(*frame_b));
+    EXPECT(!contexts.ownsRecordingLease(*frame_c));
     EXPECT(!contexts.submit(frame_a->token, (__bridge void*)command_a).has_value());
     EXPECT(!contexts.cancel(frame_a->token));
 
@@ -367,7 +453,7 @@ void testThreeInFlightAndOutOfOrderCompletion(id<MTLDevice> device)
     EXPECT(weak_retired_b != nil);
     EXPECT(c_retirement_gone_in_action.load(std::memory_order_relaxed));
     EXPECT(c_slot_available_in_action.load(std::memory_order_relaxed));
-    EXPECT(published_serial.load(std::memory_order_acquire) == 3);
+    EXPECT(published_serial.load(std::memory_order_acquire) == *serial_c);
     EXPECT(!contexts.allocate(frame_c->token, 1).has_value());
     EXPECT(!contexts.cancel(frame_c->token));
 
@@ -377,17 +463,107 @@ void testThreeInFlightAndOutOfOrderCompletion(id<MTLDevice> device)
     EXPECT(readWord(destination_a) == kPatternA);
     EXPECT(weak_retired_a == nil);
     EXPECT(weak_retired_b != nil);
-    EXPECT(published_serial.load(std::memory_order_acquire) == 3);
+    EXPECT(published_serial.load(std::memory_order_acquire) == *serial_c);
 
     gate_b.signaledValue = 1;
     requireSignal(done_b, "second frame completion");
     EXPECT(command_b.status == MTLCommandBufferStatusCompleted);
     EXPECT(readWord(destination_b) == kPatternB);
     EXPECT(weak_retired_b == nil);
-    EXPECT(observed_a.load(std::memory_order_relaxed) == 1);
-    EXPECT(observed_b.load(std::memory_order_relaxed) == 2);
-    EXPECT(observed_c.load(std::memory_order_relaxed) == 3);
-    EXPECT(published_serial.load(std::memory_order_acquire) == 3);
+    EXPECT(observed_a.load(std::memory_order_relaxed) == *serial_a);
+    EXPECT(observed_b.load(std::memory_order_relaxed) == *serial_b);
+    EXPECT(observed_c.load(std::memory_order_relaxed) == *serial_c);
+    EXPECT(published_serial.load(std::memory_order_acquire) == *serial_c);
+}
+
+void testSerialsRemainMonotonicAcrossContextLifetimes(id<MTLDevice> device)
+{
+    id<MTLCommandQueue> old_queue = [device newCommandQueue];
+    id<MTLCommandQueue> new_queue = [device newCommandQueue];
+    id<MTLSharedEvent> old_gate = [device newSharedEvent];
+    id<MTLCommandBuffer> old_command = [old_queue commandBuffer];
+    id<MTLCommandBuffer> new_command = [new_queue commandBuffer];
+    EXPECT(old_queue != nil && new_queue != nil && old_gate != nil);
+    EXPECT(old_command != nil && new_command != nil);
+    if (old_queue == nil || new_queue == nil || old_gate == nil ||
+        old_command == nil || new_command == nil)
+    {
+        return;
+    }
+
+    [old_command encodeWaitForEvent:old_gate value:1];
+
+    std::atomic<std::uint64_t> published_serial{ 0 };
+    std::atomic<std::uint64_t> observed_old{ 0 };
+    std::atomic<std::uint64_t> observed_new{ 0 };
+    dispatch_semaphore_t old_done = dispatch_semaphore_create(0);
+    dispatch_semaphore_t new_done = dispatch_semaphore_create(0);
+
+    std::optional<std::uint64_t> old_serial;
+    {
+        MetalFrameContext old_contexts((__bridge void*)device, 64);
+        const auto old_frame = old_contexts.tryBegin();
+        EXPECT(old_frame.has_value());
+        if (!old_frame)
+        {
+            return;
+        }
+
+        old_serial = old_contexts.submit(
+            old_frame->token,
+            (__bridge void*)old_command,
+            [&](std::uint64_t serial) {
+                observed_old.store(serial, std::memory_order_relaxed);
+                publishLatest(published_serial, serial);
+                dispatch_semaphore_signal(old_done);
+            });
+        EXPECT(old_serial.has_value());
+        if (!old_serial)
+        {
+            EXPECT(old_contexts.cancel(old_frame->token));
+            return;
+        }
+
+        [old_command commit];
+    }
+
+    MetalFrameContext new_contexts((__bridge void*)device, 64);
+    const auto new_frame = new_contexts.tryBegin();
+    EXPECT(new_frame.has_value());
+    if (!new_frame)
+    {
+        old_gate.signaledValue = 1;
+        requireSignal(old_done, "old context cleanup after new begin failure");
+        return;
+    }
+
+    const auto new_serial = new_contexts.submit(
+        new_frame->token,
+        (__bridge void*)new_command,
+        [&](std::uint64_t serial) {
+            observed_new.store(serial, std::memory_order_relaxed);
+            publishLatest(published_serial, serial);
+            dispatch_semaphore_signal(new_done);
+        });
+    EXPECT(new_serial.has_value());
+    if (!new_serial)
+    {
+        EXPECT(new_contexts.cancel(new_frame->token));
+        old_gate.signaledValue = 1;
+        requireSignal(old_done, "old context cleanup after new submit failure");
+        return;
+    }
+
+    EXPECT(*old_serial < *new_serial);
+    [new_command commit];
+    requireSignal(new_done, "new context completion");
+    EXPECT(observed_new.load(std::memory_order_relaxed) == *new_serial);
+    EXPECT(published_serial.load(std::memory_order_acquire) == *new_serial);
+
+    old_gate.signaledValue = 1;
+    requireSignal(old_done, "old context completion after public destruction");
+    EXPECT(observed_old.load(std::memory_order_relaxed) == *old_serial);
+    EXPECT(published_serial.load(std::memory_order_acquire) == *new_serial);
 }
 
 void testFailedSubmissionReclaimsWithoutPublishing(id<MTLDevice> device)
@@ -413,7 +589,12 @@ void testFailedSubmissionReclaimsWithoutPublishing(id<MTLDevice> device)
         frame->token,
         (__bridge void*)failed,
         [&](std::uint64_t) { published.store(true, std::memory_order_relaxed); });
-    EXPECT(serial == std::optional<std::uint64_t>(1));
+    EXPECT(serial.has_value());
+    if (!serial)
+    {
+        EXPECT(contexts.cancel(frame->token));
+        return;
+    }
     [failed finishWithFailure];
     EXPECT(!published.load(std::memory_order_relaxed));
     EXPECT(weak_retired == nil);
@@ -446,6 +627,7 @@ int main()
 
         testValidationAndCancel(device);
         testThreeInFlightAndOutOfOrderCompletion(device);
+        testSerialsRemainMonotonicAcrossContextLifetimes(device);
         testFailedSubmissionReclaimsWithoutPublishing(device);
     }
 
