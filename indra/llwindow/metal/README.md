@@ -30,6 +30,19 @@ For focused transient-drawable verification, use
 that no frame was submitted, and verifies that exactly one queued retry is
 completed and presented.
 
+The standalone build also includes an ordinary C++17 test for the three-slot
+frame lifecycle and non-wrapping transient allocator:
+
+```sh
+ctest --test-dir .build/metal-bootstrap --output-on-failure
+```
+
+`FrameSlots` accepts at most three concurrent frames and rejects stale or
+wrong-state generation tokens. Calls are synchronized for the intended model
+of one recording/submission thread plus completion callbacks from any thread.
+`TransientArena` is thread-confined, supports any positive alignment, and
+retains its high-water mark across resets.
+
 ## Firestorm build integration
 
 The same CMake file can be included from `indra/llwindow/CMakeLists.txt` by
@@ -44,4 +57,12 @@ developer app is excluded from the default build and can be built explicitly:
 
 ```sh
 cmake --build BUILD_DIR --target firestorm_metal_bootstrap
+```
+
+The CPU contract test is also excluded from an embedded default build. It can
+be requested explicitly without registering a test in the viewer's CTest tree:
+
+```sh
+cmake --build BUILD_DIR --target firestorm_metal_frame_contracts_test
+BUILD_DIR/llwindow/metal/firestorm_metal_frame_contracts_test
 ```

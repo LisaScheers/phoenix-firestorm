@@ -154,6 +154,39 @@ set_target_properties(firestorm_metal_bootstrap PROPERTIES
       "org.firestormviewer.metal-bootstrap"
   )
 
+set(FIRESTORM_METAL_CPU_TEST_EXCLUDE_FROM_ALL)
+if (NOT FIRESTORM_METAL_BOOTSTRAP_IS_STANDALONE)
+  list(APPEND FIRESTORM_METAL_CPU_TEST_EXCLUDE_FROM_ALL EXCLUDE_FROM_ALL)
+endif ()
+
+add_executable(firestorm_metal_frame_contracts_test
+  ${FIRESTORM_METAL_CPU_TEST_EXCLUDE_FROM_ALL}
+  frame-contracts-test.cpp
+  llmetalframeslots.cpp
+  llmetalframeslots.h
+  llmetaltransientarena.cpp
+  llmetaltransientarena.h
+  )
+target_compile_features(firestorm_metal_frame_contracts_test PRIVATE cxx_std_17)
+target_compile_options(firestorm_metal_frame_contracts_test PRIVATE
+  "$<$<COMPILE_LANGUAGE:CXX>:-Wall>"
+  "$<$<COMPILE_LANGUAGE:CXX>:-Wextra>"
+  "$<$<COMPILE_LANGUAGE:CXX>:-Wpedantic>"
+  )
+set_target_properties(firestorm_metal_frame_contracts_test PROPERTIES
+  CXX_EXTENSIONS OFF
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON
+  )
+
 if (FIRESTORM_METAL_BOOTSTRAP_IS_STANDALONE)
   message(STATUS "Configuring the standalone Firestorm Metal bootstrap")
+
+  include(CTest)
+  if (BUILD_TESTING)
+    add_test(
+      NAME firestorm_metal_frame_contracts
+      COMMAND firestorm_metal_frame_contracts_test
+      )
+  endif ()
 endif ()
