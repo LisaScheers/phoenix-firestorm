@@ -404,7 +404,7 @@ void runColorGammaOracle(id<MTLDevice> device,
     encoded = encodePass(command_buffer,
                          *display_target,
                          *final_pipeline,
-                         &*decoded,
+                         &*linear,
                          "Firestorm manual final-display gamma encode") &&
               encoded;
     EXPECT(encoded);
@@ -511,7 +511,7 @@ void runColorGammaOracle(id<MTLDevice> device,
         validateReadback(*readbacks[2],
                          PixelFormat::rgba8_unorm,
                          LINEAR_BYTES,
-                         0,
+                         1,
                          "automatic sRGB texture decode");
     }
     if (readbacks[3])
