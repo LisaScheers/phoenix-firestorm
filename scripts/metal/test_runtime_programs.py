@@ -20,6 +20,27 @@ runtime_programs = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = runtime_programs
 SPEC.loader.exec_module(runtime_programs)
 
+SMAA_SELECTORS = (
+    ("smaa_edge_low", "gSMAAEdgeDetectProgram", 0),
+    ("smaa_edge_medium", "gSMAAEdgeDetectProgram", 1),
+    ("smaa_edge_high", "gSMAAEdgeDetectProgram", 2),
+    ("smaa_edge_ultra", "gSMAAEdgeDetectProgram", 3),
+    ("smaa_weights_low", "gSMAABlendWeightsProgram", 0),
+    ("smaa_weights_medium", "gSMAABlendWeightsProgram", 1),
+    ("smaa_weights_high", "gSMAABlendWeightsProgram", 2),
+    ("smaa_weights_ultra", "gSMAABlendWeightsProgram", 3),
+    ("smaa_neighborhood_low", "gSMAANeighborhoodBlendProgram", 0),
+    ("smaa_neighborhood_medium", "gSMAANeighborhoodBlendProgram", 1),
+    ("smaa_neighborhood_high", "gSMAANeighborhoodBlendProgram", 2),
+    ("smaa_neighborhood_ultra", "gSMAANeighborhoodBlendProgram", 3),
+)
+FXAA_SELECTORS = (
+    ("fxaa_low", 0),
+    ("fxaa_medium", 1),
+    ("fxaa_high", 2),
+    ("fxaa", 3),
+)
+
 
 class RuntimeProgramsTest(unittest.TestCase):
     def setUp(self) -> None:
@@ -130,6 +151,26 @@ class RuntimeProgramsTest(unittest.TestCase):
         spec["expected_arguments"]["vertex"] = []
         return spec
 
+    @staticmethod
+    def _selected_spec(
+        program_id: str,
+        source_symbol: str,
+        source_index: int,
+        fsaa_type: int,
+    ) -> dict[str, object]:
+        spec = RuntimeProgramsTest._spec(program_id)
+        spec["selection"] = {
+            "source_symbol": source_symbol,
+            "source_index": source_index,
+            "shader_class": 3,
+            "boolean_settings": [],
+            "integer_settings": [
+                {"name": "RenderFSAASamples", "value": source_index},
+                {"name": "RenderFSAAType", "value": fsaa_type},
+            ],
+        }
+        return spec
+
     def _record(self, program_id: str = "ui_font") -> dict[str, object]:
         return runtime_programs.make_program_record(
             "UI and font glyph", self._spec(program_id), self._reflections()
@@ -166,16 +207,94 @@ class RuntimeProgramsTest(unittest.TestCase):
                 "reflection_probe",
                 "shadow_alpha_mask",
                 "shadow_alpha_receiver",
+                "smaa_edge_high",
+                "smaa_edge_low",
+                "smaa_edge_medium",
+                "smaa_edge_ultra",
+                "smaa_neighborhood_high",
+                "smaa_neighborhood_low",
+                "smaa_neighborhood_medium",
+                "smaa_neighborhood_ultra",
+                "smaa_weights_high",
+                "smaa_weights_low",
+                "smaa_weights_medium",
+                "smaa_weights_ultra",
                 "terrain",
                 "ui_font",
             ],
             sorted(item["id"] for item in runtime),
         )
-        self.assertEqual(16, len(runtime))
+        self.assertEqual(28, len(runtime))
         self.assertEqual(10, len({item["family"] for item in runtime}))
         self.assertTrue(
             all("runtime_id" not in item for item in self.manifest["programs"])
         )
+
+    def test_manifest_has_all_twelve_exact_smaa_selectors(self) -> None:
+        manifest_programs = {item["id"]: item for item in self.manifest["programs"]}
+        for program_id, source_symbol, source_index in SMAA_SELECTORS:
+            with self.subTest(program_id=program_id):
+                recipe = manifest_programs[program_id]
+                self.assertEqual("runtime_variant", recipe["recipe_kind"])
+                self.assertEqual(source_symbol, recipe["source_symbol"])
+                self.assertEqual(source_index, recipe["source_index"])
+                self.assertEqual(3, recipe["shader_class"])
+                self.assertEqual(
+                    {
+                        "RenderFSAASamples": source_index,
+                        "RenderFSAAType": 2,
+                    },
+                    recipe["settings_overrides"],
+                )
+
+    def test_generated_catalog_has_all_twelve_exact_smaa_selectors(self) -> None:
+        records: list[dict[str, object]] = []
+        for program_id, source_symbol, source_index in SMAA_SELECTORS:
+            spec = self._selected_spec(program_id, source_symbol, source_index, 2)
+            record = runtime_programs.make_program_record(
+                "SMAA or FXAA", spec, self._reflections()
+            )
+            self.assertEqual(spec["selection"], record["selection"])
+            records.append(record)
+
+        document = runtime_programs.make_artifact_document(
+            records, "1" * 64, 5, "2" * 64, "3" * 40
+        )
+        self.assertEqual(2, document["schema"])
+        self.assertEqual(5, document["source_manifest_schema"])
+        self.assertEqual(12, document["program_count"])
+        self.assertEqual(1, document["family_count"])
+        self.assertEqual(
+            sorted(program_id for program_id, _, _ in SMAA_SELECTORS),
+            [item["id"] for item in document["programs"]],
+        )
+        source = runtime_programs.render_source(
+            document, "firestorm-declared-programs.h"
+        ).decode()
+        for _, source_symbol, source_index in SMAA_SELECTORS:
+            self.assertIn(
+                f'"{source_symbol}", {source_index}, 3',
+                source,
+            )
+        self.assertEqual(
+            12,
+            source.count('{"RenderFSAASamples", '),
+        )
+        self.assertEqual(12, source.count('{"RenderFSAAType", 2}'))
+
+        collision_spec = self._selected_spec(
+            "smaa_edge_medium", "gSMAAEdgeDetectProgram", 0, 7
+        )
+        collision = runtime_programs.make_program_record(
+            "SMAA or FXAA", collision_spec, self._reflections()
+        )
+        with self.assertRaisesRegex(
+            runtime_programs.RuntimeProgramError,
+            "duplicate program selection keys",
+        ):
+            runtime_programs.make_artifact_document(
+                [records[0], collision], "1" * 64, 5, "2" * 64, "3" * 40
+            )
 
     def test_manifest_layout_contract_keeps_required_slots_and_formats(self) -> None:
         streams = self.manifest["vertex_streams"]
@@ -378,7 +497,7 @@ class RuntimeProgramsTest(unittest.TestCase):
                 )
 
         document = runtime_programs.make_artifact_document(
-            [original], "1" * 64, 4, "2" * 64, "3" * 40
+            [original], "1" * 64, 5, "2" * 64, "3" * 40
         )
         header = runtime_programs.render_header(document).decode()
         source = runtime_programs.render_source(
@@ -396,6 +515,10 @@ class RuntimeProgramsTest(unittest.TestCase):
 
     def test_selection_validation_fails_closed(self) -> None:
         mutations: list[tuple[str, object]] = []
+
+        old_schema = self._spec()
+        old_schema["schema"] = 4
+        mutations.append(("pipeline spec.schema must be 5", old_schema))
 
         unsafe_symbol = self._spec()
         unsafe_symbol["selection"]["source_symbol"] = "../gUIProgram"
@@ -464,7 +587,7 @@ class RuntimeProgramsTest(unittest.TestCase):
             "UI and font glyph", indexed_spec, self._reflections()
         )
         runtime_programs.make_artifact_document(
-            [scalar, indexed], "1" * 64, 4, "2" * 64, "3" * 40
+            [scalar, indexed], "1" * 64, 5, "2" * 64, "3" * 40
         )
 
         duplicate_spec = self._spec("zulu_program")
@@ -476,7 +599,7 @@ class RuntimeProgramsTest(unittest.TestCase):
             runtime_programs.RuntimeProgramError, "duplicate program selection keys"
         ):
             runtime_programs.make_artifact_document(
-                [scalar, duplicate], "1" * 64, 4, "2" * 64, "3" * 40
+                [scalar, duplicate], "1" * 64, 5, "2" * 64, "3" * 40
             )
 
     def test_generated_lookup_and_selection_validation_compile_as_ordinary_cpp(
@@ -510,13 +633,30 @@ class RuntimeProgramsTest(unittest.TestCase):
                 "UI and font glyph", indexed_spec, self._reflections()
             ),
         ]
+        records.extend(
+            runtime_programs.make_program_record(
+                "SMAA or FXAA",
+                self._selected_spec(program_id, "gFXAAProgram", source_index, 1),
+                self._reflections(),
+            )
+            for program_id, source_index in FXAA_SELECTORS
+        )
+        records.extend(
+            runtime_programs.make_program_record(
+                "SMAA or FXAA",
+                self._selected_spec(program_id, source_symbol, source_index, 2),
+                self._reflections(),
+            )
+            for program_id, source_symbol, source_index in SMAA_SELECTORS
+        )
         document = runtime_programs.make_artifact_document(
-            records, "1" * 64, 4, "2" * 64, "3" * 40
+            records, "1" * 64, 5, "2" * 64, "3" * 40
         )
         metal_root = self.repository / "indra/llwindow/metal"
         harness = r"""
 #include "firestorm-declared-programs.h"
 
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -534,6 +674,67 @@ int main()
     if (indexed == nullptr || indexed->name != "zulu_program") return 3;
     if (metalProgramDescriptor(
             "gSharedProgram", std::optional<std::uint16_t>{1}, 2) != nullptr) return 4;
+
+    struct ExpectedSelector
+    {
+        std::string_view id;
+        std::string_view symbol;
+        std::uint16_t index;
+    };
+    constexpr std::array<ExpectedSelector, 12> smaa_selectors{{
+        {"smaa_edge_low", "gSMAAEdgeDetectProgram", 0},
+        {"smaa_edge_medium", "gSMAAEdgeDetectProgram", 1},
+        {"smaa_edge_high", "gSMAAEdgeDetectProgram", 2},
+        {"smaa_edge_ultra", "gSMAAEdgeDetectProgram", 3},
+        {"smaa_weights_low", "gSMAABlendWeightsProgram", 0},
+        {"smaa_weights_medium", "gSMAABlendWeightsProgram", 1},
+        {"smaa_weights_high", "gSMAABlendWeightsProgram", 2},
+        {"smaa_weights_ultra", "gSMAABlendWeightsProgram", 3},
+        {"smaa_neighborhood_low", "gSMAANeighborhoodBlendProgram", 0},
+        {"smaa_neighborhood_medium", "gSMAANeighborhoodBlendProgram", 1},
+        {"smaa_neighborhood_high", "gSMAANeighborhoodBlendProgram", 2},
+        {"smaa_neighborhood_ultra", "gSMAANeighborhoodBlendProgram", 3},
+    }};
+    for (const ExpectedSelector& expected : smaa_selectors)
+    {
+        const auto* program = metalProgramDescriptor(
+            expected.symbol, expected.index, 3);
+        if (program == nullptr || program->name != expected.id) return 20;
+        if (!program->booleanSettings.empty() ||
+            program->integerSettings.size() != 2) return 21;
+        if (program->integerSettings[0].name != "RenderFSAASamples" ||
+            program->integerSettings[0].value != expected.index ||
+            program->integerSettings[1].name != "RenderFSAAType" ||
+            program->integerSettings[1].value != 2) return 22;
+    }
+    if (metalProgramDescriptor(
+            "gSMAAEdgeDetectProgram", std::uint16_t{4}, 3) != nullptr) return 23;
+    if (metalProgramDescriptor(
+            "gSMAABlendWeightsProgram", std::nullopt, 3) != nullptr) return 24;
+    if (metalProgramDescriptor(
+            "gSMAANeighborhoodBlendProgram", std::uint16_t{0}, 2) != nullptr) return 25;
+
+    constexpr std::array<std::string_view, 4> fxaa_ids{{
+        "fxaa_low", "fxaa_medium", "fxaa_high", "fxaa"
+    }};
+    for (std::uint16_t index = 0; index < fxaa_ids.size(); ++index)
+    {
+        const auto* program = metalProgramDescriptor("gFXAAProgram", index, 3);
+        if (program == nullptr || program->name != fxaa_ids[index]) return 26;
+        if (!program->booleanSettings.empty() ||
+            program->integerSettings.size() != 2) return 27;
+        if (program->integerSettings[0].name != "RenderFSAASamples" ||
+            program->integerSettings[0].value != index ||
+            program->integerSettings[1].name != "RenderFSAAType" ||
+            program->integerSettings[1].value != 1) return 28;
+    }
+
+    auto metadata = declaredMetalProgramCatalog();
+    metadata.sourceManifestSchema = 4;
+    if (validateMetalProgramCatalogMetadata(metadata, &error)) return 29;
+    metadata = declaredMetalProgramCatalog();
+    metadata.artifactSchema = 1;
+    if (validateMetalProgramCatalogMetadata(metadata, &error)) return 30;
 
     MetalProgramDescriptor changed[] = {*scalar, *indexed};
     changed[1].sourceIndex = std::nullopt;

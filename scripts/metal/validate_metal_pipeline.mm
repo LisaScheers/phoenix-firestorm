@@ -1306,7 +1306,37 @@ bool validate_selection(NSDictionary* selection,
         @"fxaa_high": @2,
         @"fxaa": @3,
     };
+    NSDictionary<NSString*, NSNumber*>* smaa_indices = @{
+        @"smaa_edge_low": @0,
+        @"smaa_edge_medium": @1,
+        @"smaa_edge_high": @2,
+        @"smaa_edge_ultra": @3,
+        @"smaa_weights_low": @0,
+        @"smaa_weights_medium": @1,
+        @"smaa_weights_high": @2,
+        @"smaa_weights_ultra": @3,
+        @"smaa_neighborhood_low": @0,
+        @"smaa_neighborhood_medium": @1,
+        @"smaa_neighborhood_high": @2,
+        @"smaa_neighborhood_ultra": @3,
+    };
+    NSDictionary<NSString*, NSString*>* smaa_symbols = @{
+        @"smaa_edge_low": @"gSMAAEdgeDetectProgram",
+        @"smaa_edge_medium": @"gSMAAEdgeDetectProgram",
+        @"smaa_edge_high": @"gSMAAEdgeDetectProgram",
+        @"smaa_edge_ultra": @"gSMAAEdgeDetectProgram",
+        @"smaa_weights_low": @"gSMAABlendWeightsProgram",
+        @"smaa_weights_medium": @"gSMAABlendWeightsProgram",
+        @"smaa_weights_high": @"gSMAABlendWeightsProgram",
+        @"smaa_weights_ultra": @"gSMAABlendWeightsProgram",
+        @"smaa_neighborhood_low": @"gSMAANeighborhoodBlendProgram",
+        @"smaa_neighborhood_medium": @"gSMAANeighborhoodBlendProgram",
+        @"smaa_neighborhood_high": @"gSMAANeighborhoodBlendProgram",
+        @"smaa_neighborhood_ultra": @"gSMAANeighborhoodBlendProgram",
+    };
     NSNumber* expected_fxaa_index = fxaa_indices[program_id];
+    NSNumber* expected_smaa_index = smaa_indices[program_id];
+    NSString* expected_smaa_symbol = smaa_symbols[program_id];
     if ([source_symbol isEqualToString:@"gFXAAProgram"])
     {
         if (expected_fxaa_index == nil || !has_source_index
@@ -1332,6 +1362,35 @@ bool validate_selection(NSDictionary* selection,
                           @"pipeline spec.selection does not match the exact FXAA settings mapping");
         }
     }
+    else if ([source_symbol isEqualToString:@"gSMAAEdgeDetectProgram"]
+             || [source_symbol isEqualToString:@"gSMAABlendWeightsProgram"]
+             || [source_symbol isEqualToString:@"gSMAANeighborhoodBlendProgram"])
+    {
+        if (expected_smaa_index == nil || expected_smaa_symbol == nil
+            || ![source_symbol isEqualToString:expected_smaa_symbol]
+            || !has_source_index
+            || source_index != expected_smaa_index.unsignedIntegerValue
+            || shader_class != 3 || boolean_settings.count != 0
+            || integer_settings.count != 2)
+        {
+            return reject(error,
+                          @"pipeline spec.selection does not match the exact SMAA source mapping");
+        }
+        NSDictionary* samples = integer_settings[0];
+        NSDictionary* type = integer_settings[1];
+        std::int32_t samples_value = -1;
+        std::int32_t type_value = -1;
+        if (![samples[@"name"] isEqualToString:@"RenderFSAASamples"]
+            || ![type[@"name"] isEqualToString:@"RenderFSAAType"]
+            || !signed_32_integer(samples[@"value"], &samples_value)
+            || !signed_32_integer(type[@"value"], &type_value)
+            || samples_value != static_cast<std::int32_t>(source_index)
+            || type_value != 2)
+        {
+            return reject(error,
+                          @"pipeline spec.selection does not match the exact SMAA settings mapping");
+        }
+    }
     else if (has_source_index)
     {
         return reject(error,
@@ -1341,6 +1400,11 @@ bool validate_selection(NSDictionary* selection,
     {
         return reject(error,
                       @"pipeline spec.selection FXAA id requires gFXAAProgram");
+    }
+    else if (expected_smaa_index != nil)
+    {
+        return reject(error,
+                      @"pipeline spec.selection SMAA id requires its exact source symbol");
     }
     return true;
 }
@@ -1361,6 +1425,18 @@ bool is_bundled_program_id(NSString* program_id)
         || [program_id isEqualToString:@"reflection_probe"]
         || [program_id isEqualToString:@"shadow_alpha_mask"]
         || [program_id isEqualToString:@"shadow_alpha_receiver"]
+        || [program_id isEqualToString:@"smaa_edge_high"]
+        || [program_id isEqualToString:@"smaa_edge_low"]
+        || [program_id isEqualToString:@"smaa_edge_medium"]
+        || [program_id isEqualToString:@"smaa_edge_ultra"]
+        || [program_id isEqualToString:@"smaa_neighborhood_high"]
+        || [program_id isEqualToString:@"smaa_neighborhood_low"]
+        || [program_id isEqualToString:@"smaa_neighborhood_medium"]
+        || [program_id isEqualToString:@"smaa_neighborhood_ultra"]
+        || [program_id isEqualToString:@"smaa_weights_high"]
+        || [program_id isEqualToString:@"smaa_weights_low"]
+        || [program_id isEqualToString:@"smaa_weights_medium"]
+        || [program_id isEqualToString:@"smaa_weights_ultra"]
         || [program_id isEqualToString:@"terrain"]
         || [program_id isEqualToString:@"ui_font"];
 }

@@ -107,7 +107,7 @@ struct MetalIntegerSettingDescriptor
 };
 
 inline constexpr std::uint16_t kSupportedMetalProgramArtifactSchema = 2;
-inline constexpr std::uint16_t kSupportedMetalSourceManifestSchema = 4;
+inline constexpr std::uint16_t kSupportedMetalSourceManifestSchema = 5;
 
 struct MetalProgramCatalogMetadata
 {

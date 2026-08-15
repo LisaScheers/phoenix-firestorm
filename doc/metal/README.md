@@ -26,31 +26,36 @@ The feature ownership and parity state live in `feature-ledger.csv`.
 
 ## Shader feasibility gate
 
-`shader-spike.json` captures 18 representative recipes across the ten required
+`shader-spike.json` captures 30 representative recipes across the ten required
 shader families: 12 scalar runtime contracts, four selectable FXAA runtime
-recipes, a depth-writing FXAA capability probe, and a separate 16-channel
-indexed-texture stress case. The spike reconstructs
-Firestorm's class fallback, shader-object preprocessing environments, feature
-order, defines, settings overrides, and indexed-texture lookup before
-translating the compiler-linked program:
+recipes, 12 selectable SMAA runtime recipes, a depth-writing FXAA capability
+probe, and a separate 16-channel indexed-texture stress case. The spike
+reconstructs Firestorm's class fallback, shader-object preprocessing
+environments, feature order, defines, settings overrides, and indexed-texture
+lookup before translating the compiler-linked program:
 
 ```text
 GLSL objects -> glslang link -> SPIR-V -> spirv-val -> SPIRV-Cross -> MSL
              -> AIR -> metallib -> MTLRenderPipelineState
 ```
 
-Cross-stage locations are assigned through SPIR-V instructions and entry-point
+Each stage declares its program-local objects separately from shared feature
+objects. Program objects receive the recipe's requested class and defines;
+feature objects receive their source-backed baseline classes and global
+defines. A build-wide 420-pack preamble enables the canonical GLSL line
+continuations used by SMAA without rewriting shader source. Cross-stage
+locations are assigned through SPIR-V instructions and entry-point
 interfaces, not by rewriting GLSL or generated MSL. Every recipe must create a
 real Metal render pipeline with the manifest's source-backed attachment and
 SoA vertex contracts. Metal reflection must also match the complete expected
 binding set, typed textures, and recursive uniform-buffer layout. Recipes that
 require depth-comparison textures must retain both SPIR-V comparison samples
 and generated MSL `.sample_compare` calls. Inputs are captured once before
-translation. A normal run validates all 18 feasibility recipes independently,
-then links the 16 `runtime` and `runtime_variant` recipes in lexical
+translation. A normal run validates all 30 feasibility recipes independently,
+then links the 28 `runtime` and `runtime_variant` recipes in lexical
 program/stage order into one `firestorm-declared-programs.metallib`. The
 capability and stress recipes are not runtime artifacts. Every bundled PSO is
-recreated from that one library, and a second output root compares the 126
+recreated from that one library, and a second output root compares the 210
 per-program artifacts plus the path-free catalog JSON, generated C++17 header
 and source, and combined metallib byte for byte.
 
@@ -78,10 +83,11 @@ are authoritative. Each binding's generated `metal_name` is validated exactly
 against native reflection, but is toolchain-owned diagnostic identity rather
 than a persistence ABI. Artifact schema v2 also records each program's source
 symbol, optional array index, shader class, and typed settings overrides.
-Scalar globals retain no array index; the four `gFXAAProgram` descriptors carry
-indices 0 through 3 and the source-backed quality setting mapping. Generated
-code provides exact typed lookup by that selection identity. Artifact schema
-v2 accepts only the matrix forms in the frozen inventory: `mat3` and `mat4`,
+Scalar globals retain no array index. The four `gFXAAProgram` descriptors and
+each of the three four-entry SMAA arrays carry indices 0 through 3 and their
+source-backed quality setting mappings. Generated code provides exact typed
+lookup by that selection identity. Artifact schema v2 accepts only the matrix
+forms in the frozen inventory: `mat3` and `mat4`,
 column-major with stride 16. The producer, catalog validator, and native
 specification validator reject every other matrix shape, stride, or major
 order; the remaining type is checked against Metal reflection. Generated
@@ -98,7 +104,7 @@ inventing a recursive CPU uniform packer; semantic parity remains `not_run`.
 ## Review boundary
 
 The foundation review covers the pinned inventory, shader feasibility result,
-and native bootstrap contracts. The declared catalog is 16 representative
+and native bootstrap contracts. The declared catalog is 28 representative
 runtime recipes and variants, not the complete viewer program inventory,
 renderer selection integration, or renderer semantic parity. The semantic pass
 condition for each

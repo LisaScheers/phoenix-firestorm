@@ -229,10 +229,10 @@ The planned presentation policy is one manual final shader encode into a
 `FIRESTORM_BUILD_METAL_PROGRAM_ARTIFACTS` is default-off. When enabled, the
 explicit `firestorm_metal_declared_programs` target runs the frozen shader gate,
 then generates one path-free `firestorm-declared-programs.metallib` and an
-immutable C++17 catalog for 12 scalar runtime recipes and four FXAA recipes.
-Three of those are `runtime_variant` additions. The capability and stress remain
-build-time feasibility evidence and are excluded. This is not the complete
-viewer program inventory and makes no semantic-parity claim.
+immutable C++17 catalog for 12 scalar runtime recipes, four FXAA recipes, and
+12 SMAA recipes. Fifteen are `runtime_variant` additions. The capability and
+stress remain build-time feasibility evidence and are excluded. This is not
+the complete viewer program inventory and makes no semantic-parity claim.
 
 The path-free JSON catalog owns stable string IDs, entry-point names, ordered
 color/depth and sample metadata, SoA vertex attributes/layouts, typed stage
@@ -246,8 +246,12 @@ are toolchain-owned diagnostic identity, not a persistence ABI. Artifact schema
 v2 also owns source symbol, optional source-array index, shader class, and typed
 settings overrides. Scalar program globals have no source index; the four
 `gFXAAProgram` entries preserve indices 0 through 3, presets 12/23/28/39, and
-the exact `RenderFSAAType`/`RenderFSAASamples` mapping. Exact typed lookup uses
-that triple without interpreting settings expressions. Artifact schema v2
+the exact `RenderFSAAType=1`/`RenderFSAASamples=index` mapping. The
+`gSMAAEdgeDetectProgram`, `gSMAABlendWeightsProgram`, and
+`gSMAANeighborhoodBlendProgram` arrays preserve Low/Medium/High/Ultra indices
+0 through 3 with `RenderFSAAType=2` and `RenderFSAASamples=index`. Exact typed
+lookup uses each source-symbol/index/class triple without interpreting settings
+expressions. Artifact schema v2
 accepts only `mat3` and `mat4`, column-major with stride 16;
 producer, catalog, and native schema validation reject other matrix forms, and
 Metal reflection checks the remaining data type. Generated `MetalProgramId`
@@ -281,7 +285,7 @@ nix shell nixpkgs#cmake -c \
 
 The program-library test validates the ordinary C++ catalog, exact IDs and key
 vertex contracts, explicit-path strong ownership, lookup, and creation of all
-16 declared PSOs from the same combined metallib under Metal API validation.
+28 declared PSOs from the same combined metallib under Metal API validation.
 The artifact vertex/index test uses the translated `ui_font` entry, its exact
 three-stream layout, reflected resource slots, a two-texel white/black texture,
 and test-only identity uniform bytes. Intended UVs sample white while the

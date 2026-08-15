@@ -69,20 +69,233 @@ class ShaderSpikeTest(unittest.TestCase):
             with self.assertRaisesRegex(shader_spike.ManifestError, pattern):
                 shader_spike.load_manifest(manifest)
 
-    def test_manifest_preserves_original_recipes_and_adds_exact_fxaa_variants(
+    def test_manifest_preserves_original_recipes_and_adds_exact_aa_variants(
         self,
     ) -> None:
         source_root, programs = self._programs()
         shader_spike.validate_sources(source_root, programs)
-        self.assertEqual(18, len(programs))
+        self.assertEqual(30, len(programs))
         self.assertEqual(
-            shader_spike.REQUIRED_PROGRAM_IDS | shader_spike.REQUIRED_FXAA_VARIANT_IDS,
+            shader_spike.REQUIRED_PROGRAM_IDS
+            | shader_spike.REQUIRED_FXAA_VARIANT_IDS
+            | shader_spike.REQUIRED_SMAA_VARIANT_IDS,
             {item.program_id for item in programs},
         )
         self.assertEqual(
             shader_spike.REQUIRED_FAMILIES, {item.family for item in programs}
         )
         self.assertEqual({400}, {item.glsl_version for item in programs})
+
+    def test_manifest_stage_roles_are_explicit_complete_and_duplicate_free(
+        self,
+    ) -> None:
+        document = json.loads(self.manifest.read_text(encoding="utf-8"))
+        self.assertEqual(5, document["schema"])
+        original_program_sources = {
+            "ui_font": ("interface/uiV.glsl", "interface/uiF.glsl"),
+            "indexed_material": (
+                "deferred/diffuseV.glsl",
+                "deferred/diffuseIndexedF.glsl",
+            ),
+            "indexed_material_stress_16": (
+                "deferred/diffuseV.glsl",
+                "deferred/diffuseIndexedF.glsl",
+            ),
+            "deferred_diffuse": ("deferred/bumpV.glsl", "deferred/bumpF.glsl"),
+            "pbr_opaque": (
+                "deferred/pbropaqueV.glsl",
+                "deferred/pbropaqueF.glsl",
+            ),
+            "pbr_alpha": ("deferred/pbralphaV.glsl", "deferred/pbralphaF.glsl"),
+            "terrain": ("deferred/terrainV.glsl", "deferred/terrainF.glsl"),
+            "avatar_skinning": (
+                "deferred/avatarV.glsl",
+                "deferred/avatarF.glsl",
+            ),
+            "shadow_alpha_mask": (
+                "deferred/shadowAlphaMaskV.glsl",
+                "deferred/shadowAlphaMaskF.glsl",
+            ),
+            "shadow_alpha_receiver": (
+                "deferred/alphaV.glsl",
+                "deferred/alphaF.glsl",
+            ),
+            "reflection_probe": (
+                "interface/radianceGenV.glsl",
+                "interface/radianceGenF.glsl",
+            ),
+            "presentation_copy": ("interface/copyV.glsl", "interface/copyF.glsl"),
+            "depth_copy": ("interface/copyV.glsl", "interface/copyF.glsl"),
+            "fxaa_low": ("deferred/postDeferredV.glsl", "deferred/fxaaF.glsl"),
+            "fxaa_medium": ("deferred/postDeferredV.glsl", "deferred/fxaaF.glsl"),
+            "fxaa_high": ("deferred/postDeferredV.glsl", "deferred/fxaaF.glsl"),
+            "fxaa": ("deferred/postDeferredV.glsl", "deferred/fxaaF.glsl"),
+            "fxaa_depth_write": (
+                "deferred/postDeferredV.glsl",
+                "deferred/fxaaF.glsl",
+            ),
+        }
+        for program in document["programs"]:
+            for stage in ("vertex", "fragment"):
+                with self.subTest(program=program["id"], stage=stage):
+                    roles = program["stages"][stage]
+                    self.assertEqual({"program", "features"}, set(roles))
+                    self.assertTrue(roles["program"])
+                    combined = [*roles["program"], *roles["features"]]
+                    self.assertEqual(len(combined), len(set(combined)))
+                    expected_count = (
+                        2
+                        if program["id"] in shader_spike.REQUIRED_SMAA_VARIANT_IDS
+                        else 1
+                    )
+                    self.assertEqual(expected_count, len(roles["program"]))
+                    if program["id"] in original_program_sources:
+                        stage_index = 0 if stage == "vertex" else 1
+                        self.assertEqual(
+                            [original_program_sources[program["id"]][stage_index]],
+                            roles["program"],
+                        )
+
+    def test_malformed_empty_duplicate_and_aliased_stage_roles_fail_closed(
+        self,
+    ) -> None:
+        original = json.loads(self.manifest.read_text(encoding="utf-8"))
+
+        def mutated_stage(value: object) -> dict[str, object]:
+            document = copy.deepcopy(original)
+            ui = next(item for item in document["programs"] if item["id"] == "ui_font")
+            ui["stages"]["vertex"] = value
+            return document
+
+        valid = original["programs"][0]["stages"]["vertex"]
+        mutations = (
+            (
+                "legacy positional array",
+                [*valid["program"], *valid["features"]],
+                "must be an object",
+            ),
+            ("missing role", {"program": valid["program"]}, "keys do not match schema"),
+            ("unknown role", {**valid, "shared": []}, "keys do not match schema"),
+            (
+                "empty program",
+                {"program": [], "features": valid["features"]},
+                "non-empty string array",
+            ),
+            (
+                "malformed features",
+                {"program": valid["program"], "features": "x"},
+                "must be a string array",
+            ),
+            (
+                "duplicate program source",
+                {
+                    "program": [valid["program"][0], valid["program"][0]],
+                    "features": valid["features"],
+                },
+                "duplicate sources across roles",
+            ),
+            (
+                "duplicate across roles",
+                {
+                    "program": valid["program"],
+                    "features": [valid["program"][0], *valid["features"]],
+                },
+                "duplicate sources across roles",
+            ),
+            (
+                "canonical alias across roles",
+                {
+                    "program": ["deferred/SMAA.glsl"],
+                    "features": ["deferred/./SMAA.glsl"],
+                },
+                "canonical repository-relative shader path",
+            ),
+            (
+                "backslash path",
+                {"program": [r"interface\\uiV.glsl"], "features": []},
+                "canonical repository-relative shader path",
+            ),
+            (
+                "class-prefixed program bypass",
+                {"program": ["class1/interface/uiV.glsl"], "features": []},
+                "canonical repository-relative shader path",
+            ),
+            (
+                "class-prefixed feature bypass",
+                {
+                    "program": valid["program"],
+                    "features": ["class1/deferred/textureUtilV.glsl"],
+                },
+                "canonical repository-relative shader path",
+            ),
+            (
+                "uppercase class-prefixed program bypass",
+                {"program": ["CLASS1/interface/uiV.glsl"], "features": []},
+                "canonical repository-relative shader path",
+            ),
+            (
+                "mixed-case class-prefixed feature bypass",
+                {
+                    "program": valid["program"],
+                    "features": ["cLaSs1/deferred/textureUtilV.glsl"],
+                },
+                "canonical repository-relative shader path",
+            ),
+            (
+                "wrong-case program source",
+                {
+                    "program": ["interface/uiv.glsl"],
+                    "features": valid["features"],
+                },
+                "cannot resolve class2 shader source",
+            ),
+            (
+                "unknown feature",
+                {"program": valid["program"], "features": ["missing/feature.glsl"]},
+                "has no declared baseline class",
+            ),
+        )
+        for label, stage, pattern in mutations:
+            with self.subTest(label=label):
+                self._assert_manifest_rejected(mutated_stage(stage), pattern)
+
+        unsupported_class = copy.deepcopy(original)
+        unsupported_class["feature_classes"]["deferred/globalF.glsl"] = 4
+        self._assert_manifest_rejected(
+            unsupported_class, r"supported source range \[1, 3\]"
+        )
+
+        lower_class_program = copy.deepcopy(original)
+        pbr_alpha = next(
+            item
+            for item in lower_class_program["programs"]
+            if item["id"] == "pbr_alpha"
+        )
+        pbr_alpha["stages"]["fragment"]["program"][0] = "class1/deferred/pbralphaF.glsl"
+        self._assert_manifest_rejected(
+            lower_class_program, "canonical repository-relative shader path"
+        )
+
+        wrong_case_feature = copy.deepcopy(original)
+        wrong_case_feature["feature_classes"]["deferred/textureutilV.glsl"] = 1
+        ui = next(
+            item for item in wrong_case_feature["programs"] if item["id"] == "ui_font"
+        )
+        ui["stages"]["vertex"]["features"][0] = "deferred/textureutilV.glsl"
+        self._assert_manifest_rejected(
+            wrong_case_feature, "cannot resolve class1 shader source"
+        )
+
+        mixed_case_alias = copy.deepcopy(original)
+        mixed_case_alias["feature_classes"]["interface/uiv.glsl"] = 1
+        ui = next(
+            item for item in mixed_case_alias["programs"] if item["id"] == "ui_font"
+        )
+        ui["stages"]["vertex"]["features"].append("interface/uiv.glsl")
+        self._assert_manifest_rejected(
+            mixed_case_alias,
+            "duplicate physical shader sources|cannot resolve class1 shader source",
+        )
 
     def test_baseline_settings_and_runtime_overrides_are_machine_read(self) -> None:
         _, programs = self._programs()
@@ -573,12 +786,58 @@ class ShaderSpikeTest(unittest.TestCase):
         self.assertNotIn("[EXTRA_CODE_HERE]", contents[0])
         self.assertIn("#version 400 core", contents[0])
 
+    def test_explicit_stage_roles_isolate_defines_and_shader_classes(self) -> None:
+        source_root, programs = self._programs()
+        smaa = next(item for item in programs if item.program_id == "smaa_edge_low")
+        self.assertEqual({"vertex": 2, "fragment": 2}, smaa.stage_program_counts)
+        canonical_path = source_root / "class1/deferred/SMAA.glsl"
+        canonical_before = canonical_path.read_bytes()
+        with tempfile.TemporaryDirectory() as directory:
+            wrappers = shader_spike.write_shader_objects(
+                source_root, smaa, "vertex", Path(directory)
+            )
+            contents = [path.read_text(encoding="utf-8") for path in wrappers]
+        self.assertEqual(canonical_before, canonical_path.read_bytes())
+        for wrapper in contents:
+            self.assertIn(
+                "#extension GL_ARB_shading_language_420pack : enable", wrapper
+            )
+        for program_object in contents[:2]:
+            self.assertIn("#define SMAA_GLSL_4 1", program_object)
+            self.assertIn("#define SMAA_PRESET_LOW 1", program_object)
+            self.assertNotIn("#define REFMAP_LEVEL 3", program_object)
+        for feature_object in contents[2:]:
+            self.assertIn("#define REFMAP_LEVEL 3", feature_object)
+            self.assertNotIn("#define SMAA_PRESET_LOW 1", feature_object)
+        self.assertIn("/class1/deferred/SMAA.glsl", contents[1])
+        self.assertIn("/class1/windlight/atmosphericsVarsV.glsl", contents[2])
+        ascii_art_line = next(
+            line
+            for line in canonical_before.decode("utf-8").splitlines()
+            if "|_______/" in line
+        )
+        self.assertTrue(ascii_art_line.endswith("\\"))
+        self.assertIn(f"{ascii_art_line}\n", contents[1])
+
     def test_source_resolution_uses_class_fallback_and_confines_paths(self) -> None:
         source_root, _ = self._programs()
         resolved = shader_spike.resolve_source(source_root, 3, "interface/uiV.glsl")
         self.assertEqual("class1", resolved.parts[-3])
         with self.assertRaisesRegex(shader_spike.ManifestError, "escapes source_root"):
             shader_spike.resolve_source(source_root, 3, "../../README.md")
+
+        with tempfile.TemporaryDirectory() as directory:
+            fallback_root = Path(directory)
+            wrong_case = fallback_root / "class3/Foo.glsl"
+            exact_lower = fallback_root / "class2/foo.glsl"
+            wrong_case.parent.mkdir(parents=True)
+            exact_lower.parent.mkdir(parents=True)
+            wrong_case.write_text("class3 wrong case", encoding="utf-8")
+            exact_lower.write_text("class2 exact", encoding="utf-8")
+            self.assertEqual(
+                exact_lower.resolve(),
+                shader_spike.resolve_source(fallback_root, 3, "foo.glsl"),
+            )
 
     def test_interface_map_and_semantics_are_structural(self) -> None:
         vertex = {
@@ -1318,8 +1577,11 @@ class ShaderSpikeTest(unittest.TestCase):
             for item in programs
             if item.recipe_kind in shader_spike.BUNDLED_RECIPE_KINDS
         ]
-        self.assertEqual(16, len(bundled))
-        scalar = [item for item in bundled if item.source_symbol != "gFXAAProgram"]
+        self.assertEqual(28, len(bundled))
+        scalar = [item for item in bundled if item.source_index is None]
+        indexed = [item for item in bundled if item.source_index is not None]
+        self.assertEqual(12, len(scalar))
+        self.assertEqual(16, len(indexed))
         self.assertTrue(all(item.source_index is None for item in scalar))
         self.assertEqual(
             len(bundled),
@@ -1403,6 +1665,79 @@ class ShaderSpikeTest(unittest.TestCase):
                     )
                     self.assertEqual(preset, recipe.defines["FXAA_QUALITY__PRESET"])
 
+    def test_smaa_variants_emit_exact_typed_selections_and_stage_contracts(
+        self,
+    ) -> None:
+        _, programs = self._programs()
+        by_id = {item.program_id: item for item in programs}
+        self.assertEqual(12, len(shader_spike.SMAA_VARIANT_CONTRACT))
+        vertex = {"inputs": [{"name": "position", "type": "vec3", "location": 0}]}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for program_id, (
+                source_symbol,
+                source_index,
+                preset,
+                vertex_source,
+                fragment_source,
+                source_reference,
+            ) in shader_spike.SMAA_VARIANT_CONTRACT.items():
+                recipe = by_id[program_id]
+                fragment = {
+                    "outputs": [{"name": "frag_color", "type": "vec4", "location": 0}],
+                    "textures": [
+                        {
+                            "name": requirement.name,
+                            "type": requirement.resource_type,
+                            "binding": index,
+                        }
+                        for index, requirement in enumerate(
+                            recipe.required_reflection["fragment"]
+                        )
+                    ],
+                }
+                path = root / f"{program_id}.json"
+                shader_spike.write_pipeline_spec(
+                    recipe,
+                    vertex,
+                    fragment,
+                    self._stage_msl_sources(vertex, fragment),
+                    root / f"{program_id}.metallib",
+                    path,
+                )
+                spec = json.loads(path.read_text(encoding="utf-8"))
+                with self.subTest(program_id=program_id):
+                    self.assertEqual(5, spec["schema"])
+                    self.assertEqual(source_reference, recipe.source_reference)
+                    self.assertEqual(
+                        {
+                            "source_symbol": source_symbol,
+                            "source_index": source_index,
+                            "shader_class": 3,
+                            "boolean_settings": [],
+                            "integer_settings": [
+                                {
+                                    "name": "RenderFSAASamples",
+                                    "value": source_index,
+                                },
+                                {"name": "RenderFSAAType", "value": 2},
+                            ],
+                        },
+                        spec["selection"],
+                    )
+                    self.assertEqual("1", recipe.defines[preset])
+                    self.assertEqual(
+                        (vertex_source, "deferred/SMAA.glsl"),
+                        recipe.stages["vertex"][:2],
+                    )
+                    self.assertEqual(
+                        (fragment_source, "deferred/SMAA.glsl"),
+                        recipe.stages["fragment"][:2],
+                    )
+                    self.assertEqual(
+                        {"vertex": 2, "fragment": 2}, recipe.stage_program_counts
+                    )
+
     def test_nonbundled_pipeline_specs_remain_schema_four_without_selection(
         self,
     ) -> None:
@@ -1432,7 +1767,7 @@ class ShaderSpikeTest(unittest.TestCase):
         self.assertEqual(4, spec["schema"])
         self.assertNotIn("selection", spec)
 
-    def test_manifest_selection_and_fxaa_mutations_fail_closed(self) -> None:
+    def test_manifest_selection_and_aa_mutations_fail_closed(self) -> None:
         original = json.loads(self.manifest.read_text(encoding="utf-8"))
 
         def mutate(
@@ -1478,6 +1813,74 @@ class ShaderSpikeTest(unittest.TestCase):
                 "exact FXAA mapping",
             ),
             (
+                "wrong SMAA index",
+                mutate("smaa_edge_high", ("source_index",), 1),
+                "selection key collides|exact SMAA mapping",
+            ),
+            (
+                "wrong SMAA preset",
+                mutate("smaa_weights_medium", ("defines", "SMAA_PRESET_MEDIUM"), "0"),
+                "exact SMAA mapping",
+            ),
+            (
+                "unknown SMAA macro",
+                mutate("smaa_edge_low", ("defines", "UNKNOWN_SMAA_MACRO"), "1"),
+                "exact SMAA mapping",
+            ),
+            (
+                "wrong SMAA sample setting",
+                mutate(
+                    "smaa_neighborhood_low",
+                    ("settings_overrides", "RenderFSAASamples"),
+                    1,
+                ),
+                "exact SMAA mapping|selection key collides",
+            ),
+            (
+                "wrong SMAA type setting",
+                mutate("smaa_edge_ultra", ("settings_overrides", "RenderFSAAType"), 1),
+                "exact SMAA mapping",
+            ),
+            (
+                "wrong SMAA source symbol",
+                mutate(
+                    "smaa_weights_high", ("source_symbol",), "gSMAAEdgeDetectProgram"
+                ),
+                "exact SMAA mapping|selection key collides",
+            ),
+            (
+                "wrong SMAA class",
+                mutate("smaa_neighborhood_medium", ("shader_class",), 2),
+                "exact SMAA mapping",
+            ),
+            (
+                "wrong SMAA program source",
+                mutate(
+                    "smaa_edge_low",
+                    ("stages", "vertex", "program"),
+                    ["deferred/SMAABlendWeightsV.glsl", "deferred/SMAA.glsl"],
+                ),
+                "exact SMAA mapping",
+            ),
+            (
+                "wrong SMAA reflection",
+                mutate(
+                    "smaa_weights_low",
+                    ("required_reflection", "fragment", 0, "name"),
+                    "diffuseRect",
+                ),
+                "exact SMAA pipeline contract",
+            ),
+            (
+                "wrong SMAA pipeline format",
+                mutate(
+                    "smaa_neighborhood_high",
+                    ("pipeline", "color_formats"),
+                    ["rgba16float"],
+                ),
+                "exact SMAA pipeline contract",
+            ),
+            (
                 "scalar numeric index",
                 mutate("ui_font", ("source_index",), 0),
                 "scalar source_symbol",
@@ -1520,9 +1923,35 @@ class ShaderSpikeTest(unittest.TestCase):
         depth_copy["source_symbol"] = "gCopyProgram"
         self._assert_manifest_rejected(collision, "selection key collides")
 
-        old_schema = copy.deepcopy(original)
-        old_schema["schema"] = 3
-        self._assert_manifest_rejected(old_schema, "manifest schema must be 4")
+        for schema in (4, 6):
+            with self.subTest(schema=schema):
+                wrong_schema = copy.deepcopy(original)
+                wrong_schema["schema"] = schema
+                self._assert_manifest_rejected(
+                    wrong_schema, "manifest schema must be 5"
+                )
+
+        missing_smaa = copy.deepcopy(original)
+        missing_smaa["programs"] = [
+            item for item in missing_smaa["programs"] if item["id"] != "smaa_edge_low"
+        ]
+        self._assert_manifest_rejected(
+            missing_smaa, "antialiasing variant contract is incomplete"
+        )
+
+        unknown_smaa = copy.deepcopy(original)
+        custom_smaa = copy.deepcopy(
+            next(
+                item
+                for item in unknown_smaa["programs"]
+                if item["id"] == "smaa_edge_low"
+            )
+        )
+        custom_smaa["id"] = "smaa_edge_custom"
+        unknown_smaa["programs"].append(custom_smaa)
+        self._assert_manifest_rejected(
+            unknown_smaa, "unexpected bundled SMAA source variant"
+        )
 
     @unittest.skipUnless(
         sys.platform == "darwin", "native Metal validator is macOS-only"
@@ -1530,6 +1959,7 @@ class ShaderSpikeTest(unittest.TestCase):
     def test_native_validator_rejects_selection_contract_inversions(self) -> None:
         _, programs = self._programs()
         fxaa = next(item for item in programs if item.program_id == "fxaa_high")
+        smaa = next(item for item in programs if item.program_id == "smaa_weights_high")
         capability = next(
             item for item in programs if item.program_id == "fxaa_depth_write"
         )
@@ -1578,6 +2008,61 @@ class ShaderSpikeTest(unittest.TestCase):
             result = validate(downgraded)
             self.assertEqual(2, result.returncode)
             self.assertIn("bundled pipeline spec requires schema 5", result.stderr)
+            self.assertNotIn("cannot load metallib", result.stderr)
+
+            smaa_fragment = {
+                "outputs": [{"name": "frag_color", "type": "vec4", "location": 0}],
+                "textures": [
+                    {"name": "edgesTex", "type": "sampler2D", "binding": 0},
+                    {"name": "areaTex", "type": "sampler2D", "binding": 1},
+                    {"name": "searchTex", "type": "sampler2D", "binding": 2},
+                ],
+            }
+            smaa_path = root / "smaa-weights-high.json"
+            shader_spike.write_pipeline_spec(
+                smaa,
+                vertex,
+                smaa_fragment,
+                self._stage_msl_sources(vertex, smaa_fragment),
+                root / "not-loaded.metallib",
+                smaa_path,
+            )
+            smaa_spec = json.loads(smaa_path.read_text(encoding="utf-8"))
+
+            smaa_wrong_pass = copy.deepcopy(smaa_spec)
+            smaa_wrong_pass["selection"]["source_symbol"] = "gSMAAEdgeDetectProgram"
+            result = validate(smaa_wrong_pass)
+            self.assertEqual(2, result.returncode)
+            self.assertIn("exact SMAA source mapping", result.stderr)
+            self.assertNotIn("cannot load metallib", result.stderr)
+
+            smaa_wrong_index = copy.deepcopy(smaa_spec)
+            smaa_wrong_index["selection"]["source_index"] = 1
+            result = validate(smaa_wrong_index)
+            self.assertEqual(2, result.returncode)
+            self.assertIn("exact SMAA source mapping", result.stderr)
+            self.assertNotIn("cannot load metallib", result.stderr)
+
+            smaa_wrong_settings = copy.deepcopy(smaa_spec)
+            smaa_wrong_settings["selection"]["integer_settings"][1]["value"] = 1
+            result = validate(smaa_wrong_settings)
+            self.assertEqual(2, result.returncode)
+            self.assertIn("exact SMAA settings mapping", result.stderr)
+            self.assertNotIn("cannot load metallib", result.stderr)
+
+            smaa_downgraded = copy.deepcopy(smaa_spec)
+            smaa_downgraded["schema"] = 4
+            del smaa_downgraded["selection"]
+            result = validate(smaa_downgraded)
+            self.assertEqual(2, result.returncode)
+            self.assertIn("bundled pipeline spec requires schema 5", result.stderr)
+            self.assertNotIn("cannot load metallib", result.stderr)
+
+            unknown_program = copy.deepcopy(smaa_spec)
+            unknown_program["id"] = "smaa_unknown"
+            result = validate(unknown_program)
+            self.assertEqual(2, result.returncode)
+            self.assertIn("not in the frozen program inventory", result.stderr)
             self.assertNotIn("cannot load metallib", result.stderr)
 
             capability_path = root / "fxaa-depth-write.json"

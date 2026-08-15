@@ -1,5 +1,5 @@
 {
-  "schema": 4,
+  "schema": 5,
   "glsl_version": 400,
   "baseline_commit": "1e8fd5491bde91fe6daca7d78f217a4d46084a5b",
   "source_root": "indra/newview/app_settings/shaders",
@@ -43,6 +43,10 @@
     {
       "path": "indra/newview/app_settings/shaders/class1/deferred/fxaaF.glsl",
       "sha256": "18b46a598aa196504e1e5ec56df3ab80a8b12a3bd643d70bd7bae665a1ca7823"
+    },
+    {
+      "path": "indra/newview/app_settings/shaders/class1/deferred/SMAA.glsl",
+      "sha256": "5b623c77b5ba49922913500b7ca9e38084a6d40d4e45d9c742c47f45aa1e78c3"
     }
   ],
   "baseline_settings": {
@@ -198,12 +202,23 @@
         ]
       },
       "stages": {
-        "vertex": [
-          "interface/uiV.glsl",
-          "deferred/textureUtilV.glsl",
-          "objects/nonindexedTextureV.glsl"
-        ],
-        "fragment": ["interface/uiF.glsl", "deferred/globalF.glsl"]
+        "vertex": {
+          "program": [
+            "interface/uiV.glsl"
+          ],
+          "features": [
+            "deferred/textureUtilV.glsl",
+            "objects/nonindexedTextureV.glsl"
+          ]
+        },
+        "fragment": {
+          "program": [
+            "interface/uiF.glsl"
+          ],
+          "features": [
+            "deferred/globalF.glsl"
+          ]
+        }
       }
     },
     {
@@ -244,16 +259,24 @@
         ]
       },
       "stages": {
-        "vertex": [
-          "deferred/diffuseV.glsl",
-          "deferred/textureUtilV.glsl",
-          "objects/indexedTextureV.glsl"
-        ],
-        "fragment": [
-          "deferred/diffuseIndexedF.glsl",
-          "deferred/globalF.glsl",
-          "environment/srgbF.glsl"
-        ]
+        "vertex": {
+          "program": [
+            "deferred/diffuseV.glsl"
+          ],
+          "features": [
+            "deferred/textureUtilV.glsl",
+            "objects/indexedTextureV.glsl"
+          ]
+        },
+        "fragment": {
+          "program": [
+            "deferred/diffuseIndexedF.glsl"
+          ],
+          "features": [
+            "deferred/globalF.glsl",
+            "environment/srgbF.glsl"
+          ]
+        }
       }
     },
     {
@@ -293,16 +316,24 @@
         ]
       },
       "stages": {
-        "vertex": [
-          "deferred/diffuseV.glsl",
-          "deferred/textureUtilV.glsl",
-          "objects/indexedTextureV.glsl"
-        ],
-        "fragment": [
-          "deferred/diffuseIndexedF.glsl",
-          "deferred/globalF.glsl",
-          "environment/srgbF.glsl"
-        ]
+        "vertex": {
+          "program": [
+            "deferred/diffuseV.glsl"
+          ],
+          "features": [
+            "deferred/textureUtilV.glsl",
+            "objects/indexedTextureV.glsl"
+          ]
+        },
+        "fragment": {
+          "program": [
+            "deferred/diffuseIndexedF.glsl"
+          ],
+          "features": [
+            "deferred/globalF.glsl",
+            "environment/srgbF.glsl"
+          ]
+        }
       }
     },
     {
@@ -344,12 +375,23 @@
         ]
       },
       "stages": {
-        "vertex": [
-          "deferred/bumpV.glsl",
-          "deferred/textureUtilV.glsl",
-          "objects/nonindexedTextureV.glsl"
-        ],
-        "fragment": ["deferred/bumpF.glsl", "deferred/globalF.glsl"]
+        "vertex": {
+          "program": [
+            "deferred/bumpV.glsl"
+          ],
+          "features": [
+            "deferred/textureUtilV.glsl",
+            "objects/nonindexedTextureV.glsl"
+          ]
+        },
+        "fragment": {
+          "program": [
+            "deferred/bumpF.glsl"
+          ],
+          "features": [
+            "deferred/globalF.glsl"
+          ]
+        }
       }
     },
     {
@@ -390,16 +432,24 @@
         ]
       },
       "stages": {
-        "vertex": [
-          "deferred/pbropaqueV.glsl",
-          "deferred/textureUtilV.glsl",
-          "objects/nonindexedTextureV.glsl"
-        ],
-        "fragment": [
-          "deferred/pbropaqueF.glsl",
-          "deferred/globalF.glsl",
-          "environment/srgbF.glsl"
-        ]
+        "vertex": {
+          "program": [
+            "deferred/pbropaqueV.glsl"
+          ],
+          "features": [
+            "deferred/textureUtilV.glsl",
+            "objects/nonindexedTextureV.glsl"
+          ]
+        },
+        "fragment": {
+          "program": [
+            "deferred/pbropaqueF.glsl"
+          ],
+          "features": [
+            "deferred/globalF.glsl",
+            "environment/srgbF.glsl"
+          ]
+        }
       }
     },
     {
@@ -480,31 +530,39 @@
         ]
       },
       "stages": {
-        "vertex": [
-          "deferred/pbralphaV.glsl",
-          "windlight/atmosphericsVarsV.glsl",
-          "windlight/atmosphericsHelpersV.glsl",
-          "environment/srgbF.glsl",
-          "windlight/atmosphericsFuncs.glsl",
-          "windlight/atmosphericsV.glsl",
-          "deferred/textureUtilV.glsl",
-          "objects/nonindexedTextureV.glsl"
-        ],
-        "fragment": [
-          "deferred/pbralphaF.glsl",
-          "deferred/globalF.glsl",
-          "environment/srgbF.glsl",
-          "windlight/atmosphericsVarsF.glsl",
-          "windlight/atmosphericsHelpersF.glsl",
-          "deferred/deferredUtil.glsl",
-          "deferred/screenSpaceReflUtil.glsl",
-          "deferred/shadowUtil.glsl",
-          "deferred/reflectionProbeF.glsl",
-          "windlight/gammaF.glsl",
-          "windlight/atmosphericsFuncs.glsl",
-          "windlight/atmosphericsF.glsl",
-          "environment/waterFogF.glsl"
-        ]
+        "vertex": {
+          "program": [
+            "deferred/pbralphaV.glsl"
+          ],
+          "features": [
+            "windlight/atmosphericsVarsV.glsl",
+            "windlight/atmosphericsHelpersV.glsl",
+            "environment/srgbF.glsl",
+            "windlight/atmosphericsFuncs.glsl",
+            "windlight/atmosphericsV.glsl",
+            "deferred/textureUtilV.glsl",
+            "objects/nonindexedTextureV.glsl"
+          ]
+        },
+        "fragment": {
+          "program": [
+            "deferred/pbralphaF.glsl"
+          ],
+          "features": [
+            "deferred/globalF.glsl",
+            "environment/srgbF.glsl",
+            "windlight/atmosphericsVarsF.glsl",
+            "windlight/atmosphericsHelpersF.glsl",
+            "deferred/deferredUtil.glsl",
+            "deferred/screenSpaceReflUtil.glsl",
+            "deferred/shadowUtil.glsl",
+            "deferred/reflectionProbeF.glsl",
+            "windlight/gammaF.glsl",
+            "windlight/atmosphericsFuncs.glsl",
+            "windlight/atmosphericsF.glsl",
+            "environment/waterFogF.glsl"
+          ]
+        }
       }
     },
     {
@@ -545,27 +603,35 @@
         ]
       },
       "stages": {
-        "vertex": [
-          "deferred/terrainV.glsl",
-          "windlight/atmosphericsVarsV.glsl",
-          "windlight/atmosphericsHelpersV.glsl",
-          "environment/srgbF.glsl",
-          "windlight/atmosphericsFuncs.glsl",
-          "windlight/atmosphericsV.glsl",
-          "deferred/textureUtilV.glsl",
-          "objects/nonindexedTextureV.glsl"
-        ],
-        "fragment": [
-          "deferred/terrainF.glsl",
-          "deferred/globalF.glsl",
-          "environment/srgbF.glsl",
-          "windlight/atmosphericsVarsF.glsl",
-          "windlight/atmosphericsHelpersF.glsl",
-          "windlight/gammaF.glsl",
-          "windlight/atmosphericsFuncs.glsl",
-          "windlight/atmosphericsF.glsl",
-          "environment/waterFogF.glsl"
-        ]
+        "vertex": {
+          "program": [
+            "deferred/terrainV.glsl"
+          ],
+          "features": [
+            "windlight/atmosphericsVarsV.glsl",
+            "windlight/atmosphericsHelpersV.glsl",
+            "environment/srgbF.glsl",
+            "windlight/atmosphericsFuncs.glsl",
+            "windlight/atmosphericsV.glsl",
+            "deferred/textureUtilV.glsl",
+            "objects/nonindexedTextureV.glsl"
+          ]
+        },
+        "fragment": {
+          "program": [
+            "deferred/terrainF.glsl"
+          ],
+          "features": [
+            "deferred/globalF.glsl",
+            "environment/srgbF.glsl",
+            "windlight/atmosphericsVarsF.glsl",
+            "windlight/atmosphericsHelpersF.glsl",
+            "windlight/gammaF.glsl",
+            "windlight/atmosphericsFuncs.glsl",
+            "windlight/atmosphericsF.glsl",
+            "environment/waterFogF.glsl"
+          ]
+        }
       }
     },
     {
@@ -607,13 +673,24 @@
         ]
       },
       "stages": {
-        "vertex": [
-          "deferred/avatarV.glsl",
-          "avatar/avatarSkinV.glsl",
-          "deferred/textureUtilV.glsl",
-          "objects/nonindexedTextureV.glsl"
-        ],
-        "fragment": ["deferred/avatarF.glsl", "deferred/globalF.glsl"]
+        "vertex": {
+          "program": [
+            "deferred/avatarV.glsl"
+          ],
+          "features": [
+            "avatar/avatarSkinV.glsl",
+            "deferred/textureUtilV.glsl",
+            "objects/nonindexedTextureV.glsl"
+          ]
+        },
+        "fragment": {
+          "program": [
+            "deferred/avatarF.glsl"
+          ],
+          "features": [
+            "deferred/globalF.glsl"
+          ]
+        }
       }
     },
     {
@@ -646,15 +723,23 @@
         ]
       },
       "stages": {
-        "vertex": [
-          "deferred/shadowAlphaMaskV.glsl",
-          "deferred/textureUtilV.glsl",
-          "objects/indexedTextureV.glsl"
-        ],
-        "fragment": [
-          "deferred/shadowAlphaMaskF.glsl",
-          "deferred/globalF.glsl"
-        ]
+        "vertex": {
+          "program": [
+            "deferred/shadowAlphaMaskV.glsl"
+          ],
+          "features": [
+            "deferred/textureUtilV.glsl",
+            "objects/indexedTextureV.glsl"
+          ]
+        },
+        "fragment": {
+          "program": [
+            "deferred/shadowAlphaMaskF.glsl"
+          ],
+          "features": [
+            "deferred/globalF.glsl"
+          ]
+        }
       }
     },
     {
@@ -729,31 +814,39 @@
         ]
       },
       "stages": {
-        "vertex": [
-          "deferred/alphaV.glsl",
-          "windlight/atmosphericsVarsV.glsl",
-          "windlight/atmosphericsHelpersV.glsl",
-          "environment/srgbF.glsl",
-          "windlight/atmosphericsFuncs.glsl",
-          "windlight/atmosphericsV.glsl",
-          "deferred/textureUtilV.glsl",
-          "objects/indexedTextureV.glsl"
-        ],
-        "fragment": [
-          "deferred/alphaF.glsl",
-          "deferred/globalF.glsl",
-          "environment/srgbF.glsl",
-          "windlight/atmosphericsVarsF.glsl",
-          "windlight/atmosphericsHelpersF.glsl",
-          "deferred/deferredUtil.glsl",
-          "deferred/screenSpaceReflUtil.glsl",
-          "deferred/shadowUtil.glsl",
-          "deferred/reflectionProbeF.glsl",
-          "windlight/gammaF.glsl",
-          "windlight/atmosphericsFuncs.glsl",
-          "windlight/atmosphericsF.glsl",
-          "environment/waterFogF.glsl"
-        ]
+        "vertex": {
+          "program": [
+            "deferred/alphaV.glsl"
+          ],
+          "features": [
+            "windlight/atmosphericsVarsV.glsl",
+            "windlight/atmosphericsHelpersV.glsl",
+            "environment/srgbF.glsl",
+            "windlight/atmosphericsFuncs.glsl",
+            "windlight/atmosphericsV.glsl",
+            "deferred/textureUtilV.glsl",
+            "objects/indexedTextureV.glsl"
+          ]
+        },
+        "fragment": {
+          "program": [
+            "deferred/alphaF.glsl"
+          ],
+          "features": [
+            "deferred/globalF.glsl",
+            "environment/srgbF.glsl",
+            "windlight/atmosphericsVarsF.glsl",
+            "windlight/atmosphericsHelpersF.glsl",
+            "deferred/deferredUtil.glsl",
+            "deferred/screenSpaceReflUtil.glsl",
+            "deferred/shadowUtil.glsl",
+            "deferred/reflectionProbeF.glsl",
+            "windlight/gammaF.glsl",
+            "windlight/atmosphericsFuncs.glsl",
+            "windlight/atmosphericsF.glsl",
+            "environment/waterFogF.glsl"
+          ]
+        }
       }
     },
     {
@@ -790,12 +883,23 @@
         ]
       },
       "stages": {
-        "vertex": [
-          "interface/radianceGenV.glsl",
-          "deferred/textureUtilV.glsl",
-          "objects/nonindexedTextureV.glsl"
-        ],
-        "fragment": ["interface/radianceGenF.glsl", "deferred/globalF.glsl"]
+        "vertex": {
+          "program": [
+            "interface/radianceGenV.glsl"
+          ],
+          "features": [
+            "deferred/textureUtilV.glsl",
+            "objects/nonindexedTextureV.glsl"
+          ]
+        },
+        "fragment": {
+          "program": [
+            "interface/radianceGenF.glsl"
+          ],
+          "features": [
+            "deferred/globalF.glsl"
+          ]
+        }
       }
     },
     {
@@ -828,12 +932,23 @@
         ]
       },
       "stages": {
-        "vertex": [
-          "interface/copyV.glsl",
-          "deferred/textureUtilV.glsl",
-          "objects/nonindexedTextureV.glsl"
-        ],
-        "fragment": ["interface/copyF.glsl", "deferred/globalF.glsl"]
+        "vertex": {
+          "program": [
+            "interface/copyV.glsl"
+          ],
+          "features": [
+            "deferred/textureUtilV.glsl",
+            "objects/nonindexedTextureV.glsl"
+          ]
+        },
+        "fragment": {
+          "program": [
+            "interface/copyF.glsl"
+          ],
+          "features": [
+            "deferred/globalF.glsl"
+          ]
+        }
       }
     },
     {
@@ -870,12 +985,23 @@
         ]
       },
       "stages": {
-        "vertex": [
-          "interface/copyV.glsl",
-          "deferred/textureUtilV.glsl",
-          "objects/nonindexedTextureV.glsl"
-        ],
-        "fragment": ["interface/copyF.glsl", "deferred/globalF.glsl"]
+        "vertex": {
+          "program": [
+            "interface/copyV.glsl"
+          ],
+          "features": [
+            "deferred/textureUtilV.glsl",
+            "objects/nonindexedTextureV.glsl"
+          ]
+        },
+        "fragment": {
+          "program": [
+            "interface/copyF.glsl"
+          ],
+          "features": [
+            "deferred/globalF.glsl"
+          ]
+        }
       }
     },
     {
@@ -919,22 +1045,30 @@
         ]
       },
       "stages": {
-        "vertex": [
-          "deferred/postDeferredV.glsl",
-          "windlight/atmosphericsVarsV.glsl",
-          "deferred/textureUtilV.glsl",
-          "objects/nonindexedTextureV.glsl"
-        ],
-        "fragment": [
-          "deferred/fxaaF.glsl",
-          "deferred/globalF.glsl",
-          "environment/srgbF.glsl",
-          "windlight/atmosphericsVarsF.glsl",
-          "deferred/deferredUtil.glsl",
-          "windlight/gammaF.glsl",
-          "windlight/atmosphericsFuncs.glsl",
-          "windlight/atmosphericsF.glsl"
-        ]
+        "vertex": {
+          "program": [
+            "deferred/postDeferredV.glsl"
+          ],
+          "features": [
+            "windlight/atmosphericsVarsV.glsl",
+            "deferred/textureUtilV.glsl",
+            "objects/nonindexedTextureV.glsl"
+          ]
+        },
+        "fragment": {
+          "program": [
+            "deferred/fxaaF.glsl"
+          ],
+          "features": [
+            "deferred/globalF.glsl",
+            "environment/srgbF.glsl",
+            "windlight/atmosphericsVarsF.glsl",
+            "deferred/deferredUtil.glsl",
+            "windlight/gammaF.glsl",
+            "windlight/atmosphericsFuncs.glsl",
+            "windlight/atmosphericsF.glsl"
+          ]
+        }
       }
     },
     {
@@ -978,22 +1112,30 @@
         ]
       },
       "stages": {
-        "vertex": [
-          "deferred/postDeferredV.glsl",
-          "windlight/atmosphericsVarsV.glsl",
-          "deferred/textureUtilV.glsl",
-          "objects/nonindexedTextureV.glsl"
-        ],
-        "fragment": [
-          "deferred/fxaaF.glsl",
-          "deferred/globalF.glsl",
-          "environment/srgbF.glsl",
-          "windlight/atmosphericsVarsF.glsl",
-          "deferred/deferredUtil.glsl",
-          "windlight/gammaF.glsl",
-          "windlight/atmosphericsFuncs.glsl",
-          "windlight/atmosphericsF.glsl"
-        ]
+        "vertex": {
+          "program": [
+            "deferred/postDeferredV.glsl"
+          ],
+          "features": [
+            "windlight/atmosphericsVarsV.glsl",
+            "deferred/textureUtilV.glsl",
+            "objects/nonindexedTextureV.glsl"
+          ]
+        },
+        "fragment": {
+          "program": [
+            "deferred/fxaaF.glsl"
+          ],
+          "features": [
+            "deferred/globalF.glsl",
+            "environment/srgbF.glsl",
+            "windlight/atmosphericsVarsF.glsl",
+            "deferred/deferredUtil.glsl",
+            "windlight/gammaF.glsl",
+            "windlight/atmosphericsFuncs.glsl",
+            "windlight/atmosphericsF.glsl"
+          ]
+        }
       }
     },
     {
@@ -1037,22 +1179,30 @@
         ]
       },
       "stages": {
-        "vertex": [
-          "deferred/postDeferredV.glsl",
-          "windlight/atmosphericsVarsV.glsl",
-          "deferred/textureUtilV.glsl",
-          "objects/nonindexedTextureV.glsl"
-        ],
-        "fragment": [
-          "deferred/fxaaF.glsl",
-          "deferred/globalF.glsl",
-          "environment/srgbF.glsl",
-          "windlight/atmosphericsVarsF.glsl",
-          "deferred/deferredUtil.glsl",
-          "windlight/gammaF.glsl",
-          "windlight/atmosphericsFuncs.glsl",
-          "windlight/atmosphericsF.glsl"
-        ]
+        "vertex": {
+          "program": [
+            "deferred/postDeferredV.glsl"
+          ],
+          "features": [
+            "windlight/atmosphericsVarsV.glsl",
+            "deferred/textureUtilV.glsl",
+            "objects/nonindexedTextureV.glsl"
+          ]
+        },
+        "fragment": {
+          "program": [
+            "deferred/fxaaF.glsl"
+          ],
+          "features": [
+            "deferred/globalF.glsl",
+            "environment/srgbF.glsl",
+            "windlight/atmosphericsVarsF.glsl",
+            "deferred/deferredUtil.glsl",
+            "windlight/gammaF.glsl",
+            "windlight/atmosphericsFuncs.glsl",
+            "windlight/atmosphericsF.glsl"
+          ]
+        }
       }
     },
     {
@@ -1096,22 +1246,1002 @@
         ]
       },
       "stages": {
-        "vertex": [
-          "deferred/postDeferredV.glsl",
-          "windlight/atmosphericsVarsV.glsl",
-          "deferred/textureUtilV.glsl",
-          "objects/nonindexedTextureV.glsl"
-        ],
+        "vertex": {
+          "program": [
+            "deferred/postDeferredV.glsl"
+          ],
+          "features": [
+            "windlight/atmosphericsVarsV.glsl",
+            "deferred/textureUtilV.glsl",
+            "objects/nonindexedTextureV.glsl"
+          ]
+        },
+        "fragment": {
+          "program": [
+            "deferred/fxaaF.glsl"
+          ],
+          "features": [
+            "deferred/globalF.glsl",
+            "environment/srgbF.glsl",
+            "windlight/atmosphericsVarsF.glsl",
+            "deferred/deferredUtil.glsl",
+            "windlight/gammaF.glsl",
+            "windlight/atmosphericsFuncs.glsl",
+            "windlight/atmosphericsF.glsl"
+          ]
+        }
+      }
+    },
+    {
+      "id": "smaa_edge_low",
+      "family": "SMAA or FXAA",
+      "recipe_kind": "runtime_variant",
+      "settings_overrides": {
+        "RenderFSAASamples": 0,
+        "RenderFSAAType": 2
+      },
+      "semantic_parity": "not_run",
+      "source_reference": "indra/newview/llviewershadermgr.cpp:2684",
+      "source_symbol": "gSMAAEdgeDetectProgram",
+      "source_index": 0,
+      "shader_class": 3,
+      "defines": {
+        "SMAA_GLSL_4": "1",
+        "SMAA_PREDICATION": "0",
+        "SMAA_REPROJECTION": "0",
+        "SMAA_PRESET_LOW": "1"
+      },
+      "indexed_texture_channels": 0,
+      "required_reflection": {
         "fragment": [
-          "deferred/fxaaF.glsl",
-          "deferred/globalF.glsl",
-          "environment/srgbF.glsl",
-          "windlight/atmosphericsVarsF.glsl",
-          "deferred/deferredUtil.glsl",
-          "windlight/gammaF.glsl",
-          "windlight/atmosphericsFuncs.glsl",
-          "windlight/atmosphericsF.glsl"
+          {
+            "group": "textures",
+            "name": "diffuseRect",
+            "type": "sampler2D"
+          }
         ]
+      },
+      "pipeline": {
+        "color_formats": [
+          "rgba8unorm"
+        ],
+        "depth_format": null,
+        "sample_count": 1,
+        "vertex_contract": "position_only",
+        "source_evidence": [
+          {
+            "path": "indra/newview/pipeline.cpp",
+            "contains": "if (!mFXAAMap.allocate(resX, resY, GL_RGBA)) return false;"
+          },
+          {
+            "path": "indra/newview/pipeline.cpp",
+            "contains": "LLGLSLShader& edge_shader = gSMAAEdgeDetectProgram[fsaa_quality];"
+          }
+        ]
+      },
+      "stages": {
+        "vertex": {
+          "program": [
+            "deferred/SMAAEdgeDetectV.glsl",
+            "deferred/SMAA.glsl"
+          ],
+          "features": [
+            "windlight/atmosphericsVarsV.glsl",
+            "deferred/textureUtilV.glsl",
+            "objects/nonindexedTextureV.glsl"
+          ]
+        },
+        "fragment": {
+          "program": [
+            "deferred/SMAAEdgeDetectF.glsl",
+            "deferred/SMAA.glsl"
+          ],
+          "features": [
+            "deferred/globalF.glsl",
+            "environment/srgbF.glsl",
+            "windlight/atmosphericsVarsF.glsl",
+            "deferred/deferredUtil.glsl",
+            "windlight/gammaF.glsl",
+            "windlight/atmosphericsFuncs.glsl",
+            "windlight/atmosphericsF.glsl"
+          ]
+        }
+      }
+    },
+{
+      "id": "smaa_edge_medium",
+      "family": "SMAA or FXAA",
+      "recipe_kind": "runtime_variant",
+      "settings_overrides": {
+        "RenderFSAASamples": 1,
+        "RenderFSAAType": 2
+      },
+      "semantic_parity": "not_run",
+      "source_reference": "indra/newview/llviewershadermgr.cpp:2684",
+      "source_symbol": "gSMAAEdgeDetectProgram",
+      "source_index": 1,
+      "shader_class": 3,
+      "defines": {
+        "SMAA_GLSL_4": "1",
+        "SMAA_PREDICATION": "0",
+        "SMAA_REPROJECTION": "0",
+        "SMAA_PRESET_MEDIUM": "1"
+      },
+      "indexed_texture_channels": 0,
+      "required_reflection": {
+        "fragment": [
+          {
+            "group": "textures",
+            "name": "diffuseRect",
+            "type": "sampler2D"
+          }
+        ]
+      },
+      "pipeline": {
+        "color_formats": [
+          "rgba8unorm"
+        ],
+        "depth_format": null,
+        "sample_count": 1,
+        "vertex_contract": "position_only",
+        "source_evidence": [
+          {
+            "path": "indra/newview/pipeline.cpp",
+            "contains": "if (!mFXAAMap.allocate(resX, resY, GL_RGBA)) return false;"
+          },
+          {
+            "path": "indra/newview/pipeline.cpp",
+            "contains": "LLGLSLShader& edge_shader = gSMAAEdgeDetectProgram[fsaa_quality];"
+          }
+        ]
+      },
+      "stages": {
+        "vertex": {
+          "program": [
+            "deferred/SMAAEdgeDetectV.glsl",
+            "deferred/SMAA.glsl"
+          ],
+          "features": [
+            "windlight/atmosphericsVarsV.glsl",
+            "deferred/textureUtilV.glsl",
+            "objects/nonindexedTextureV.glsl"
+          ]
+        },
+        "fragment": {
+          "program": [
+            "deferred/SMAAEdgeDetectF.glsl",
+            "deferred/SMAA.glsl"
+          ],
+          "features": [
+            "deferred/globalF.glsl",
+            "environment/srgbF.glsl",
+            "windlight/atmosphericsVarsF.glsl",
+            "deferred/deferredUtil.glsl",
+            "windlight/gammaF.glsl",
+            "windlight/atmosphericsFuncs.glsl",
+            "windlight/atmosphericsF.glsl"
+          ]
+        }
+      }
+    },
+{
+      "id": "smaa_edge_high",
+      "family": "SMAA or FXAA",
+      "recipe_kind": "runtime_variant",
+      "settings_overrides": {
+        "RenderFSAASamples": 2,
+        "RenderFSAAType": 2
+      },
+      "semantic_parity": "not_run",
+      "source_reference": "indra/newview/llviewershadermgr.cpp:2684",
+      "source_symbol": "gSMAAEdgeDetectProgram",
+      "source_index": 2,
+      "shader_class": 3,
+      "defines": {
+        "SMAA_GLSL_4": "1",
+        "SMAA_PREDICATION": "0",
+        "SMAA_REPROJECTION": "0",
+        "SMAA_PRESET_HIGH": "1"
+      },
+      "indexed_texture_channels": 0,
+      "required_reflection": {
+        "fragment": [
+          {
+            "group": "textures",
+            "name": "diffuseRect",
+            "type": "sampler2D"
+          }
+        ]
+      },
+      "pipeline": {
+        "color_formats": [
+          "rgba8unorm"
+        ],
+        "depth_format": null,
+        "sample_count": 1,
+        "vertex_contract": "position_only",
+        "source_evidence": [
+          {
+            "path": "indra/newview/pipeline.cpp",
+            "contains": "if (!mFXAAMap.allocate(resX, resY, GL_RGBA)) return false;"
+          },
+          {
+            "path": "indra/newview/pipeline.cpp",
+            "contains": "LLGLSLShader& edge_shader = gSMAAEdgeDetectProgram[fsaa_quality];"
+          }
+        ]
+      },
+      "stages": {
+        "vertex": {
+          "program": [
+            "deferred/SMAAEdgeDetectV.glsl",
+            "deferred/SMAA.glsl"
+          ],
+          "features": [
+            "windlight/atmosphericsVarsV.glsl",
+            "deferred/textureUtilV.glsl",
+            "objects/nonindexedTextureV.glsl"
+          ]
+        },
+        "fragment": {
+          "program": [
+            "deferred/SMAAEdgeDetectF.glsl",
+            "deferred/SMAA.glsl"
+          ],
+          "features": [
+            "deferred/globalF.glsl",
+            "environment/srgbF.glsl",
+            "windlight/atmosphericsVarsF.glsl",
+            "deferred/deferredUtil.glsl",
+            "windlight/gammaF.glsl",
+            "windlight/atmosphericsFuncs.glsl",
+            "windlight/atmosphericsF.glsl"
+          ]
+        }
+      }
+    },
+{
+      "id": "smaa_edge_ultra",
+      "family": "SMAA or FXAA",
+      "recipe_kind": "runtime_variant",
+      "settings_overrides": {
+        "RenderFSAASamples": 3,
+        "RenderFSAAType": 2
+      },
+      "semantic_parity": "not_run",
+      "source_reference": "indra/newview/llviewershadermgr.cpp:2684",
+      "source_symbol": "gSMAAEdgeDetectProgram",
+      "source_index": 3,
+      "shader_class": 3,
+      "defines": {
+        "SMAA_GLSL_4": "1",
+        "SMAA_PREDICATION": "0",
+        "SMAA_REPROJECTION": "0",
+        "SMAA_PRESET_ULTRA": "1"
+      },
+      "indexed_texture_channels": 0,
+      "required_reflection": {
+        "fragment": [
+          {
+            "group": "textures",
+            "name": "diffuseRect",
+            "type": "sampler2D"
+          }
+        ]
+      },
+      "pipeline": {
+        "color_formats": [
+          "rgba8unorm"
+        ],
+        "depth_format": null,
+        "sample_count": 1,
+        "vertex_contract": "position_only",
+        "source_evidence": [
+          {
+            "path": "indra/newview/pipeline.cpp",
+            "contains": "if (!mFXAAMap.allocate(resX, resY, GL_RGBA)) return false;"
+          },
+          {
+            "path": "indra/newview/pipeline.cpp",
+            "contains": "LLGLSLShader& edge_shader = gSMAAEdgeDetectProgram[fsaa_quality];"
+          }
+        ]
+      },
+      "stages": {
+        "vertex": {
+          "program": [
+            "deferred/SMAAEdgeDetectV.glsl",
+            "deferred/SMAA.glsl"
+          ],
+          "features": [
+            "windlight/atmosphericsVarsV.glsl",
+            "deferred/textureUtilV.glsl",
+            "objects/nonindexedTextureV.glsl"
+          ]
+        },
+        "fragment": {
+          "program": [
+            "deferred/SMAAEdgeDetectF.glsl",
+            "deferred/SMAA.glsl"
+          ],
+          "features": [
+            "deferred/globalF.glsl",
+            "environment/srgbF.glsl",
+            "windlight/atmosphericsVarsF.glsl",
+            "deferred/deferredUtil.glsl",
+            "windlight/gammaF.glsl",
+            "windlight/atmosphericsFuncs.glsl",
+            "windlight/atmosphericsF.glsl"
+          ]
+        }
+      }
+    },
+{
+      "id": "smaa_weights_low",
+      "family": "SMAA or FXAA",
+      "recipe_kind": "runtime_variant",
+      "settings_overrides": {
+        "RenderFSAASamples": 0,
+        "RenderFSAAType": 2
+      },
+      "semantic_parity": "not_run",
+      "source_reference": "indra/newview/llviewershadermgr.cpp:2710",
+      "source_symbol": "gSMAABlendWeightsProgram",
+      "source_index": 0,
+      "shader_class": 3,
+      "defines": {
+        "SMAA_GLSL_4": "1",
+        "SMAA_PREDICATION": "0",
+        "SMAA_REPROJECTION": "0",
+        "SMAA_PRESET_LOW": "1"
+      },
+      "indexed_texture_channels": 0,
+      "required_reflection": {
+        "fragment": [
+          {
+            "group": "textures",
+            "name": "edgesTex",
+            "type": "sampler2D"
+          },
+          {
+            "group": "textures",
+            "name": "areaTex",
+            "type": "sampler2D"
+          },
+          {
+            "group": "textures",
+            "name": "searchTex",
+            "type": "sampler2D"
+          }
+        ]
+      },
+      "pipeline": {
+        "color_formats": [
+          "rgba8unorm"
+        ],
+        "depth_format": null,
+        "sample_count": 1,
+        "vertex_contract": "position_only",
+        "source_evidence": [
+          {
+            "path": "indra/newview/pipeline.cpp",
+            "contains": "if (!mSMAABlendBuffer.allocate(resX, resY, GL_RGBA, false)) return false;"
+          },
+          {
+            "path": "indra/newview/pipeline.cpp",
+            "contains": "LLGLSLShader& blend_weights_shader = gSMAABlendWeightsProgram[fsaa_quality];"
+          }
+        ]
+      },
+      "stages": {
+        "vertex": {
+          "program": [
+            "deferred/SMAABlendWeightsV.glsl",
+            "deferred/SMAA.glsl"
+          ],
+          "features": [
+            "windlight/atmosphericsVarsV.glsl",
+            "deferred/textureUtilV.glsl",
+            "objects/nonindexedTextureV.glsl"
+          ]
+        },
+        "fragment": {
+          "program": [
+            "deferred/SMAABlendWeightsF.glsl",
+            "deferred/SMAA.glsl"
+          ],
+          "features": [
+            "deferred/globalF.glsl",
+            "environment/srgbF.glsl",
+            "windlight/atmosphericsVarsF.glsl",
+            "deferred/deferredUtil.glsl",
+            "windlight/gammaF.glsl",
+            "windlight/atmosphericsFuncs.glsl",
+            "windlight/atmosphericsF.glsl"
+          ]
+        }
+      }
+    },
+{
+      "id": "smaa_weights_medium",
+      "family": "SMAA or FXAA",
+      "recipe_kind": "runtime_variant",
+      "settings_overrides": {
+        "RenderFSAASamples": 1,
+        "RenderFSAAType": 2
+      },
+      "semantic_parity": "not_run",
+      "source_reference": "indra/newview/llviewershadermgr.cpp:2710",
+      "source_symbol": "gSMAABlendWeightsProgram",
+      "source_index": 1,
+      "shader_class": 3,
+      "defines": {
+        "SMAA_GLSL_4": "1",
+        "SMAA_PREDICATION": "0",
+        "SMAA_REPROJECTION": "0",
+        "SMAA_PRESET_MEDIUM": "1"
+      },
+      "indexed_texture_channels": 0,
+      "required_reflection": {
+        "fragment": [
+          {
+            "group": "textures",
+            "name": "edgesTex",
+            "type": "sampler2D"
+          },
+          {
+            "group": "textures",
+            "name": "areaTex",
+            "type": "sampler2D"
+          },
+          {
+            "group": "textures",
+            "name": "searchTex",
+            "type": "sampler2D"
+          }
+        ]
+      },
+      "pipeline": {
+        "color_formats": [
+          "rgba8unorm"
+        ],
+        "depth_format": null,
+        "sample_count": 1,
+        "vertex_contract": "position_only",
+        "source_evidence": [
+          {
+            "path": "indra/newview/pipeline.cpp",
+            "contains": "if (!mSMAABlendBuffer.allocate(resX, resY, GL_RGBA, false)) return false;"
+          },
+          {
+            "path": "indra/newview/pipeline.cpp",
+            "contains": "LLGLSLShader& blend_weights_shader = gSMAABlendWeightsProgram[fsaa_quality];"
+          }
+        ]
+      },
+      "stages": {
+        "vertex": {
+          "program": [
+            "deferred/SMAABlendWeightsV.glsl",
+            "deferred/SMAA.glsl"
+          ],
+          "features": [
+            "windlight/atmosphericsVarsV.glsl",
+            "deferred/textureUtilV.glsl",
+            "objects/nonindexedTextureV.glsl"
+          ]
+        },
+        "fragment": {
+          "program": [
+            "deferred/SMAABlendWeightsF.glsl",
+            "deferred/SMAA.glsl"
+          ],
+          "features": [
+            "deferred/globalF.glsl",
+            "environment/srgbF.glsl",
+            "windlight/atmosphericsVarsF.glsl",
+            "deferred/deferredUtil.glsl",
+            "windlight/gammaF.glsl",
+            "windlight/atmosphericsFuncs.glsl",
+            "windlight/atmosphericsF.glsl"
+          ]
+        }
+      }
+    },
+{
+      "id": "smaa_weights_high",
+      "family": "SMAA or FXAA",
+      "recipe_kind": "runtime_variant",
+      "settings_overrides": {
+        "RenderFSAASamples": 2,
+        "RenderFSAAType": 2
+      },
+      "semantic_parity": "not_run",
+      "source_reference": "indra/newview/llviewershadermgr.cpp:2710",
+      "source_symbol": "gSMAABlendWeightsProgram",
+      "source_index": 2,
+      "shader_class": 3,
+      "defines": {
+        "SMAA_GLSL_4": "1",
+        "SMAA_PREDICATION": "0",
+        "SMAA_REPROJECTION": "0",
+        "SMAA_PRESET_HIGH": "1"
+      },
+      "indexed_texture_channels": 0,
+      "required_reflection": {
+        "fragment": [
+          {
+            "group": "textures",
+            "name": "edgesTex",
+            "type": "sampler2D"
+          },
+          {
+            "group": "textures",
+            "name": "areaTex",
+            "type": "sampler2D"
+          },
+          {
+            "group": "textures",
+            "name": "searchTex",
+            "type": "sampler2D"
+          }
+        ]
+      },
+      "pipeline": {
+        "color_formats": [
+          "rgba8unorm"
+        ],
+        "depth_format": null,
+        "sample_count": 1,
+        "vertex_contract": "position_only",
+        "source_evidence": [
+          {
+            "path": "indra/newview/pipeline.cpp",
+            "contains": "if (!mSMAABlendBuffer.allocate(resX, resY, GL_RGBA, false)) return false;"
+          },
+          {
+            "path": "indra/newview/pipeline.cpp",
+            "contains": "LLGLSLShader& blend_weights_shader = gSMAABlendWeightsProgram[fsaa_quality];"
+          }
+        ]
+      },
+      "stages": {
+        "vertex": {
+          "program": [
+            "deferred/SMAABlendWeightsV.glsl",
+            "deferred/SMAA.glsl"
+          ],
+          "features": [
+            "windlight/atmosphericsVarsV.glsl",
+            "deferred/textureUtilV.glsl",
+            "objects/nonindexedTextureV.glsl"
+          ]
+        },
+        "fragment": {
+          "program": [
+            "deferred/SMAABlendWeightsF.glsl",
+            "deferred/SMAA.glsl"
+          ],
+          "features": [
+            "deferred/globalF.glsl",
+            "environment/srgbF.glsl",
+            "windlight/atmosphericsVarsF.glsl",
+            "deferred/deferredUtil.glsl",
+            "windlight/gammaF.glsl",
+            "windlight/atmosphericsFuncs.glsl",
+            "windlight/atmosphericsF.glsl"
+          ]
+        }
+      }
+    },
+{
+      "id": "smaa_weights_ultra",
+      "family": "SMAA or FXAA",
+      "recipe_kind": "runtime_variant",
+      "settings_overrides": {
+        "RenderFSAASamples": 3,
+        "RenderFSAAType": 2
+      },
+      "semantic_parity": "not_run",
+      "source_reference": "indra/newview/llviewershadermgr.cpp:2710",
+      "source_symbol": "gSMAABlendWeightsProgram",
+      "source_index": 3,
+      "shader_class": 3,
+      "defines": {
+        "SMAA_GLSL_4": "1",
+        "SMAA_PREDICATION": "0",
+        "SMAA_REPROJECTION": "0",
+        "SMAA_PRESET_ULTRA": "1"
+      },
+      "indexed_texture_channels": 0,
+      "required_reflection": {
+        "fragment": [
+          {
+            "group": "textures",
+            "name": "edgesTex",
+            "type": "sampler2D"
+          },
+          {
+            "group": "textures",
+            "name": "areaTex",
+            "type": "sampler2D"
+          },
+          {
+            "group": "textures",
+            "name": "searchTex",
+            "type": "sampler2D"
+          }
+        ]
+      },
+      "pipeline": {
+        "color_formats": [
+          "rgba8unorm"
+        ],
+        "depth_format": null,
+        "sample_count": 1,
+        "vertex_contract": "position_only",
+        "source_evidence": [
+          {
+            "path": "indra/newview/pipeline.cpp",
+            "contains": "if (!mSMAABlendBuffer.allocate(resX, resY, GL_RGBA, false)) return false;"
+          },
+          {
+            "path": "indra/newview/pipeline.cpp",
+            "contains": "LLGLSLShader& blend_weights_shader = gSMAABlendWeightsProgram[fsaa_quality];"
+          }
+        ]
+      },
+      "stages": {
+        "vertex": {
+          "program": [
+            "deferred/SMAABlendWeightsV.glsl",
+            "deferred/SMAA.glsl"
+          ],
+          "features": [
+            "windlight/atmosphericsVarsV.glsl",
+            "deferred/textureUtilV.glsl",
+            "objects/nonindexedTextureV.glsl"
+          ]
+        },
+        "fragment": {
+          "program": [
+            "deferred/SMAABlendWeightsF.glsl",
+            "deferred/SMAA.glsl"
+          ],
+          "features": [
+            "deferred/globalF.glsl",
+            "environment/srgbF.glsl",
+            "windlight/atmosphericsVarsF.glsl",
+            "deferred/deferredUtil.glsl",
+            "windlight/gammaF.glsl",
+            "windlight/atmosphericsFuncs.glsl",
+            "windlight/atmosphericsF.glsl"
+          ]
+        }
+      }
+    },
+{
+      "id": "smaa_neighborhood_low",
+      "family": "SMAA or FXAA",
+      "recipe_kind": "runtime_variant",
+      "settings_overrides": {
+        "RenderFSAASamples": 0,
+        "RenderFSAAType": 2
+      },
+      "semantic_parity": "not_run",
+      "source_reference": "indra/newview/llviewershadermgr.cpp:2736",
+      "source_symbol": "gSMAANeighborhoodBlendProgram",
+      "source_index": 0,
+      "shader_class": 3,
+      "defines": {
+        "SMAA_GLSL_4": "1",
+        "SMAA_PREDICATION": "0",
+        "SMAA_REPROJECTION": "0",
+        "SMAA_PRESET_LOW": "1"
+      },
+      "indexed_texture_channels": 0,
+      "required_reflection": {
+        "fragment": [
+          {
+            "group": "textures",
+            "name": "diffuseRect",
+            "type": "sampler2D"
+          },
+          {
+            "group": "textures",
+            "name": "blendTex",
+            "type": "sampler2D"
+          }
+        ]
+      },
+      "pipeline": {
+        "color_formats": [
+          "rgba8unorm"
+        ],
+        "depth_format": null,
+        "sample_count": 1,
+        "vertex_contract": "position_only",
+        "source_evidence": [
+          {
+            "path": "indra/newview/pipeline.cpp",
+            "contains": "mPostPongMap.allocate(resX, resY, GL_RGBA);"
+          },
+          {
+            "path": "indra/newview/pipeline.cpp",
+            "contains": "LLGLSLShader& blend_shader = gSMAANeighborhoodBlendProgram[fsaa_quality];"
+          }
+        ]
+      },
+      "stages": {
+        "vertex": {
+          "program": [
+            "deferred/SMAANeighborhoodBlendV.glsl",
+            "deferred/SMAA.glsl"
+          ],
+          "features": [
+            "windlight/atmosphericsVarsV.glsl",
+            "deferred/textureUtilV.glsl",
+            "objects/nonindexedTextureV.glsl"
+          ]
+        },
+        "fragment": {
+          "program": [
+            "deferred/SMAANeighborhoodBlendF.glsl",
+            "deferred/SMAA.glsl"
+          ],
+          "features": [
+            "deferred/globalF.glsl",
+            "environment/srgbF.glsl",
+            "windlight/atmosphericsVarsF.glsl",
+            "deferred/deferredUtil.glsl",
+            "windlight/gammaF.glsl",
+            "windlight/atmosphericsFuncs.glsl",
+            "windlight/atmosphericsF.glsl"
+          ]
+        }
+      }
+    },
+{
+      "id": "smaa_neighborhood_medium",
+      "family": "SMAA or FXAA",
+      "recipe_kind": "runtime_variant",
+      "settings_overrides": {
+        "RenderFSAASamples": 1,
+        "RenderFSAAType": 2
+      },
+      "semantic_parity": "not_run",
+      "source_reference": "indra/newview/llviewershadermgr.cpp:2736",
+      "source_symbol": "gSMAANeighborhoodBlendProgram",
+      "source_index": 1,
+      "shader_class": 3,
+      "defines": {
+        "SMAA_GLSL_4": "1",
+        "SMAA_PREDICATION": "0",
+        "SMAA_REPROJECTION": "0",
+        "SMAA_PRESET_MEDIUM": "1"
+      },
+      "indexed_texture_channels": 0,
+      "required_reflection": {
+        "fragment": [
+          {
+            "group": "textures",
+            "name": "diffuseRect",
+            "type": "sampler2D"
+          },
+          {
+            "group": "textures",
+            "name": "blendTex",
+            "type": "sampler2D"
+          }
+        ]
+      },
+      "pipeline": {
+        "color_formats": [
+          "rgba8unorm"
+        ],
+        "depth_format": null,
+        "sample_count": 1,
+        "vertex_contract": "position_only",
+        "source_evidence": [
+          {
+            "path": "indra/newview/pipeline.cpp",
+            "contains": "mPostPongMap.allocate(resX, resY, GL_RGBA);"
+          },
+          {
+            "path": "indra/newview/pipeline.cpp",
+            "contains": "LLGLSLShader& blend_shader = gSMAANeighborhoodBlendProgram[fsaa_quality];"
+          }
+        ]
+      },
+      "stages": {
+        "vertex": {
+          "program": [
+            "deferred/SMAANeighborhoodBlendV.glsl",
+            "deferred/SMAA.glsl"
+          ],
+          "features": [
+            "windlight/atmosphericsVarsV.glsl",
+            "deferred/textureUtilV.glsl",
+            "objects/nonindexedTextureV.glsl"
+          ]
+        },
+        "fragment": {
+          "program": [
+            "deferred/SMAANeighborhoodBlendF.glsl",
+            "deferred/SMAA.glsl"
+          ],
+          "features": [
+            "deferred/globalF.glsl",
+            "environment/srgbF.glsl",
+            "windlight/atmosphericsVarsF.glsl",
+            "deferred/deferredUtil.glsl",
+            "windlight/gammaF.glsl",
+            "windlight/atmosphericsFuncs.glsl",
+            "windlight/atmosphericsF.glsl"
+          ]
+        }
+      }
+    },
+{
+      "id": "smaa_neighborhood_high",
+      "family": "SMAA or FXAA",
+      "recipe_kind": "runtime_variant",
+      "settings_overrides": {
+        "RenderFSAASamples": 2,
+        "RenderFSAAType": 2
+      },
+      "semantic_parity": "not_run",
+      "source_reference": "indra/newview/llviewershadermgr.cpp:2736",
+      "source_symbol": "gSMAANeighborhoodBlendProgram",
+      "source_index": 2,
+      "shader_class": 3,
+      "defines": {
+        "SMAA_GLSL_4": "1",
+        "SMAA_PREDICATION": "0",
+        "SMAA_REPROJECTION": "0",
+        "SMAA_PRESET_HIGH": "1"
+      },
+      "indexed_texture_channels": 0,
+      "required_reflection": {
+        "fragment": [
+          {
+            "group": "textures",
+            "name": "diffuseRect",
+            "type": "sampler2D"
+          },
+          {
+            "group": "textures",
+            "name": "blendTex",
+            "type": "sampler2D"
+          }
+        ]
+      },
+      "pipeline": {
+        "color_formats": [
+          "rgba8unorm"
+        ],
+        "depth_format": null,
+        "sample_count": 1,
+        "vertex_contract": "position_only",
+        "source_evidence": [
+          {
+            "path": "indra/newview/pipeline.cpp",
+            "contains": "mPostPongMap.allocate(resX, resY, GL_RGBA);"
+          },
+          {
+            "path": "indra/newview/pipeline.cpp",
+            "contains": "LLGLSLShader& blend_shader = gSMAANeighborhoodBlendProgram[fsaa_quality];"
+          }
+        ]
+      },
+      "stages": {
+        "vertex": {
+          "program": [
+            "deferred/SMAANeighborhoodBlendV.glsl",
+            "deferred/SMAA.glsl"
+          ],
+          "features": [
+            "windlight/atmosphericsVarsV.glsl",
+            "deferred/textureUtilV.glsl",
+            "objects/nonindexedTextureV.glsl"
+          ]
+        },
+        "fragment": {
+          "program": [
+            "deferred/SMAANeighborhoodBlendF.glsl",
+            "deferred/SMAA.glsl"
+          ],
+          "features": [
+            "deferred/globalF.glsl",
+            "environment/srgbF.glsl",
+            "windlight/atmosphericsVarsF.glsl",
+            "deferred/deferredUtil.glsl",
+            "windlight/gammaF.glsl",
+            "windlight/atmosphericsFuncs.glsl",
+            "windlight/atmosphericsF.glsl"
+          ]
+        }
+      }
+    },
+{
+      "id": "smaa_neighborhood_ultra",
+      "family": "SMAA or FXAA",
+      "recipe_kind": "runtime_variant",
+      "settings_overrides": {
+        "RenderFSAASamples": 3,
+        "RenderFSAAType": 2
+      },
+      "semantic_parity": "not_run",
+      "source_reference": "indra/newview/llviewershadermgr.cpp:2736",
+      "source_symbol": "gSMAANeighborhoodBlendProgram",
+      "source_index": 3,
+      "shader_class": 3,
+      "defines": {
+        "SMAA_GLSL_4": "1",
+        "SMAA_PREDICATION": "0",
+        "SMAA_REPROJECTION": "0",
+        "SMAA_PRESET_ULTRA": "1"
+      },
+      "indexed_texture_channels": 0,
+      "required_reflection": {
+        "fragment": [
+          {
+            "group": "textures",
+            "name": "diffuseRect",
+            "type": "sampler2D"
+          },
+          {
+            "group": "textures",
+            "name": "blendTex",
+            "type": "sampler2D"
+          }
+        ]
+      },
+      "pipeline": {
+        "color_formats": [
+          "rgba8unorm"
+        ],
+        "depth_format": null,
+        "sample_count": 1,
+        "vertex_contract": "position_only",
+        "source_evidence": [
+          {
+            "path": "indra/newview/pipeline.cpp",
+            "contains": "mPostPongMap.allocate(resX, resY, GL_RGBA);"
+          },
+          {
+            "path": "indra/newview/pipeline.cpp",
+            "contains": "LLGLSLShader& blend_shader = gSMAANeighborhoodBlendProgram[fsaa_quality];"
+          }
+        ]
+      },
+      "stages": {
+        "vertex": {
+          "program": [
+            "deferred/SMAANeighborhoodBlendV.glsl",
+            "deferred/SMAA.glsl"
+          ],
+          "features": [
+            "windlight/atmosphericsVarsV.glsl",
+            "deferred/textureUtilV.glsl",
+            "objects/nonindexedTextureV.glsl"
+          ]
+        },
+        "fragment": {
+          "program": [
+            "deferred/SMAANeighborhoodBlendF.glsl",
+            "deferred/SMAA.glsl"
+          ],
+          "features": [
+            "deferred/globalF.glsl",
+            "environment/srgbF.glsl",
+            "windlight/atmosphericsVarsF.glsl",
+            "deferred/deferredUtil.glsl",
+            "windlight/gammaF.glsl",
+            "windlight/atmosphericsFuncs.glsl",
+            "windlight/atmosphericsF.glsl"
+          ]
+        }
       }
     },
     {
@@ -1155,22 +2285,30 @@
         ]
       },
       "stages": {
-        "vertex": [
-          "deferred/postDeferredV.glsl",
-          "windlight/atmosphericsVarsV.glsl",
-          "deferred/textureUtilV.glsl",
-          "objects/nonindexedTextureV.glsl"
-        ],
-        "fragment": [
-          "deferred/fxaaF.glsl",
-          "deferred/globalF.glsl",
-          "environment/srgbF.glsl",
-          "windlight/atmosphericsVarsF.glsl",
-          "deferred/deferredUtil.glsl",
-          "windlight/gammaF.glsl",
-          "windlight/atmosphericsFuncs.glsl",
-          "windlight/atmosphericsF.glsl"
-        ]
+        "vertex": {
+          "program": [
+            "deferred/postDeferredV.glsl"
+          ],
+          "features": [
+            "windlight/atmosphericsVarsV.glsl",
+            "deferred/textureUtilV.glsl",
+            "objects/nonindexedTextureV.glsl"
+          ]
+        },
+        "fragment": {
+          "program": [
+            "deferred/fxaaF.glsl"
+          ],
+          "features": [
+            "deferred/globalF.glsl",
+            "environment/srgbF.glsl",
+            "windlight/atmosphericsVarsF.glsl",
+            "deferred/deferredUtil.glsl",
+            "windlight/gammaF.glsl",
+            "windlight/atmosphericsFuncs.glsl",
+            "windlight/atmosphericsF.glsl"
+          ]
+        }
       }
     }
   ]

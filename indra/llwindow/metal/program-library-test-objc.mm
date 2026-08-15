@@ -61,7 +61,7 @@ using firestorm::metal::declaredMetalPrograms;
 using firestorm::metal::validateMetalProgramCatalogMetadata;
 using firestorm::metal::validateMetalProgramDescriptors;
 
-constexpr std::array<std::string_view, 16> EXPECTED_IDS{
+constexpr std::array<std::string_view, 28> EXPECTED_IDS{
     "avatar_skinning",
     "deferred_diffuse",
     "depth_copy",
@@ -76,9 +76,40 @@ constexpr std::array<std::string_view, 16> EXPECTED_IDS{
     "reflection_probe",
     "shadow_alpha_mask",
     "shadow_alpha_receiver",
+    "smaa_edge_high",
+    "smaa_edge_low",
+    "smaa_edge_medium",
+    "smaa_edge_ultra",
+    "smaa_neighborhood_high",
+    "smaa_neighborhood_low",
+    "smaa_neighborhood_medium",
+    "smaa_neighborhood_ultra",
+    "smaa_weights_high",
+    "smaa_weights_low",
+    "smaa_weights_medium",
+    "smaa_weights_ultra",
     "terrain",
     "ui_font",
 };
+
+constexpr std::array<std::string_view, 4> INDEXED_PROGRAM_SYMBOLS{
+    "gFXAAProgram",
+    "gSMAABlendWeightsProgram",
+    "gSMAAEdgeDetectProgram",
+    "gSMAANeighborhoodBlendProgram",
+};
+
+bool isIndexedProgramSymbol(std::string_view symbol)
+{
+    for (std::string_view indexed_symbol : INDEXED_PROGRAM_SYMBOLS)
+    {
+        if (symbol == indexed_symbol)
+        {
+            return true;
+        }
+    }
+    return false;
+}
 
 bool parseOptions(int argc, const char* argv[], std::string& metallib_path)
 {
@@ -560,7 +591,7 @@ void testExactCatalog(const MetalProgramLibrary& library)
                    programs[index].sourceSymbol,
                    programs[index].sourceIndex,
                    programs[index].shaderClass) == &programs[index]);
-        EXPECT(programs[index].sourceSymbol == "gFXAAProgram"
+        EXPECT(isIndexedProgramSymbol(programs[index].sourceSymbol)
                    ? programs[index].sourceIndex.has_value()
                    : !programs[index].sourceIndex.has_value());
         EXPECT(defaultUniformSlotsAre24(programs[index]));
@@ -668,28 +699,25 @@ void testExactCatalog(const MetalProgramLibrary& library)
     }
 }
 
-void testSelectionLookup(const MetalProgramLibrary& library)
+void testIndexedSelection(
+    const MetalProgramLibrary& library,
+    std::string_view source_symbol,
+    const std::array<std::string_view, 4>& expected_ids,
+    std::int32_t fsaa_type)
 {
-    constexpr std::array<std::string_view, 4> FXAA_IDS{
-        "fxaa_low",
-        "fxaa_medium",
-        "fxaa_high",
-        "fxaa",
-    };
-
-    const MetalProgramDescriptor* fxaa_contract = nullptr;
-    for (std::size_t index = 0; index < FXAA_IDS.size(); ++index)
+    const MetalProgramDescriptor* shared_contract = nullptr;
+    for (std::size_t index = 0; index < expected_ids.size(); ++index)
     {
         const auto source_index = static_cast<std::uint16_t>(index);
         const MetalProgramDescriptor* program =
-            library.program("gFXAAProgram", source_index, 3);
+            library.program(source_symbol, source_index, 3);
         EXPECT(program != nullptr);
         if (program == nullptr)
         {
             continue;
         }
-        EXPECT(program->name == FXAA_IDS[index]);
-        EXPECT(program->sourceSymbol == "gFXAAProgram");
+        EXPECT(program->name == expected_ids[index]);
+        EXPECT(program->sourceSymbol == source_symbol);
         EXPECT(program->sourceIndex == source_index);
         EXPECT(program->shaderClass == 3);
         EXPECT(program->booleanSettings.empty());
@@ -700,28 +728,68 @@ void testSelectionLookup(const MetalProgramLibrary& library)
             EXPECT(program->integerSettings[0].value ==
                    static_cast<std::int32_t>(source_index));
             EXPECT(program->integerSettings[1].name == "RenderFSAAType");
-            EXPECT(program->integerSettings[1].value == 1);
+            EXPECT(program->integerSettings[1].value == fsaa_type);
         }
         EXPECT(library.program(
                    program->sourceSymbol,
                    program->sourceIndex,
                    program->shaderClass) == program);
-        if (fxaa_contract == nullptr)
+        if (shared_contract == nullptr)
         {
-            fxaa_contract = program;
+            shared_contract = program;
         }
         else
         {
-            EXPECT(samePipelineContract(*fxaa_contract, *program));
+            EXPECT(samePipelineContract(*shared_contract, *program));
         }
     }
 
-    EXPECT(library.program("gFXAAProgram", std::uint16_t{4}, 3) == nullptr);
-    EXPECT(library.program("gFXAAProgram", std::uint16_t{0}, 2) == nullptr);
-    EXPECT(library.program("gFXAAProgram", std::uint16_t{0}, 4) == nullptr);
+    EXPECT(library.program(source_symbol, std::uint16_t{4}, 3) == nullptr);
+    EXPECT(library.program(source_symbol, std::uint16_t{0}, 2) == nullptr);
+    EXPECT(library.program(source_symbol, std::uint16_t{0}, 4) == nullptr);
+    EXPECT(library.program(source_symbol, std::nullopt, 3) == nullptr);
+}
+
+void testSelectionLookup(const MetalProgramLibrary& library)
+{
+    constexpr std::array<std::string_view, 4> FXAA_IDS{
+        "fxaa_low",
+        "fxaa_medium",
+        "fxaa_high",
+        "fxaa",
+    };
+    constexpr std::array<std::string_view, 4> SMAA_EDGE_IDS{
+        "smaa_edge_low",
+        "smaa_edge_medium",
+        "smaa_edge_high",
+        "smaa_edge_ultra",
+    };
+    constexpr std::array<std::string_view, 4> SMAA_WEIGHTS_IDS{
+        "smaa_weights_low",
+        "smaa_weights_medium",
+        "smaa_weights_high",
+        "smaa_weights_ultra",
+    };
+    constexpr std::array<std::string_view, 4> SMAA_NEIGHBORHOOD_IDS{
+        "smaa_neighborhood_low",
+        "smaa_neighborhood_medium",
+        "smaa_neighborhood_high",
+        "smaa_neighborhood_ultra",
+    };
+
+    testIndexedSelection(library, "gFXAAProgram", FXAA_IDS, 1);
+    testIndexedSelection(
+        library, "gSMAAEdgeDetectProgram", SMAA_EDGE_IDS, 2);
+    testIndexedSelection(
+        library, "gSMAABlendWeightsProgram", SMAA_WEIGHTS_IDS, 2);
+    testIndexedSelection(
+        library,
+        "gSMAANeighborhoodBlendProgram",
+        SMAA_NEIGHBORHOOD_IDS,
+        2);
+
     EXPECT(library.program("missingProgram", std::uint16_t{0}, 3) == nullptr);
     EXPECT(library.program("", std::uint16_t{0}, 3) == nullptr);
-    EXPECT(library.program("gFXAAProgram", std::nullopt, 3) == nullptr);
 
     const MetalProgramDescriptor* ui =
         library.program("gUIProgram", std::nullopt, 2);

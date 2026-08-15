@@ -3,17 +3,18 @@
 Translation feasibility: **accepted on the pinned baseline**. Mandatory family
 semantic parity: **not run**.
 
-All 18 recipes pass the complete build-time path: compiler-linked GLSL objects,
+All 30 recipes pass the complete build-time path: compiler-linked GLSL objects,
 SPIR-V validation and reflection, cross-stage interface validation,
 SPIRV-Cross, Apple's Metal compiler, per-program `.metallib` linking, and real
 `MTLRenderPipelineState` creation under Metal API validation. The set contains
-12 scalar runtime contracts, four selectable FXAA runtime recipes, a
-depth-writing FXAA capability probe, and a separate 16-channel indexed-texture
-stress case, covering all ten required families. The 16 bundled AIR pairs also
+12 scalar runtime contracts, four selectable FXAA runtime recipes, 12
+selectable SMAA runtime recipes, a depth-writing FXAA capability probe, and a
+separate 16-channel indexed-texture stress case, covering all ten required
+families. The 28 bundled AIR pairs also
 link in lexical ID then vertex/fragment order into one path-free
 `firestorm-declared-programs.metallib`; every runtime PSO is recreated from
 that same library under Metal API validation. A second build root reproduced
-all 130 checked artifacts byte for byte: the 126 per-program artifacts plus the
+all 214 checked artifacts byte for byte: the 210 per-program artifacts plus the
 combined metallib and path-free JSON/C++ catalog.
 
 | Program | Required family | Recipe | Metal PSO | Metal warnings |
@@ -35,17 +36,33 @@ combined metallib and path-free JSON/C++ catalog.
 | `fxaa_medium` | SMAA or FXAA | runtime variant, preset 23 | pass | 1 |
 | `fxaa_high` | SMAA or FXAA | runtime variant, preset 28 | pass | 1 |
 | `fxaa` | SMAA or FXAA | runtime, Ultra preset 39, depthless | pass | 1 |
+| `smaa_edge_low` | SMAA or FXAA | runtime variant, edge Low | pass | 1 |
+| `smaa_edge_medium` | SMAA or FXAA | runtime variant, edge Medium | pass | 1 |
+| `smaa_edge_high` | SMAA or FXAA | runtime variant, edge High | pass | 1 |
+| `smaa_edge_ultra` | SMAA or FXAA | runtime variant, edge Ultra | pass | 1 |
+| `smaa_weights_low` | SMAA or FXAA | runtime variant, weights Low | pass | 1 |
+| `smaa_weights_medium` | SMAA or FXAA | runtime variant, weights Medium | pass | 1 |
+| `smaa_weights_high` | SMAA or FXAA | runtime variant, weights High | pass | 3 |
+| `smaa_weights_ultra` | SMAA or FXAA | runtime variant, weights Ultra | pass | 3 |
+| `smaa_neighborhood_low` | SMAA or FXAA | runtime variant, neighborhood Low | pass | 0 |
+| `smaa_neighborhood_medium` | SMAA or FXAA | runtime variant, neighborhood Medium | pass | 0 |
+| `smaa_neighborhood_high` | SMAA or FXAA | runtime variant, neighborhood High | pass | 0 |
+| `smaa_neighborhood_ultra` | SMAA or FXAA | runtime variant, neighborhood Ultra | pass | 0 |
 | `fxaa_depth_write` | SMAA or FXAA | capability | pass | 1 |
 
-The ten warnings are unused generated constant declarations. The gate rejects
-possibly-uninitialized diagnostics; none remain. Full output is retained in
-the local report. Compilation success does not waive semantic checks or make
-the remaining warnings accepted renderer behavior.
+The 22 Metal warnings are unused generated constant declarations. The gate
+rejects possibly-uninitialized diagnostics; none remain. Full output is
+retained in the local report. Compilation success does not waive semantic
+checks or make the remaining warnings accepted renderer behavior.
 
 ## Shared compatibility decisions
 
-- Each Firestorm shader object keeps its own preprocessing environment;
-  glslang performs the stage link. Source text is not concatenated or merged.
+- Each stage declares nonempty program-local objects and a possibly empty set
+  of feature objects. Program objects receive recipe class/defines; feature
+  objects receive baseline class/global defines. Every shader object keeps its
+  own preprocessing environment and glslang performs the stage link. A uniform
+  420-pack preamble enables canonical line continuations without normalizing or
+  rewriting source text.
 - glslang's relaxed Vulkan mode collects active loose value uniforms into a
   reflected default uniform block. Textures, images, samplers, and existing
   named blocks remain reflected resources with deterministic bindings.
@@ -75,6 +92,12 @@ the remaining warnings accepted renderer behavior.
   class 3, and typed `RenderFSAAType=1`/`RenderFSAASamples=index` overrides.
   Scalar program globals retain a null source index, and duplicate selector
   triples fail catalog generation and ordinary-C++ validation.
+- The bundled SMAA set preserves all three source arrays and the exact Low,
+  Medium, High, and Ultra ordering. Edge detection, blend weights, and
+  neighborhood blending each use indices 0 through 3, shader class 3,
+  `RenderFSAAType=2`, and `RenderFSAASamples=index`. Both the pass shader and
+  `deferred/SMAA.glsl` are program-local objects that receive the common and
+  quality defines; shared deferred features retain their global environment.
 - The `presentation_copy` runtime recipe uses the real `gCopyProgram` sources
   with one BGRA8Unorm color target, the position-only vertex contract, and the
   paired `diffuseMap` texture and sampler. Both stages expose no uniform
@@ -89,7 +112,7 @@ the remaining warnings accepted renderer behavior.
   validation reject other shapes, strides, or major orders, while native
   reflection proves the remaining matrix data type.
 - Entry-point names are stable program ID plus stage names.
-- The runtime-only artifact has exactly the combined library's 32 expected
+- The runtime-only artifact has exactly the combined library's 56 expected
   entry points. Its immutable C++17 descriptors use the existing renderer
   `PixelFormat`, typed vertex layouts and stage buffer/texture/sampler
   summaries, per-buffer layout digests, and full per-stage reflection digests.
@@ -100,7 +123,7 @@ the remaining warnings accepted renderer behavior.
   reflection and remain toolchain-owned diagnostic identity rather than a
   persistence ABI. The catalog identifies its frozen source manifest and
   explicit resource basename without embedding a host, build, or source path.
-- The manifest and all 53 source/provenance inputs are captured once; source
+- The manifest and all 60 source/provenance inputs are captured once; source
   validation, both build roots, and report hashes use those same immutable
   bytes.
 - Metal compilation uses stable relative inputs and reproducibility flags; the
@@ -114,9 +137,10 @@ become canonical.
 ## Scope and remaining gates
 
 This result proves that the selected translation architecture can build and
-link 16 representative Firestorm runtime recipes and variants into
+link 28 representative Firestorm runtime recipes and variants into
 structurally valid Metal pipelines. It also proves exact typed catalog lookup
-for the four source-backed FXAA quality indices. It is not the complete viewer
+for the four source-backed FXAA quality indices and all 12 source-backed SMAA
+pass/quality selections. It is not the complete viewer
 shader inventory and does not prove renderer selection integration or
 rendering equivalence. The mandatory family pass
 conditions still need deterministic draws and readback for orientation,

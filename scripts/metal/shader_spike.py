@@ -95,11 +95,59 @@ FXAA_VARIANT_CONTRACT: Final = {
     "fxaa": ("runtime", 3, "39"),
 }
 REQUIRED_FXAA_VARIANT_IDS: Final = set(FXAA_VARIANT_CONTRACT)
-REQUIRED_BUNDLED_PROGRAM_IDS: Final = {
-    program_id
-    for program_id, recipe_kind in REQUIRED_RECIPE_KINDS.items()
-    if recipe_kind == "runtime"
-} | REQUIRED_FXAA_VARIANT_IDS
+SMAA_QUALITY_CONTRACT: Final = {
+    "low": (0, "SMAA_PRESET_LOW"),
+    "medium": (1, "SMAA_PRESET_MEDIUM"),
+    "high": (2, "SMAA_PRESET_HIGH"),
+    "ultra": (3, "SMAA_PRESET_ULTRA"),
+}
+SMAA_PASS_CONTRACT: Final = {
+    "edge": (
+        "gSMAAEdgeDetectProgram",
+        "deferred/SMAAEdgeDetectV.glsl",
+        "deferred/SMAAEdgeDetectF.glsl",
+        "indra/newview/llviewershadermgr.cpp:2684",
+    ),
+    "weights": (
+        "gSMAABlendWeightsProgram",
+        "deferred/SMAABlendWeightsV.glsl",
+        "deferred/SMAABlendWeightsF.glsl",
+        "indra/newview/llviewershadermgr.cpp:2710",
+    ),
+    "neighborhood": (
+        "gSMAANeighborhoodBlendProgram",
+        "deferred/SMAANeighborhoodBlendV.glsl",
+        "deferred/SMAANeighborhoodBlendF.glsl",
+        "indra/newview/llviewershadermgr.cpp:2736",
+    ),
+}
+SMAA_VARIANT_CONTRACT: Final = {
+    f"smaa_{pass_name}_{quality}": (
+        source_symbol,
+        source_index,
+        preset,
+        vertex_source,
+        fragment_source,
+        source_reference,
+    )
+    for pass_name, (
+        source_symbol,
+        vertex_source,
+        fragment_source,
+        source_reference,
+    ) in SMAA_PASS_CONTRACT.items()
+    for quality, (source_index, preset) in SMAA_QUALITY_CONTRACT.items()
+}
+REQUIRED_SMAA_VARIANT_IDS: Final = set(SMAA_VARIANT_CONTRACT)
+REQUIRED_BUNDLED_PROGRAM_IDS: Final = (
+    {
+        program_id
+        for program_id, recipe_kind in REQUIRED_RECIPE_KINDS.items()
+        if recipe_kind == "runtime"
+    }
+    | REQUIRED_FXAA_VARIANT_IDS
+    | REQUIRED_SMAA_VARIANT_IDS
+)
 REQUIRED_BUFFER_FREE_PROGRAM_IDS: Final = {"presentation_copy"}
 BASELINE_SETTING_TYPES: Final = {
     "RenderAvatarCloth": bool,
@@ -384,6 +432,7 @@ class ProgramRecipe:
     feature_classes: dict[str, int]
     indexed_texture_channels: int
     stages: dict[str, tuple[str, ...]]
+    stage_program_counts: dict[str, int]
     required_reflection: dict[str, tuple[ReflectionRequirement, ...]]
     comparison_sample_counts: dict[str, int]
     pipeline: PipelineSpec
@@ -399,6 +448,40 @@ def _require_string(value: object, field: str) -> str:
     if not isinstance(value, str) or not value:
         raise ManifestError(f"{field} must be a non-empty string")
     return value
+
+
+def _require_shader_logical_path(value: object, field: str) -> str:
+    path = _require_string(value, field)
+    first_component = path.split("/", 1)[0]
+    if (
+        "\\" in path
+        or path.startswith("/")
+        or re.fullmatch(r"class[0-9]+", first_component, re.IGNORECASE) is not None
+        or any(part in {"", ".", ".."} for part in path.split("/"))
+    ):
+        raise ManifestError(
+            f"{field} must be a canonical repository-relative shader path"
+        )
+    return path
+
+
+def _path_has_exact_spelling(root: Path, path: Path) -> bool:
+    """Return whether every path component matches its directory entry exactly."""
+
+    try:
+        relative = path.relative_to(root)
+    except ValueError:
+        return False
+    current = root
+    for component in relative.parts:
+        try:
+            with os.scandir(current) as entries:
+                if component not in {entry.name for entry in entries}:
+                    return False
+        except OSError:
+            return False
+        current /= component
+    return True
 
 
 def _require_exact_keys(
@@ -774,12 +857,17 @@ def program_selection(recipe: ProgramRecipe) -> dict[str, object]:
 
 def _validate_program_selection_contracts(programs: list[ProgramRecipe]) -> None:
     by_id = {recipe.program_id: recipe for recipe in programs}
-    missing_variants = sorted(REQUIRED_FXAA_VARIANT_IDS - set(by_id))
+    required_variants = REQUIRED_FXAA_VARIANT_IDS | REQUIRED_SMAA_VARIANT_IDS
+    missing_variants = sorted(required_variants - set(by_id))
     if missing_variants:
         raise ManifestError(
-            f"the FXAA variant contract is incomplete: {', '.join(missing_variants)}"
+            f"the antialiasing variant contract is incomplete: "
+            f"{', '.join(missing_variants)}"
         )
 
+    indexed_symbols = {"gFXAAProgram"} | {
+        contract[0] for contract in SMAA_PASS_CONTRACT.values()
+    }
     keys: dict[tuple[str, int | None, int], str] = {}
     for recipe in programs:
         if recipe.recipe_kind not in BUNDLED_RECIPE_KINDS:
@@ -788,6 +876,11 @@ def _validate_program_selection_contracts(programs: list[ProgramRecipe]) -> None
             if recipe.program_id not in REQUIRED_FXAA_VARIANT_IDS:
                 raise ManifestError(
                     f"unexpected bundled gFXAAProgram variant: {recipe.program_id}"
+                )
+        elif recipe.source_symbol in indexed_symbols:
+            if recipe.program_id not in REQUIRED_SMAA_VARIANT_IDS:
+                raise ManifestError(
+                    f"unexpected bundled SMAA source variant: {recipe.program_id}"
                 )
         elif recipe.source_index is not None:
             raise ManifestError(
@@ -828,6 +921,7 @@ def _validate_program_selection_contracts(programs: list[ProgramRecipe]) -> None
             recipe.source_reference != ultra.source_reference
             or recipe.indexed_texture_channels != ultra.indexed_texture_channels
             or recipe.stages != ultra.stages
+            or recipe.stage_program_counts != ultra.stage_program_counts
             or recipe.required_reflection != ultra.required_reflection
             or recipe.comparison_sample_counts != ultra.comparison_sample_counts
             or recipe.pipeline != ultra.pipeline
@@ -835,6 +929,124 @@ def _validate_program_selection_contracts(programs: list[ProgramRecipe]) -> None
         ):
             raise ManifestError(
                 f"{program_id} does not share the FXAA runtime recipe contract"
+            )
+
+    deferred_vertex_features = (
+        "windlight/atmosphericsVarsV.glsl",
+        "deferred/textureUtilV.glsl",
+        "objects/nonindexedTextureV.glsl",
+    )
+    deferred_fragment_features = (
+        "deferred/globalF.glsl",
+        "environment/srgbF.glsl",
+        "windlight/atmosphericsVarsF.glsl",
+        "deferred/deferredUtil.glsl",
+        "windlight/gammaF.glsl",
+        "windlight/atmosphericsFuncs.glsl",
+        "windlight/atmosphericsF.glsl",
+    )
+    reflection_names = {
+        "edge": {"diffuseRect"},
+        "weights": {"edgesTex", "areaTex", "searchTex"},
+        "neighborhood": {"diffuseRect", "blendTex"},
+    }
+    pipeline_evidence = {
+        "edge": (
+            SourceEvidence(
+                "indra/newview/pipeline.cpp",
+                "if (!mFXAAMap.allocate(resX, resY, GL_RGBA)) return false;",
+            ),
+            SourceEvidence(
+                "indra/newview/pipeline.cpp",
+                "LLGLSLShader& edge_shader = gSMAAEdgeDetectProgram[fsaa_quality];",
+            ),
+        ),
+        "weights": (
+            SourceEvidence(
+                "indra/newview/pipeline.cpp",
+                "if (!mSMAABlendBuffer.allocate(resX, resY, GL_RGBA, false)) return false;",
+            ),
+            SourceEvidence(
+                "indra/newview/pipeline.cpp",
+                "LLGLSLShader& blend_weights_shader = gSMAABlendWeightsProgram[fsaa_quality];",
+            ),
+        ),
+        "neighborhood": (
+            SourceEvidence(
+                "indra/newview/pipeline.cpp",
+                "mPostPongMap.allocate(resX, resY, GL_RGBA);",
+            ),
+            SourceEvidence(
+                "indra/newview/pipeline.cpp",
+                "LLGLSLShader& blend_shader = gSMAANeighborhoodBlendProgram[fsaa_quality];",
+            ),
+        ),
+    }
+    for program_id, (
+        source_symbol,
+        source_index,
+        preset,
+        vertex_source,
+        fragment_source,
+        source_reference,
+    ) in SMAA_VARIANT_CONTRACT.items():
+        recipe = by_id[program_id]
+        pass_name = program_id.removeprefix("smaa_").rsplit("_", 1)[0]
+        expected_defines = {
+            "SMAA_GLSL_4": "1",
+            "SMAA_PREDICATION": "0",
+            "SMAA_REPROJECTION": "0",
+            preset: "1",
+        }
+        if (
+            recipe.family != "SMAA or FXAA"
+            or recipe.recipe_kind != "runtime_variant"
+            or recipe.source_reference != source_reference
+            or recipe.source_symbol != source_symbol
+            or recipe.source_index != source_index
+            or recipe.shader_class != 3
+            or recipe.settings_overrides
+            != {"RenderFSAASamples": source_index, "RenderFSAAType": 2}
+            or recipe.defines != expected_defines
+            or recipe.indexed_texture_channels != 0
+            or recipe.stages
+            != {
+                "vertex": (
+                    vertex_source,
+                    "deferred/SMAA.glsl",
+                    *deferred_vertex_features,
+                ),
+                "fragment": (
+                    fragment_source,
+                    "deferred/SMAA.glsl",
+                    *deferred_fragment_features,
+                ),
+            }
+            or recipe.stage_program_counts != {"vertex": 2, "fragment": 2}
+            or recipe.comparison_sample_counts
+            or recipe.semantic_parity != "not_run"
+        ):
+            raise ManifestError(f"{program_id} does not match the exact SMAA mapping")
+        fragment_reflection = recipe.required_reflection.get("fragment", ())
+        if (
+            set(recipe.required_reflection) != {"fragment"}
+            or {
+                requirement.name
+                for requirement in fragment_reflection
+                if requirement.group == "textures"
+                and requirement.resource_type == "sampler2D"
+            }
+            != reflection_names[pass_name]
+            or len(fragment_reflection) != len(reflection_names[pass_name])
+            or recipe.pipeline.color_formats != ("rgba8unorm",)
+            or recipe.pipeline.depth_format is not None
+            or recipe.pipeline.sample_count != 1
+            or len(recipe.pipeline.vertex_layouts) != 1
+            or recipe.pipeline.vertex_layouts[0].buffer_index != 16
+            or recipe.pipeline.source_evidence != pipeline_evidence[pass_name]
+        ):
+            raise ManifestError(
+                f"{program_id} does not match the exact SMAA pipeline contract"
             )
 
 
@@ -895,8 +1107,8 @@ def load_manifest(
         },
         "manifest",
     )
-    if document.get("schema") != 4:
-        raise ManifestError("manifest schema must be 4")
+    if document.get("schema") != 5:
+        raise ManifestError("manifest schema must be 5")
 
     root = repository_root().resolve()
     source_root_value = _require_string(document.get("source_root"), "source_root")
@@ -947,11 +1159,20 @@ def load_manifest(
     if not isinstance(feature_classes_value, dict) or not feature_classes_value:
         raise ManifestError("feature_classes must be a non-empty object")
     feature_classes = {
-        _require_string(path_value, "feature_classes key"): _require_int(
+        _require_shader_logical_path(path_value, "feature_classes key"): _require_int(
             class_value, f"feature_classes.{path_value}", 1
         )
         for path_value, class_value in feature_classes_value.items()
     }
+    unsupported_feature_classes = {
+        path_value: class_value
+        for path_value, class_value in feature_classes.items()
+        if class_value > MAX_SHADER_CLASS
+    }
+    if unsupported_feature_classes:
+        raise ManifestError(
+            "feature_classes values must be in the supported source range [1, 3]"
+        )
     vertex_streams_value = document.get("vertex_streams")
     if not isinstance(vertex_streams_value, dict) or not vertex_streams_value:
         raise ManifestError("vertex_streams must be a non-empty object")
@@ -1085,25 +1306,73 @@ def load_manifest(
         if not isinstance(stages_value, dict) or set(stages_value) != set(STAGE_SUFFIX):
             raise ManifestError(f"{prefix}.stages must contain vertex and fragment")
         stages: dict[str, tuple[str, ...]] = {}
+        stage_program_counts: dict[str, int] = {}
         for stage in STAGE_SUFFIX:
-            sources = stages_value.get(stage)
+            stage_value = stages_value.get(stage)
+            if not isinstance(stage_value, dict):
+                raise ManifestError(f"{prefix}.stages.{stage} must be an object")
+            _require_exact_keys(
+                stage_value,
+                {"program", "features"},
+                f"{prefix}.stages.{stage}",
+            )
+            program_sources = stage_value.get("program")
             if (
-                not isinstance(sources, list)
-                or not sources
-                or not all(isinstance(source, str) and source for source in sources)
+                not isinstance(program_sources, list)
+                or not program_sources
+                or not all(
+                    isinstance(source, str) and source for source in program_sources
+                )
             ):
                 raise ManifestError(
-                    f"{prefix}.stages.{stage} must be a non-empty string array"
+                    f"{prefix}.stages.{stage}.program must be a non-empty string array"
                 )
+            feature_sources = stage_value.get("features")
+            if not isinstance(feature_sources, list) or not all(
+                isinstance(source, str) and source for source in feature_sources
+            ):
+                raise ManifestError(
+                    f"{prefix}.stages.{stage}.features must be a string array"
+                )
+            program_sources = [
+                _require_shader_logical_path(source, f"{prefix}.stages.{stage}.program")
+                for source in program_sources
+            ]
+            feature_sources = [
+                _require_shader_logical_path(
+                    source, f"{prefix}.stages.{stage}.features"
+                )
+                for source in feature_sources
+            ]
+            sources = [*program_sources, *feature_sources]
             if len(sources) != len(set(sources)):
-                raise ManifestError(f"{prefix}.stages.{stage} contains duplicates")
-            for feature_source in sources[1:]:
+                raise ManifestError(
+                    f"{prefix}.stages.{stage} contains duplicate sources across roles"
+                )
+            for feature_source in feature_sources:
                 if feature_source not in feature_classes:
                     raise ManifestError(
                         f"{prefix}.stages.{stage} feature {feature_source!r} "
                         "has no declared baseline class"
                     )
+            physical_sources: dict[tuple[int, int], str] = {}
+            for source_position, source in enumerate(sources):
+                source_class = (
+                    shader_class
+                    if source_position < len(program_sources)
+                    else feature_classes[source]
+                )
+                resolved = resolve_source(source_root, source_class, source, inputs)
+                source_stat = resolved.stat()
+                identity = (source_stat.st_dev, source_stat.st_ino)
+                if previous := physical_sources.get(identity):
+                    raise ManifestError(
+                        f"{prefix}.stages.{stage} contains duplicate physical shader "
+                        f"sources: {previous!r} and {source!r}"
+                    )
+                physical_sources[identity] = source
             stages[stage] = tuple(sources)
+            stage_program_counts[stage] = len(program_sources)
 
         defines = _require_defines(value.get("defines", {}), f"{prefix}.defines")
         indexed_texture_channels = _require_int(
@@ -1167,6 +1436,7 @@ def load_manifest(
                 feature_classes=feature_classes,
                 indexed_texture_channels=indexed_texture_channels,
                 stages=stages,
+                stage_program_counts=stage_program_counts,
                 required_reflection=required_reflection,
                 comparison_sample_counts=_load_comparison_sample_counts(
                     value.get("comparison_sample_counts"), prefix, required_reflection
@@ -1201,15 +1471,21 @@ def resolve_source(
                 f"source was not resolved before input snapshot freeze: {logical_path}"
             )
     for candidate_class in range(shader_class, 0, -1):
-        candidate = (root / f"class{candidate_class}" / logical).resolve()
+        unresolved = root / f"class{candidate_class}" / logical
+        candidate = unresolved.resolve()
         if not _path_within(candidate, root):
             raise ManifestError(f"shader source escapes source_root: {logical_path}")
-        if candidate.is_file():
+        if candidate.is_file() and _path_has_exact_spelling(root, unresolved):
             if inputs is not None:
                 inputs.remember_source(root, shader_class, logical_path, candidate)
             return candidate
-    candidate = (root / logical).resolve()
-    if _path_within(candidate, root) and candidate.is_file():
+    unresolved = root / logical
+    candidate = unresolved.resolve()
+    if (
+        _path_within(candidate, root)
+        and candidate.is_file()
+        and _path_has_exact_spelling(root, unresolved)
+    ):
         if inputs is not None:
             inputs.remember_source(root, shader_class, logical_path, candidate)
         return candidate
@@ -1286,6 +1562,7 @@ def shader_preamble(recipe: ProgramRecipe, stage: str, is_feature: bool) -> str:
         else ""
     )
     return (
+        "#extension GL_ARB_shading_language_420pack : enable\n"
         f"#define {stage_define} 1\n"
         "#define GBUFFER_FLAG_SKIP_ATMOS 0.0\n"
         "#define GBUFFER_FLAG_HAS_ATMOS 0.34\n"
@@ -1333,7 +1610,7 @@ def write_shader_objects(
     object_root.mkdir(parents=True, exist_ok=True)
     wrappers: list[Path] = []
     for index, logical_path in enumerate(recipe.stages[stage]):
-        is_feature = index > 0
+        is_feature = index >= recipe.stage_program_counts[stage]
         shader_class = (
             recipe.feature_classes[logical_path] if is_feature else recipe.shader_class
         )
@@ -2805,9 +3082,9 @@ def validate_sources(
         for stage, sources in recipe.stages.items():
             for index, source in enumerate(sources):
                 shader_class = (
-                    recipe.shader_class
-                    if index == 0
-                    else recipe.feature_classes[source]
+                    recipe.feature_classes[source]
+                    if index >= recipe.stage_program_counts[stage]
+                    else recipe.shader_class
                 )
                 resolved = resolve_source(source_root, shader_class, source, inputs)
                 if (
@@ -3030,7 +3307,7 @@ def build_runtime_artifacts(
         {item.family for item in runtime_recipes}
     ) != 10:
         raise RuntimeProgramError(
-            "runtime artifact requires the exact 16 bundled recipes across 10 families"
+            "runtime artifact requires the exact 28 bundled recipes across 10 families"
         )
     by_id = {str(result.get("id")): result for result in results}
     if len(by_id) != len(results):
