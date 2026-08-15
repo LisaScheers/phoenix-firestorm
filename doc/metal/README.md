@@ -26,30 +26,44 @@ The feature ownership and parity state live in `feature-ledger.csv`.
 
 ## Shader feasibility gate
 
-`shader-spike.json` captures 13 representative recipes across the ten required
-shader families: 11 runtime contracts, a depth-writing FXAA capability probe,
-and a separate 16-channel indexed-texture stress case. The spike reconstructs
-Firestorm's class fallback, shader-object preprocessing environments, feature
-order, defines, settings overrides, and indexed-texture lookup before
-translating the compiler-linked program:
+`shader-spike.json` captures 30 representative recipes across the ten required
+shader families: 12 scalar runtime contracts, four selectable FXAA runtime
+recipes, 12 selectable SMAA runtime recipes, a depth-writing FXAA capability
+probe, and a separate 16-channel indexed-texture stress case. The spike
+reconstructs Firestorm's class fallback, shader-object preprocessing
+environments, feature order, defines, settings overrides, and indexed-texture
+lookup before translating the compiler-linked program:
 
 ```text
 GLSL objects -> glslang link -> SPIR-V -> spirv-val -> SPIRV-Cross -> MSL
              -> AIR -> metallib -> MTLRenderPipelineState
 ```
 
-Cross-stage locations are assigned through SPIR-V instructions and entry-point
+Each stage declares its program-local objects separately from shared feature
+objects. Program objects receive the recipe's requested class and defines;
+feature objects receive their source-backed baseline classes and global
+defines. A build-wide 420-pack preamble enables the canonical GLSL line
+continuations used by SMAA without rewriting shader source. Cross-stage
+locations are assigned through SPIR-V instructions and entry-point
 interfaces, not by rewriting GLSL or generated MSL. Every recipe must create a
 real Metal render pipeline with the manifest's source-backed attachment and
 SoA vertex contracts. Metal reflection must also match the complete expected
-binding set, typed textures, and recursive uniform-buffer layout. Inputs are
-captured once before translation, and a normal run compares 91 generated
-artifacts across two distinct output roots.
+binding set, typed textures, and recursive uniform-buffer layout. Recipes that
+require depth-comparison textures must retain both SPIR-V comparison samples
+and generated MSL `.sample_compare` calls. Inputs are captured once before
+translation. A normal run validates all 30 feasibility recipes independently,
+then links the 28 `runtime` and `runtime_variant` recipes in lexical
+program/stage order into one `firestorm-declared-programs.metallib`. The
+capability and stress recipes are not runtime artifacts. Every bundled PSO is
+recreated from that one library, and a second output root compares the 210
+per-program artifacts plus the path-free catalog JSON, generated C++17 header
+and source, and combined metallib byte for byte.
 
 Run its focused tests and the complete Apple compiler path with:
 
 ```sh
 python3 -m unittest scripts/metal/test_shader_spike.py \
+  scripts/metal/test_runtime_programs.py \
   scripts/metal/test_spirv_locations.py
 nix shell nixpkgs#glslang nixpkgs#spirv-cross nixpkgs#spirv-tools -c \
   python3 scripts/metal/shader_spike.py
@@ -59,11 +73,42 @@ Generated sources, reflection, AIR, libraries, and `report.json` are written to
 `.build/metal-shader-spike`. They are local evidence and are not checked in.
 See `shader-spike-results.md` for the reviewed result and its limits.
 
+The path-free runtime JSON records the frozen manifest schema and SHA-256,
+baseline commit, explicit metallib resource basename, ordered attachment and
+vertex contracts, typed stage bindings, recursive members including matrix
+stride/major order, and complete reflection/layout identity digests. Generated
+C++ exposes typed binding summaries and the per-buffer/full-stage digests, not
+a duplicate recursive member tree. String program IDs and logical binding names
+are authoritative. Each binding's generated `metal_name` is validated exactly
+against native reflection, but is toolchain-owned diagnostic identity rather
+than a persistence ABI. Artifact schema v2 also records each program's source
+symbol, optional array index, shader class, and typed settings overrides.
+Scalar globals retain no array index. The four `gFXAAProgram` descriptors and
+each of the three four-entry SMAA arrays carry indices 0 through 3 and their
+source-backed quality setting mappings. Generated code provides exact typed
+lookup by that selection identity. Artifact schema v2 accepts only the matrix
+forms in the frozen inventory: `mat3` and `mat4`,
+column-major with stride 16. The producer, catalog validator, and native
+specification validator reject every other matrix shape, stride, or major
+order; the remaining type is checked against Metal reflection. Generated
+`MetalProgramId` values are deterministic lexical
+ordinals for this build, not a persistence or telemetry ABI. Runtime code
+parses no JSON and compiles no shader source.
+
+The catalog's `presentation_copy` entry is the real class-2 `gCopyProgram`
+recipe: BGRA8Unorm, depthless, sample count one, the position-only vertex
+contract, and one paired `diffuseMap` texture/sampler with no uniform buffers.
+It is suitable for the first artifact-driven presentation draw without first
+inventing a recursive CPU uniform packer; semantic parity remains `not_run`.
+
 ## Review boundary
 
 The foundation review covers the pinned inventory, shader feasibility result,
-and a native clear-frame and triangle bootstrap. It does not claim renderer
-parity. The semantic pass condition for each shader family still requires the
-offscreen and oracle comparisons named in the migration plan.
+and native bootstrap contracts. The declared catalog is 28 representative
+runtime recipes and variants, not the complete viewer program inventory,
+renderer selection integration, or renderer semantic parity. The semantic pass
+condition for each
+shader family still requires the offscreen and oracle comparisons named in the
+migration plan.
 
 No production or daily-driver release channel is part of this work.

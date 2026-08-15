@@ -27,10 +27,15 @@
 
 #include <AppKit/AppKit.h>
 #include <Cocoa/Cocoa.h>
+#include <OpenGL/OpenGL.h>
+#include <cmath>
 #include <errno.h>
 #include "llopenglview-objc.h"
 #include "llwindowmacosx-objc.h"
 #include "llappdelegate-objc.h"
+#if defined(LL_ACTIVE_METAL_VIEWER)
+#include "llmetalprogram.h"
+#endif
 
 /*
  * These functions are broken out into a separate file because the
@@ -231,6 +236,172 @@ NSWindowRef createNSWindow(int x, int y, int width, int height)
     return window;
 }
 
+#if defined(LL_ACTIVE_METAL_VIEWER)
+GLViewRef createCocoaInputView(NSWindowRef window)
+{
+    NSView *content_view = [(LLNSWindow*)window contentView];
+    LLOpenGLView *input_view = [[LLOpenGLView alloc]
+        initWithFrame:[content_view bounds]
+         withSamples:0
+            andVsync:NO];
+    [input_view setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
+    [(LLNSWindow*)window setContentView:input_view];
+    return input_view;
+}
+
+void setCocoaMetalWindowContentSize(
+    NSWindowRef window_ref, float width, float height)
+{
+    [(NSWindow*)window_ref setContentSize:NSMakeSize(width, height)];
+}
+
+bool prepareCocoaMetalWindow(NSWindowRef window_ref, GLViewRef view_ref)
+{
+    NSWindow *window = (NSWindow*)window_ref;
+    NSView *view = (NSView*)view_ref;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    [NSApp activateIgnoringOtherApps:YES];
+#pragma clang diagnostic pop
+    [window makeKeyAndOrderFront:nil];
+    [window orderFrontRegardless];
+    [window.contentView layoutSubtreeIfNeeded];
+    [window displayIfNeeded];
+    [view displayIfNeeded];
+    // AppKit publishes the new occlusion state asynchronously after ordering
+    // the window. The deferred production path remains occlusion-gated.
+    return window.visible && !window.miniaturized;
+}
+
+bool resizeCocoaMetalWindow(
+    NSWindowRef window_ref, float width_delta, float height_delta)
+{
+    NSWindow *window = (NSWindow*)window_ref;
+    const NSSize content_size = window.contentView.bounds.size;
+    const CGFloat width = content_size.width + width_delta;
+    const CGFloat height = content_size.height + height_delta;
+    if (!std::isfinite(width) || !std::isfinite(height) ||
+        width <= 0.0 || height <= 0.0)
+    {
+        return false;
+    }
+
+    [window setContentSize:NSMakeSize(width, height)];
+    [window.contentView layoutSubtreeIfNeeded];
+    return true;
+}
+
+std::string getBundledMetalLibraryPath()
+{
+    @autoreleasepool
+    {
+        const std::string_view resource =
+            firestorm::metal::metalProgramCatalog().libraryResource;
+        NSString *filename = [[[NSString alloc]
+            initWithBytes:resource.data()
+                   length:resource.size()
+                 encoding:NSUTF8StringEncoding] autorelease];
+        if (!filename)
+        {
+            return {};
+        }
+
+        NSString *extension = filename.pathExtension;
+        NSString *basename = filename.stringByDeletingPathExtension;
+        NSURL *url = [[NSBundle mainBundle] URLForResource:basename
+                                             withExtension:extension];
+        if (!url.isFileURL || !url.fileSystemRepresentation)
+        {
+            return {};
+        }
+        return url.fileSystemRepresentation;
+    }
+}
+
+bool runCocoaInputSelfTest(GLViewRef view_ref, std::string& report)
+{
+    LLOpenGLView *view = (LLOpenGLView*)view_ref;
+    NSMutableArray<NSString*> *checks = [NSMutableArray array];
+
+    const bool no_nsopengl_context = [NSOpenGLContext currentContext] == nil;
+    const bool no_cgl_context = CGLGetCurrentContext() == nullptr;
+    [checks addObject:(no_nsopengl_context ? @"nsopengl-current=none" : @"nsopengl-current=unexpected")];
+    [checks addObject:(no_cgl_context ? @"cgl-current=none" : @"cgl-current=unexpected")];
+
+    const bool responder = [view acceptsFirstResponder] &&
+        [view conformsToProtocol:@protocol(NSTextInputClient)];
+    [checks addObject:(responder ? @"responder=ok" : @"responder=failed")];
+
+    const bool drag = [[view registeredDraggedTypes]
+        containsObject:NSPasteboardTypeURL] &&
+        [view respondsToSelector:@selector(draggingEntered:)] &&
+        [view respondsToSelector:@selector(performDragOperation:)];
+    [checks addObject:(drag ? @"drag=ok" : @"drag=failed")];
+
+    const bool ime = [view respondsToSelector:@selector(setMarkedText:selectedRange:replacementRange:)] &&
+        [view respondsToSelector:@selector(insertText:replacementRange:)] &&
+        [view respondsToSelector:@selector(firstRectForCharacterRange:actualRange:)];
+    [checks addObject:(ime ? @"ime=ok" : @"ime=failed")];
+
+    const NSRange marked_range = [view markedRange];
+    const NSRange selected_range = [view selectedRange];
+    const bool ime_ranges =
+        marked_range.location == NSNotFound && marked_range.length == 0 &&
+        selected_range.location == NSNotFound && selected_range.length == 0;
+    [checks addObject:(ime_ranges ? @"ime-ranges=empty" : @"ime-ranges=failed")];
+
+    NSEvent *move = [NSEvent mouseEventWithType:NSEventTypeMouseMoved
+                                        location:NSMakePoint(16.0, 16.0)
+                                   modifierFlags:0
+                                       timestamp:0.0
+                                    windowNumber:view.window.windowNumber
+                                         context:nil
+                                     eventNumber:1
+                                      clickCount:0
+                                        pressure:0.0];
+    NSEvent *click = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDown
+                                         location:NSMakePoint(16.0, 16.0)
+                                    modifierFlags:0
+                                        timestamp:0.0
+                                     windowNumber:view.window.windowNumber
+                                          context:nil
+                                      eventNumber:2
+                                       clickCount:1
+                                         pressure:1.0];
+    NSEvent *key = [NSEvent keyEventWithType:NSEventTypeKeyDown
+                                     location:NSZeroPoint
+                                modifierFlags:0
+                                    timestamp:0.0
+                                 windowNumber:view.window.windowNumber
+                                      context:nil
+                                   characters:@"a"
+                  charactersIgnoringModifiers:@"a"
+                                     isARepeat:NO
+                                       keyCode:0];
+    const bool events = move && click && key;
+    if (events)
+    {
+        [view mouseMoved:move];
+        [view mouseDown:click];
+        [view keyDown:key];
+        [view insertText:@"x" replacementRange:NSMakeRange(NSNotFound, 0)];
+    }
+    [checks addObject:(events ? @"events=sent" : @"events=failed")];
+
+    NSView *metal_view = view.subviews.lastObject;
+    const bool routing = metal_view && [metal_view hitTest:NSMakePoint(1.0, 1.0)] == nil;
+    [checks addObject:(routing ? @"metal-hit-test=transparent" : @"metal-hit-test=failed")];
+
+    const bool no_nsopengl_context_after = [NSOpenGLContext currentContext] == nil;
+    const bool no_cgl_context_after = CGLGetCurrentContext() == nullptr;
+    [checks addObject:(no_nsopengl_context_after ? @"nsopengl-after=none" : @"nsopengl-after=unexpected")];
+    [checks addObject:(no_cgl_context_after ? @"cgl-after=none" : @"cgl-after=unexpected")];
+    report = [[[checks componentsJoinedByString:@", "] description] UTF8String];
+    return no_nsopengl_context && no_cgl_context && responder && drag && ime &&
+        ime_ranges && events && routing && no_nsopengl_context_after &&
+        no_cgl_context_after;
+}
+#else
 GLViewRef createOpenGLView(NSWindowRef window, unsigned int samples, bool vsync)
 {
     LLOpenGLView *glview = [[LLOpenGLView alloc]initWithFrame:[(LLNSWindow*)window frame] withSamples:samples andVsync:vsync];
@@ -258,6 +429,7 @@ unsigned long getVramSize(GLViewRef view)
 {
     return [(LLOpenGLView *)view getVramSize];
 }
+#endif
 
 float getDeviceUnitSize(GLViewRef view)
 {
@@ -271,7 +443,11 @@ CGRect getContentViewRect(NSWindowRef window)
 
 CGRect getBackingViewRect(NSWindowRef window, GLViewRef view)
 {
+#if defined(LL_ACTIVE_METAL_VIEWER)
+    return [(NSView*)view convertRectToBacking:[[(LLNSWindow*)window contentView] bounds]];
+#else
     return [(NSOpenGLView*)view convertRectToBacking:[[(LLNSWindow*)window contentView] bounds]];
+#endif
 }
 
 void getWindowSize(NSWindowRef window, float* size)
@@ -359,7 +535,9 @@ void closeWindow(NSWindowRef window)
 
 void removeGLView(GLViewRef view)
 {
+#if !defined(LL_ACTIVE_METAL_VIEWER)
     [(LLOpenGLView*)view clearGLContext];
+#endif
     [(LLOpenGLView*)view removeFromSuperview];
 }
 

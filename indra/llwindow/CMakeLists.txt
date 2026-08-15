@@ -61,6 +61,12 @@ set(llwindow_LINK_LIBRARIES
         ll::SDL
         )
 
+option(FIRESTORM_BUILD_ACTIVE_METAL_VIEWER
+       "Build firestorm-bin as the developer-only active Metal bootstrap" OFF)
+if (FIRESTORM_BUILD_ACTIVE_METAL_VIEWER AND NOT DARWIN)
+  message(FATAL_ERROR "The active Metal viewer requires macOS")
+endif ()
+
 if(LINUX)
   set(llwindow_LINK_LIBRARIES ${llwindow_LINK_LIBRARIES} ll::fontconfig)
 endif()
@@ -194,7 +200,43 @@ if (DARWIN)
   target_link_libraries(llwindow ${CARBON_LIBRARY})
   option(FIRESTORM_BUILD_METAL_BOOTSTRAP
          "Configure the developer-only Metal presentation bootstrap" OFF)
-  if (FIRESTORM_BUILD_METAL_BOOTSTRAP)
+  if (FIRESTORM_BUILD_METAL_BOOTSTRAP OR FIRESTORM_BUILD_ACTIVE_METAL_VIEWER)
     add_subdirectory(metal)
+  endif ()
+  if (FIRESTORM_BUILD_ACTIVE_METAL_VIEWER)
+    target_compile_definitions(llwindow PUBLIC LL_ACTIVE_METAL_VIEWER=1)
+    target_sources(llwindow PRIVATE
+      metal/llmetalbootstrap.h
+      metal/llmetalbootstrap-objc.mm
+      )
+    set_source_files_properties(
+      metal/llmetalbootstrap-objc.mm
+      PROPERTIES
+      COMPILE_FLAGS "-fobjc-arc"
+      SKIP_PRECOMPILE_HEADERS TRUE
+      )
+    target_include_directories(llwindow PUBLIC
+      "${CMAKE_CURRENT_SOURCE_DIR}/metal"
+      )
+    target_compile_options(llwindow PRIVATE
+      "-mmacosx-version-min=${FIRESTORM_METAL_BOOTSTRAP_MIN_MACOS}"
+      )
+    set_target_properties(llwindow PROPERTIES
+      OSX_ARCHITECTURES "arm64"
+      XCODE_ATTRIBUTE_MACOSX_DEPLOYMENT_TARGET
+          "${FIRESTORM_METAL_BOOTSTRAP_MIN_MACOS}"
+      )
+    target_link_libraries(llwindow
+      firestorm_metal_artifact_runtime
+      "${FIRESTORM_APPKIT_FRAMEWORK}"
+      "${FIRESTORM_METAL_FRAMEWORK}"
+      "${FIRESTORM_QUARTZCORE_FRAMEWORK}"
+      )
+
+    # Make the generated resource available to the later newview target.
+    set(FIRESTORM_ACTIVE_METAL_LIBRARY "${FIRESTORM_METAL_PROGRAM_LIBRARY}"
+        PARENT_SCOPE)
+    set(FIRESTORM_ACTIVE_METAL_MIN_MACOS
+        "${FIRESTORM_METAL_BOOTSTRAP_MIN_MACOS}" PARENT_SCOPE)
   endif ()
 endif (DARWIN)

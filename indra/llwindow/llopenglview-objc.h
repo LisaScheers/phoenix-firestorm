@@ -33,7 +33,15 @@
 #import <CoreFoundation/CFNumber.h>
 #include <string>
 
+#if defined(LL_ACTIVE_METAL_VIEWER)
+// Transitional Phase 1 input host. The active Metal bootstrap keeps the
+// viewer's Cocoa responder and NSTextInputClient surface without constructing
+// NSOpenGLView or an OpenGL context. The production declaration below remains
+// unchanged when the opt-in build is disabled.
+@interface LLOpenGLView : NSView <NSTextInputClient>
+#else
 @interface LLOpenGLView : NSOpenGLView <NSTextInputClient>
+#endif
 {
     std::string mLastDraggedUrl;
     unsigned int mModifiers;
@@ -49,6 +57,7 @@
 
 - (void)commitCurrentPreedit;
 
+#if !defined(LL_ACTIVE_METAL_VIEWER)
 // rebuildContext
 // Destroys and recreates a context with the view's internal format set via setPixelFormat;
 // Use this in event of needing to rebuild a context for whatever reason, without needing to assign a new pixel format.
@@ -63,6 +72,7 @@
 - (CGLPixelFormatObj*)getCGLPixelFormatObj;
 
 - (unsigned long) getVramSize;
+#endif
 
 - (void) allowMarkedTextInput:(bool)allowed;
 

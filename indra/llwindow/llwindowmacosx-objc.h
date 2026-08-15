@@ -29,6 +29,7 @@
 #define LL_LLWINDOWMACOSX_OBJC_H
 
 #include <map>
+#include <string>
 #include <vector>
 #include <deque>
 
@@ -106,10 +107,19 @@ NSWindowRef createNSWindow(int x, int y, int width, int height);
 
 #include <OpenGL/OpenGL.h>
 
+#if defined(LL_ACTIVE_METAL_VIEWER)
+GLViewRef createCocoaInputView(NSWindowRef window);
+void setCocoaMetalWindowContentSize(NSWindowRef window, float width, float height);
+bool prepareCocoaMetalWindow(NSWindowRef window, GLViewRef view);
+bool resizeCocoaMetalWindow(NSWindowRef window, float width_delta, float height_delta);
+bool runCocoaInputSelfTest(GLViewRef view, std::string& report);
+std::string getBundledMetalLibraryPath();
+#else
 GLViewRef createOpenGLView(NSWindowRef window, unsigned int samples, bool vsync);
 void glSwapBuffers(void* context);
 CGLContextObj getCGLContextObj(GLViewRef view);
 unsigned long getVramSize(GLViewRef view);
+#endif
 float getDeviceUnitSize(GLViewRef view);
 CGRect getContentViewRect(NSWindowRef window);
 CGRect getBackingViewRect(NSWindowRef window, GLViewRef view);
@@ -157,7 +167,6 @@ void callModifier(unsigned int mask);
 void callQuitHandler();
 void commitCurrentPreedit(GLViewRef glView);
 
-#include <string>
 void callHandleDragEntered(std::string url);
 void callHandleDragExited(std::string url);
 void callHandleDragUpdated(std::string url);

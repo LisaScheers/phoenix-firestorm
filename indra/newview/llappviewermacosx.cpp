@@ -53,8 +53,10 @@
 #include <Carbon/Carbon.h>
 #endif
 #include <vector>
+#include <chrono>
 #include <exception>
 #include <fstream>
+#include <iostream>
 
 #include "lldir.h"
 #include "lldiriterator.h"
@@ -70,10 +72,103 @@ namespace
     char** gArgV;
     LLAppViewerMacOSX* gViewerAppPtr = NULL;
     std::string gHandleSLURL;
+
+#if defined(LL_ACTIVE_METAL_VIEWER)
+    LLWindowMacOSX* gMetalBootstrapWindow = nullptr;
+    bool gMetalBootstrapQuit = false;
+    bool gMetalBootstrapSelfTest = false;
+    bool gMetalBootstrapTerminalFailure = false;
+    int gMetalBootstrapExitStatus = EXIT_FAILURE;
+    std::chrono::steady_clock::time_point gMetalBootstrapStart;
+    enum class MetalBootstrapSelfTestPhase
+    {
+        initial_present,
+        deferred_present,
+        resized_present,
+    };
+    MetalBootstrapSelfTestPhase gMetalBootstrapSelfTestPhase =
+        MetalBootstrapSelfTestPhase::initial_present;
+    U64 gMetalInitialSubmitted = 0;
+    U64 gMetalInitialPresented = 0;
+    U64 gMetalDeferredSubmitted = 0;
+    U64 gMetalDeferredPresented = 0;
+    U32 gMetalDrawableWidthBeforeResize = 0;
+    U32 gMetalDrawableHeightBeforeResize = 0;
+
+    class LLMetalBootstrapCallbacks final : public LLWindowCallbacks
+    {
+    public:
+        bool handleTranslatedKeyDown(KEY, MASK, bool) override
+        {
+            ++keyDownCount;
+            return true;
+        }
+
+        bool handleUnicodeChar(llwchar, MASK) override
+        {
+            ++unicodeCount;
+            return true;
+        }
+
+        bool handleMouseDown(LLWindow*, LLCoordGL, MASK) override
+        {
+            ++mouseDownCount;
+            return true;
+        }
+
+        void handleMouseMove(LLWindow*, LLCoordGL, MASK) override
+        {
+            ++mouseMoveCount;
+        }
+
+        DragNDropResult handleDragNDrop(
+            LLWindow*, LLCoordGL, MASK, DragNDropAction, std::string) override
+        {
+            ++dragCount;
+            return DND_LINK;
+        }
+
+        void handleQuit(LLWindow*) override
+        {
+            gMetalBootstrapQuit = true;
+        }
+
+        U32 keyDownCount = 0;
+        U32 unicodeCount = 0;
+        U32 mouseDownCount = 0;
+        U32 mouseMoveCount = 0;
+        U32 dragCount = 0;
+    };
+
+    LLMetalBootstrapCallbacks gMetalBootstrapCallbacks;
+#endif
 }
+
+#if defined(LL_ACTIVE_METAL_VIEWER)
+extern "C" void reportActiveMetalBootstrapTerminalFailure(const char* message)
+{
+    if (gMetalBootstrapTerminalFailure)
+    {
+        return;
+    }
+
+    gMetalBootstrapTerminalFailure = true;
+    gMetalBootstrapExitStatus = EXIT_FAILURE;
+    gMetalBootstrapQuit = true;
+    std::cerr << "Active Metal viewer terminal failure: "
+              << (message && *message
+                  ? message
+                  : "unknown terminal Metal bootstrap failure")
+              << '\n';
+}
+#endif
 
 void constructViewer()
 {
+#if defined(LL_ACTIVE_METAL_VIEWER)
+    // The active bootstrap intentionally stops before LLAppViewer construction.
+    return;
+#else
     // Set the working dir to <bundle>/Contents/Resources
     if (chdir(gDirUtilp->getAppRODataDir().c_str()) == -1)
     {
@@ -83,10 +178,69 @@ void constructViewer()
     }
 
     gViewerAppPtr = new LLAppViewerMacOSX();
+#endif
 }
 
 bool initViewer()
 {
+#if defined(LL_ACTIVE_METAL_VIEWER)
+    gMetalBootstrapWindow = static_cast<LLWindowMacOSX*>(
+        LLWindowManager::createWindow(
+            &gMetalBootstrapCallbacks,
+            "Firestorm Metal Bootstrap",
+            "firestorm-metal-bootstrap",
+            0, 0, 960, 600,
+            0, false, false, true, true));
+    if (!gMetalBootstrapWindow || !gMetalBootstrapWindow->isMetalBootstrapReady())
+    {
+        std::cerr << "Active Metal viewer initialization failed\n";
+        return false;
+    }
+
+    std::cout << gMetalBootstrapWindow->getMetalBootstrapCapabilityReport() << '\n';
+    gMetalBootstrapStart = std::chrono::steady_clock::now();
+
+    if (gMetalBootstrapSelfTest)
+    {
+        std::string input_report;
+        const bool input_ok =
+            gMetalBootstrapWindow->runMetalBootstrapInputSelfTest(input_report) &&
+            gMetalBootstrapCallbacks.keyDownCount > 0 &&
+            gMetalBootstrapCallbacks.unicodeCount > 0 &&
+            gMetalBootstrapCallbacks.mouseDownCount > 0 &&
+            gMetalBootstrapCallbacks.mouseMoveCount > 0;
+        std::cout << "Cocoa input self-test: " << input_report
+                  << ", callbacks=" << (input_ok ? "ok" : "failed") << '\n';
+        if (!input_ok)
+        {
+            return false;
+        }
+
+        std::string error;
+        const auto submission =
+            gMetalBootstrapWindow->submitMetalBootstrapFrame(error);
+        if (submission == firestorm::metal::FrameSubmission::renderer_busy)
+        {
+            gMetalBootstrapWindow->requestMetalBootstrapFrame();
+        }
+        else if (submission != firestorm::metal::FrameSubmission::submitted)
+        {
+            std::cerr << "Initial Metal self-test frame was "
+                      << firestorm::metal::toString(submission);
+            if (!error.empty())
+            {
+                std::cerr << ": " << error;
+            }
+            std::cerr << '\n';
+            return false;
+        }
+    }
+    else
+    {
+        gMetalBootstrapWindow->requestMetalBootstrapFrame();
+    }
+    return true;
+#else
     bool ok = gViewerAppPtr->init();
     if(!ok)
     {
@@ -104,12 +258,31 @@ bool initViewer()
         gHandleSLURL = "";
     }
     return ok;
+#endif
 }
 
 void handleQuit()
 {
+#if defined(LL_ACTIVE_METAL_VIEWER)
+    gMetalBootstrapQuit = true;
+#else
     LLAppViewer::instance()->userQuit();
+#endif
 }
+
+#if defined(LL_ACTIVE_METAL_VIEWER)
+bool metalBootstrapSelfTestRequested()
+{
+    // Terminal renderer failures use the self-test's explicit cleanup and
+    // process-status path even in the otherwise interactive bootstrap.
+    return gMetalBootstrapSelfTest || gMetalBootstrapTerminalFailure;
+}
+
+int metalBootstrapSelfTestExitStatus()
+{
+    return gMetalBootstrapExitStatus;
+}
+#endif
 
 // This function is called pumpMainLoop() rather than runMainLoop() because
 // it passes control to the viewer's main-loop logic for a single frame. Like
@@ -118,6 +291,197 @@ void handleQuit()
 // (llappdelegate-objc.mm).
 bool pumpMainLoop()
 {
+#if defined(LL_ACTIVE_METAL_VIEWER)
+    if (gMetalBootstrapQuit)
+    {
+        return true;
+    }
+    if (!gMetalBootstrapSelfTest)
+    {
+        return false;
+    }
+
+    const U64 submitted =
+        gMetalBootstrapWindow->getMetalBootstrapSubmittedFrameCount();
+    const U64 presented =
+        gMetalBootstrapWindow->getMetalBootstrapPresentedFrameCount();
+
+    if (gMetalBootstrapSelfTestPhase ==
+            MetalBootstrapSelfTestPhase::initial_present &&
+        submitted == 0)
+    {
+        std::string error;
+        const auto preparation =
+            gMetalBootstrapWindow->submitMetalBootstrapFrame(error);
+        if (preparation == firestorm::metal::FrameSubmission::failed)
+        {
+            std::cerr << "Initial Metal artifact preparation failed";
+            if (!error.empty())
+            {
+                std::cerr << ": " << error;
+            }
+            std::cerr << '\n';
+            gMetalBootstrapExitStatus = EXIT_FAILURE;
+            gMetalBootstrapQuit = true;
+            return true;
+        }
+        if (preparation != firestorm::metal::FrameSubmission::submitted)
+        {
+            gMetalBootstrapWindow->requestMetalBootstrapFrame();
+        }
+    }
+
+    if (gMetalBootstrapSelfTestPhase ==
+            MetalBootstrapSelfTestPhase::initial_present &&
+        presented > 0)
+    {
+        std::string error;
+        if (!gMetalBootstrapWindow->waitForMetalBootstrapFrame(
+                std::chrono::seconds(5), error))
+        {
+            std::cerr << "Initial Metal presentation failed: " << error << '\n';
+            gMetalBootstrapQuit = true;
+            return true;
+        }
+
+        gMetalInitialSubmitted =
+            gMetalBootstrapWindow->getMetalBootstrapSubmittedFrameCount();
+        gMetalInitialPresented =
+            gMetalBootstrapWindow->getMetalBootstrapPresentedFrameCount();
+        std::cout << "Initial Metal presentation: submitted="
+                  << gMetalInitialSubmitted << ", presented="
+                  << gMetalInitialPresented << '\n';
+
+        gMetalBootstrapWindow->requestMetalBootstrapFrame();
+        gMetalBootstrapSelfTestPhase =
+            MetalBootstrapSelfTestPhase::deferred_present;
+        gMetalBootstrapStart = std::chrono::steady_clock::now();
+        return false;
+    }
+
+    if (gMetalBootstrapSelfTestPhase ==
+            MetalBootstrapSelfTestPhase::deferred_present &&
+        submitted > gMetalInitialSubmitted &&
+        presented > gMetalInitialPresented)
+    {
+        std::string error;
+        if (!gMetalBootstrapWindow->waitForMetalBootstrapFrame(
+                std::chrono::seconds(5), error))
+        {
+            std::cerr << "Deferred Metal presentation failed: " << error << '\n';
+            gMetalBootstrapQuit = true;
+            return true;
+        }
+
+        gMetalDeferredSubmitted =
+            gMetalBootstrapWindow->getMetalBootstrapSubmittedFrameCount();
+        gMetalDeferredPresented =
+            gMetalBootstrapWindow->getMetalBootstrapPresentedFrameCount();
+        gMetalBootstrapWindow->getMetalBootstrapDrawableSize(
+            gMetalDrawableWidthBeforeResize,
+            gMetalDrawableHeightBeforeResize);
+
+        if (gMetalDrawableWidthBeforeResize == 0 ||
+            gMetalDrawableHeightBeforeResize == 0 ||
+            !gMetalBootstrapWindow->resizeMetalBootstrapWindow(-32.0f, -24.0f))
+        {
+            std::cerr << "Metal resize self-test could not resize the native window\n";
+            gMetalBootstrapQuit = true;
+            return true;
+        }
+
+        gMetalBootstrapWindow->requestMetalBootstrapFrame();
+        gMetalBootstrapSelfTestPhase =
+            MetalBootstrapSelfTestPhase::resized_present;
+        gMetalBootstrapStart = std::chrono::steady_clock::now();
+        return false;
+    }
+
+    if (gMetalBootstrapSelfTestPhase ==
+        MetalBootstrapSelfTestPhase::resized_present)
+    {
+        U32 drawable_width = 0;
+        U32 drawable_height = 0;
+        gMetalBootstrapWindow->getMetalBootstrapDrawableSize(
+            drawable_width, drawable_height);
+        if (drawable_width != gMetalDrawableWidthBeforeResize &&
+            drawable_height != gMetalDrawableHeightBeforeResize &&
+            submitted > gMetalDeferredSubmitted &&
+            presented > gMetalDeferredPresented)
+        {
+            std::string error;
+            if (!gMetalBootstrapWindow->waitForMetalBootstrapFrame(
+                    std::chrono::seconds(5), error))
+            {
+                std::cerr << "Resized Metal presentation failed: " << error << '\n';
+                gMetalBootstrapQuit = true;
+                return true;
+            }
+
+            std::cout << "Deferred Metal request: submitted="
+                      << gMetalInitialSubmitted << "->"
+                      << gMetalDeferredSubmitted << ", presented="
+                      << gMetalInitialPresented << "->"
+                      << gMetalDeferredPresented << '\n'
+                      << "Metal resize: drawable="
+                      << gMetalDrawableWidthBeforeResize << "x"
+                      << gMetalDrawableHeightBeforeResize << "->"
+                      << drawable_width << "x" << drawable_height
+                      << ", submitted=" << gMetalDeferredSubmitted << "->"
+                      << gMetalBootstrapWindow->getMetalBootstrapSubmittedFrameCount()
+                      << ", presented=" << gMetalDeferredPresented << "->"
+                      << gMetalBootstrapWindow->getMetalBootstrapPresentedFrameCount()
+                      << '\n';
+            gMetalBootstrapExitStatus = EXIT_SUCCESS;
+            gMetalBootstrapQuit = true;
+            return true;
+        }
+    }
+
+    if (std::chrono::steady_clock::now() - gMetalBootstrapStart >
+        std::chrono::seconds(10))
+    {
+        const char* phase =
+            gMetalBootstrapSelfTestPhase ==
+                MetalBootstrapSelfTestPhase::initial_present
+            ? "initial presentation"
+            : gMetalBootstrapSelfTestPhase ==
+                MetalBootstrapSelfTestPhase::deferred_present
+            ? "deferred requestFrame presentation"
+            : "resized drawable presentation";
+        U32 drawable_width = 0;
+        U32 drawable_height = 0;
+        gMetalBootstrapWindow->getMetalBootstrapDrawableSize(
+            drawable_width, drawable_height);
+        std::string frame_error;
+        gMetalBootstrapWindow->waitForMetalBootstrapFrame(
+            std::chrono::milliseconds(0), frame_error);
+        std::cerr << "Active Metal viewer self-test timed out during "
+                  << phase << "; submitted="
+                  << gMetalBootstrapWindow->getMetalBootstrapSubmittedFrameCount()
+                  << ", presented="
+                  << gMetalBootstrapWindow->getMetalBootstrapPresentedFrameCount()
+                  << ", initial=" << gMetalInitialSubmitted << "/"
+                  << gMetalInitialPresented << ", deferred="
+                  << gMetalDeferredSubmitted << "/"
+                  << gMetalDeferredPresented << ", drawable="
+                  << gMetalDrawableWidthBeforeResize << "x"
+                  << gMetalDrawableHeightBeforeResize << "->"
+                  << drawable_width << "x" << drawable_height;
+        if (!frame_error.empty())
+        {
+            std::cerr << "; Metal status: " << frame_error;
+        }
+        std::cerr << '\n'
+                  << "Current Metal capability/preparation state:\n"
+                  << gMetalBootstrapWindow->getMetalBootstrapCapabilityReport()
+                  << '\n';
+        gMetalBootstrapExitStatus = EXIT_FAILURE;
+        gMetalBootstrapQuit = true;
+        return true;
+    }
+    return false;
+#else
     bool ret = LLApp::isQuitting();
     if (!ret && gViewerAppPtr != NULL)
     {
@@ -127,10 +491,18 @@ bool pumpMainLoop()
     }
 
     return ret;
+#endif
 }
 
 void cleanupViewer()
 {
+#if defined(LL_ACTIVE_METAL_VIEWER)
+    if (gMetalBootstrapWindow)
+    {
+        LLWindowManager::destroyWindow(gMetalBootstrapWindow);
+        gMetalBootstrapWindow = nullptr;
+    }
+#else
     if(!LLApp::isError())
     {
         if (gViewerAppPtr)
@@ -139,14 +511,17 @@ void cleanupViewer()
 
     delete gViewerAppPtr;
     gViewerAppPtr = NULL;
+#endif
 }
 
 void clearDumpLogsDir()
 {
+#if !defined(LL_ACTIVE_METAL_VIEWER)
     if (!LLAppViewer::instance()->isSecondInstance())
     {
         gDirUtilp->deleteDirAndContents(gDirUtilp->getDumpLogsDirPath());
     }
+#endif
 }
 
 // The BugsplatMac API is structured as a number of different method
@@ -272,7 +647,23 @@ int main( int argc, char **argv )
     // Store off the command line args for use later.
     gArgC = argc;
     gArgV = argv;
-    return createNSApp(argc, (const char**)argv);
+#if defined(LL_ACTIVE_METAL_VIEWER)
+    for (int index = 1; index < argc; ++index)
+    {
+        if (std::string_view(argv[index]) == "--metal-bootstrap-self-test")
+        {
+            gMetalBootstrapSelfTest = true;
+        }
+    }
+#endif
+    const int app_status = createNSApp(argc, (const char**)argv);
+#if defined(LL_ACTIVE_METAL_VIEWER)
+    return gMetalBootstrapSelfTest || gMetalBootstrapTerminalFailure
+        ? gMetalBootstrapExitStatus
+        : app_status;
+#else
+    return app_status;
+#endif
 }
 
 LLAppViewerMacOSX::LLAppViewerMacOSX()
@@ -415,7 +806,11 @@ std::string LLAppViewerMacOSX::generateSerialNumber()
 
     // JC: Sample code from http://developer.apple.com/technotes/tn/tn1103.html
     CFStringRef serialNumber = NULL;
+#if defined(LL_ACTIVE_METAL_VIEWER)
+    io_service_t    platformExpert = IOServiceGetMatchingService(kIOMainPortDefault,
+#else
     io_service_t    platformExpert = IOServiceGetMatchingService(kIOMasterPortDefault,
+#endif
                                                                  IOServiceMatching("IOPlatformExpertDevice"));
     if (platformExpert)
     {

@@ -30,6 +30,275 @@ For focused transient-drawable verification, use
 that no frame was submitted, and verifies that exactly one queued retry is
 completed and presented.
 
+The standalone build also includes an ordinary C++17 test for the three-slot
+frame lifecycle and non-wrapping transient allocator:
+
+```sh
+(cd .build/metal-bootstrap && ctest --output-on-failure)
+```
+
+`FrameSlots` accepts at most three concurrent frames and rejects stale or
+wrong-state generation tokens. Calls are synchronized for the intended model
+of one recording/submission thread plus completion callbacks from any thread.
+`TransientArena` is thread-confined, supports any positive alignment, and
+retains its high-water mark across resets.
+
+## Deterministic offscreen validation
+
+The standalone build also provides a headless resource test. It renders exact
+corner colors into a private 2×2 texture, blits them into a shared buffer, and
+validates the top-to-bottom rows only after command-buffer completion. Metal
+API and GPU validation are enabled by the registered test.
+
+```sh
+cmake -S indra/llwindow/metal -B .build/metal-core -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+cmake --build .build/metal-core --target firestorm_metal_offscreen_test
+(cd .build/metal-core && \
+  ctest -R '^firestorm_metal_offscreen_orientation$' --output-on-failure)
+```
+
+## Resource core contracts
+
+The resource core keeps Metal objects behind an Objective-C-free C++17
+boundary. Its checked layout helper covers the formats exercised by the
+current shader and attachment work, accepts the transfer path's row alignment,
+and rejects invalid extents or arithmetic overflow without assigning row
+orientation.
+
+`MetalFrameContext` owns exactly three `MTLStorageModeShared` transient
+buffers. Generation-tagged leases prevent reuse while the GPU can still read a
+slot. Resources retired against a lease remain alive until that exact command
+buffer completes, and successful completion publishes a process-wide monotonic
+submission serial only after cleanup makes the slot available again. The
+runtime path does not wait for GPU completion; bounded waits exist only in the
+focused test.
+
+`MetalPrivateTexture` strongly owns exactly one private 2D, cube, or cube-array
+resource behind the Objective-C-free boundary. Cube faces use physical slice
+order `+X, -X, +Y, -Y, +Z, -Z`; cube-array slice identity is
+`cubeIndex * 6 + face`. Empty resources are supported, while immutable uploads
+must supply every `(mip, slice)` exactly once. The transfer path validates the
+complete descriptor, identities, source rows, and bounds before allocation,
+then repacks all rows without flipping into one 256-byte-aligned staging range.
+The deliberately portable descriptor subset limits texture edges to 16,384 and
+cube arrays to 341 cubes (2,046 physical slices).
+Mip generation, partial updates, texture views, 1D/3D/MSAA resources, sparse or
+heap allocation, compressed formats, additional sRGB formats, and GL conversion
+stay deferred.
+
+`MetalTransferBatch` records bounded uploads into immutable private buffers and
+textures using only the current frame lease's shared arena. Asynchronous
+readbacks accept any in-bounds physical slice and mip and return explicit row
+and image pitches under a separate byte budget. The caller owns the command
+buffer and queue; the batch never commits or waits, and resources or bytes are
+published only by the frame context's successful completion action.
+
+`PixelFormat::rgba8_unorm_srgb` is a four-byte color format backed by
+`MTLPixelFormatRGBA8Unorm_sRGB`. Transfers preserve its stored bytes exactly;
+gamma conversion occurs only through normal Metal render-target writes and
+texture sampling.
+
+`MetalSamplerCache` validates typed address, minification, magnification, mip,
+and anisotropy fields before creating immutable native states. Its explicit
+canonical key maps every mip filter to `not_mipmapped` for one-level textures,
+so observably equivalent requests share one strongly owned cache entry. Handles
+borrowed from the cache remain valid for the cache lifetime.
+
+`MetalDepthStateCache` similarly validates typed compare and write fields and
+strongly owns each immutable native depth state by its canonical key. Cull mode
+and front-face winding remain explicit typed dynamic encoder state; no
+desired-state tracker or pipeline cache is introduced by this slice.
+
+`MetalRenderPipelineFamilyCache` fixes one shader pair, zero to four ordered
+color formats, an optional depth format, and one sample. Its original
+generated-vertex constructor remains available. The artifact constructor takes
+only a validated `MetalProgramLibrary` and `MetalProgramId`, then derives the
+functions, attachments, and native vertex descriptor directly from that entry;
+callers cannot supply a second layout schema. The current artifact path accepts
+only the generated catalog's `per_vertex` layouts. Zero colors requires depth.
+An equally sized ordered set of canonical blend attachments varies between its
+strongly owned pipeline entries. Disabled, masked, format-absent, and otherwise
+ignored blend fields share entries without introducing a global pipeline cache
+or desired-state tracker. Typed artifact entries reuse that same canonical key
+and telemetry and are borrowed for the issuing cache's lifetime.
+
+`MetalArtifactGeometry` strongly owns exactly the private vertex streams named
+by one artifact program plus its native device/library identity. The factory
+accepts streams in any order but rejects missing, duplicate, extra,
+cross-device, misaligned, or undersized bindings. Offset and draw bounds use
+the artifact's per-stream stride plus maximum attribute alignment and extent.
+The narrow draw encoder supports only nonempty triangle lists and U16/U32
+indexed triangle lists; `firstIndex` is always in elements and checked
+multiplication produces the final byte offset. Every argument, identity, and
+buffer range is preflighted before the existing render encoder is mutated.
+Instancing, constant streams, base vertex, fans, indirect draws, uniform
+packing, and viewer integration remain deferred.
+
+`MetalRenderTarget` strongly groups zero to four ordered private,
+render-target-capable, single-sample color textures and an optional matching
+private Depth32Float texture. A target must contain at least one attachment;
+all native resources must be unique and share one device and extent. This slice
+attaches only mip zero of one-slice 2D textures and rejects textures with
+additional mips. `MetalRenderPass` maps an exactly matching ordered set of typed
+load, store, and clear actions into a movable RAII encoder scope. It validates
+the complete target, descriptor, label, and command-buffer relationship before
+creating the native encoder. Finite HDR color clears are accepted; a selected
+depth clear must be finite and in `[0, 1]`; unselected clear payloads are
+ignored.
+
+The pass borrows the command buffer and never commits, waits, submits, or owns a
+frame. Callers externally serialize pass creation/use/end with enqueue and
+commit on that command buffer. A not-enqueued or explicitly enqueued buffer is
+accepted while encoding is still open; a committed buffer is rejected. `end()`
+and destruction close an active encoder exactly once. Move assignment
+intentionally closes an active destination encoder before taking the source
+scope. Encoder handles are borrowed and remain valid only while their pass is
+active; attachment handles returned by the target are additional strong owners.
+
+```sh
+cmake --build .build/metal-core --target \
+  firestorm_metal_resource_layout_test \
+  firestorm_metal_frame_context_test \
+  firestorm_metal_resource_transfer_test \
+  firestorm_metal_texture_subresources_test \
+  firestorm_metal_sampler_test \
+  firestorm_metal_depth_raster_test \
+  firestorm_metal_blend_pipeline_test \
+  firestorm_metal_render_pass_test \
+  firestorm_metal_mrt_test \
+  firestorm_metal_color_gamma_test
+(cd .build/metal-core && \
+  ctest -R '^firestorm_metal_(resource_layout|frame_context|resource_transfer|texture_subresources|sampler|depth_raster|blend_pipeline|render_pass|mrt|color_gamma)$' \
+    --output-on-failure)
+```
+
+The sampler test uploads a private 2x1 RGBA8 texture, samples one out-of-range
+coordinate with repeat and clamp states, and reads back exact distinct pixels
+through the asynchronous frame-context transfer path. The registered test runs
+with Metal API and GPU validation enabled.
+
+The texture-subresource test uploads all two mips of a private RGBA8 cube array
+with two cubes. It blits the four mip-zero corners and mip-one center from all
+12 physical slices into an exact 12x5 atlas, then checks that atlas plus direct
+slice-11/mip-zero and slice-2/mip-one readbacks byte for byte. It also covers
+duplicate and missing identities, invalid faces/slices/mips, aggregate staging
+limits, success-only publication, out-of-order completion, and strong wrapper
+lifetime.
+
+The depth/raster test renders one private 4x1 RGBA8 target with a private
+Depth32Float attachment and reads it back asynchronously. Its four exact cells
+are green for `Less` with writes enabled, red for `Less` with writes disabled,
+blue for clockwise-front back-face culling, and yellow for
+counterclockwise-front back-face culling. Each cell uses a 1x1 scissor and two
+fullscreen triangles in one command buffer.
+
+The blend/pipeline test seeds and blends nine private RGBA8 cells with separate
+RGB and alpha equations, factors, operations, and write masks. It reads back the
+exact 9x1 byte row through the asynchronous frame-context transfer path. The
+registered test runs with Metal API and GPU validation enabled.
+
+The render-pass test first clears a private 2x1 RGBA8 target to red and a
+matching Depth32Float target to `0.5`, storing both. A second pass loads both,
+uses `Less` with depth writes disabled, and draws green at depth `0.25` then
+`0.75` into separate one-pixel scissors. Its asynchronous 256-byte-pitch
+readback must publish only on successful completion and begin with exact
+green-then-red RGBA bytes.
+
+The MRT test validates bounded ordered attachment and pipeline descriptors,
+including invalid requests that leave cache telemetry untouched. One command
+buffer renders four private 1x1 attachments with mixed RGBA8 and BGRA8 formats
+and per-slot blend/write masks, then renders a separate depth-only pass. One
+transfer batch publishes raw RGBA red, BGRA cyan, RGBA magenta, BGRA green,
+and exact depth `0.25` readbacks in registration order under one submission
+serial.
+
+The color/gamma test renders a linear RGBA8 constant, samples it into an sRGB
+attachment for automatic encoding, samples that attachment back into linear
+RGBA8 for automatic decoding, then performs the planned final-display sRGB
+conversion in a shader and writes BGRA8. All four private 1x1 resources are
+read back asynchronously through one transfer batch; callbacks must retain
+registration order and share one submission serial.
+
+The planned presentation policy is one manual final shader encode into a
+`BGRA8Unorm` drawable, paired later with an sRGB layer colorspace. The current
+`CAMetalLayer` is deliberately unchanged by this resource-contract slice.
+
+## Declared program artifact bridge
+
+`FIRESTORM_BUILD_METAL_PROGRAM_ARTIFACTS` is default-off. When enabled, the
+explicit `firestorm_metal_declared_programs` target runs the frozen shader gate,
+then generates one path-free `firestorm-declared-programs.metallib` and an
+immutable C++17 catalog for 12 scalar runtime recipes, four FXAA recipes, and
+12 SMAA recipes. Fifteen are `runtime_variant` additions. The capability and
+stress remain build-time feasibility evidence and are excluded. This is not
+the complete viewer program inventory and makes no semantic-parity claim.
+
+The path-free JSON catalog owns stable string IDs, entry-point names, ordered
+color/depth and sample metadata, SoA vertex attributes/layouts, typed stage
+buffer/texture/sampler summaries, recursive members including matrix
+stride/major order, complete reflection/layout identity digests, the frozen
+source-manifest identity, and the explicit metallib resource basename. C++
+exposes the typed summaries and per-buffer/full-stage digests, not a duplicate
+recursive member tree. Logical binding names remain semantic authority;
+generated `metal_name` values are checked exactly against native reflection and
+are toolchain-owned diagnostic identity, not a persistence ABI. Artifact schema
+v2 also owns source symbol, optional source-array index, shader class, and typed
+settings overrides. Scalar program globals have no source index; the four
+`gFXAAProgram` entries preserve indices 0 through 3, presets 12/23/28/39, and
+the exact `RenderFSAAType=1`/`RenderFSAASamples=index` mapping. The
+`gSMAAEdgeDetectProgram`, `gSMAABlendWeightsProgram`, and
+`gSMAANeighborhoodBlendProgram` arrays preserve Low/Medium/High/Ultra indices
+0 through 3 with `RenderFSAAType=2` and `RenderFSAASamples=index`. Exact typed
+lookup uses each source-symbol/index/class triple without interpreting settings
+expressions. Artifact schema v2
+accepts only `mat3` and `mat4`, column-major with stride 16;
+producer, catalog, and native schema validation reject other matrix forms, and
+Metal reflection checks the remaining data type. Generated `MetalProgramId`
+numeric values are lexical build ordinals, not a persistence or telemetry ABI.
+`MetalProgramLibrary` accepts an explicit path, reads it once into owned bytes,
+verifies those exact bytes against the catalog's SHA-256, and passes the same
+bytes to Metal without reopening the path. It strongly owns the resulting
+native library and all declared entry functions, requires the exact function
+name/stage set, and exposes borrowed handles and immutable lookup. It performs
+no bundle lookup, JSON parsing, source compilation, function-constant
+selection, draw encoding, or hot reload.
+
+The exact shader toolchain must be available at configuration time. On Nix:
+
+```sh
+nix shell nixpkgs#cmake nixpkgs#ninja nixpkgs#glslang \
+  nixpkgs#spirv-cross nixpkgs#spirv-tools -c \
+  cmake -S indra/llwindow/metal -B .build/metal-programs -G Ninja \
+    -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON \
+    -DFIRESTORM_BUILD_METAL_PROGRAM_ARTIFACTS=ON
+nix shell nixpkgs#cmake nixpkgs#ninja nixpkgs#glslang \
+  nixpkgs#spirv-cross nixpkgs#spirv-tools -c \
+  cmake --build .build/metal-programs \
+    --target firestorm_metal_program_library_test \
+             firestorm_metal_artifact_vertex_index_test
+nix shell nixpkgs#cmake -c \
+  ctest --test-dir .build/metal-programs \
+    -R '^firestorm_metal_(program_library(_digest_rejection)?|artifact_vertex_index)$' \
+    --output-on-failure
+```
+
+The program-library test validates the ordinary C++ catalog, exact IDs and key
+vertex contracts, explicit-path strong ownership, lookup, and creation of all
+28 declared PSOs from the same combined metallib under Metal API validation.
+The artifact vertex/index test uses the translated `ui_font` entry, its exact
+three-stream layout, reflected resource slots, a two-texel white/black texture,
+and test-only identity uniform bytes. Intended UVs sample white while the
+texcoord poison prefix clamps to black. After success-only private uploads, one
+render and asynchronous-readback submission verifies the top-to-bottom 6x4
+BGRA8 atlas `RRGGMM`, `RRGGMM`, `BBYY..`, `BBYY..`. Its five scissored draws include
+nonindexed, U16, and U32 paths with poison prefixes, nonzero vertex/index
+offsets, and element-based nonzero `firstIndex` values. The default-off option
+changes neither target graph. When explicitly enabled, a standalone build
+registers the library, digest-rejection, and geometry tests; an embedded viewer
+keeps the generated artifacts and test executables out of `all` and registers
+no viewer CTest.
+
 ## Firestorm build integration
 
 The same CMake file can be included from `indra/llwindow/CMakeLists.txt` by
@@ -44,4 +313,101 @@ developer app is excluded from the default build and can be built explicitly:
 
 ```sh
 cmake --build BUILD_DIR --target firestorm_metal_bootstrap
+```
+
+`FIRESTORM_BUILD_ACTIVE_METAL_VIEWER=ON` implies declared-program generation
+for that configure without changing the standalone artifact option in the
+cache. The active app bundles only
+`firestorm-declared-programs.metallib`; its generated catalog supplies the
+resource basename and required digest. The renderer loads the verified bytes,
+derives the `presentation_copy` pipeline, vertex stream, and texture/sampler
+slots from that catalog, then uploads one private position stream and a small
+sampled texture asynchronously through its persistent three-slot frame
+context. Preparation reports back-pressure as `renderer_busy`; neither startup
+nor normal presentation waits for GPU completion. The standalone bootstrap
+remains independent and continues to bundle and use `bootstrap.metallib`.
+
+The contract tests are also excluded from an embedded default build. They can
+be requested explicitly without registering tests in the viewer's CTest tree:
+
+```sh
+# Single-config generators:
+cmake --build BUILD_DIR --target \
+  firestorm_metal_frame_contracts_test \
+  firestorm_metal_resource_layout_test \
+  firestorm_metal_frame_context_test \
+  firestorm_metal_resource_transfer_test \
+  firestorm_metal_texture_subresources_test \
+  firestorm_metal_sampler_test \
+  firestorm_metal_depth_raster_test \
+  firestorm_metal_blend_pipeline_test \
+  firestorm_metal_render_pass_test \
+  firestorm_metal_mrt_test \
+  firestorm_metal_color_gamma_test
+# Single-config executables:
+BUILD_DIR/llwindow/metal/firestorm_metal_frame_contracts_test
+BUILD_DIR/llwindow/metal/firestorm_metal_resource_layout_test
+env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
+  BUILD_DIR/llwindow/metal/firestorm_metal_frame_context_test
+env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
+  BUILD_DIR/llwindow/metal/firestorm_metal_resource_transfer_test
+env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
+  BUILD_DIR/llwindow/metal/firestorm_metal_texture_subresources_test
+env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
+  BUILD_DIR/llwindow/metal/firestorm_metal_sampler_test \
+    --metallib BUILD_DIR/llwindow/metal/generated/bootstrap.metallib
+env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
+  BUILD_DIR/llwindow/metal/firestorm_metal_depth_raster_test \
+    --metallib BUILD_DIR/llwindow/metal/generated/bootstrap.metallib
+env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
+  BUILD_DIR/llwindow/metal/firestorm_metal_blend_pipeline_test \
+    --metallib BUILD_DIR/llwindow/metal/generated/bootstrap.metallib
+env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
+  BUILD_DIR/llwindow/metal/firestorm_metal_render_pass_test \
+    --metallib BUILD_DIR/llwindow/metal/generated/bootstrap.metallib
+env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
+  BUILD_DIR/llwindow/metal/firestorm_metal_mrt_test \
+    --metallib BUILD_DIR/llwindow/metal/generated/bootstrap.metallib
+env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
+  BUILD_DIR/llwindow/metal/firestorm_metal_color_gamma_test \
+    --metallib BUILD_DIR/llwindow/metal/generated/bootstrap.metallib
+# Multi-config generators such as Xcode:
+cmake --build BUILD_DIR --config CONFIG --target \
+  firestorm_metal_frame_contracts_test \
+  firestorm_metal_resource_layout_test \
+  firestorm_metal_frame_context_test \
+  firestorm_metal_resource_transfer_test \
+  firestorm_metal_texture_subresources_test \
+  firestorm_metal_sampler_test \
+  firestorm_metal_depth_raster_test \
+  firestorm_metal_blend_pipeline_test \
+  firestorm_metal_render_pass_test \
+  firestorm_metal_mrt_test \
+  firestorm_metal_color_gamma_test
+BUILD_DIR/llwindow/metal/CONFIG/firestorm_metal_frame_contracts_test
+BUILD_DIR/llwindow/metal/CONFIG/firestorm_metal_resource_layout_test
+env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
+  BUILD_DIR/llwindow/metal/CONFIG/firestorm_metal_frame_context_test
+env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
+  BUILD_DIR/llwindow/metal/CONFIG/firestorm_metal_resource_transfer_test
+env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
+  BUILD_DIR/llwindow/metal/CONFIG/firestorm_metal_texture_subresources_test
+env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
+  BUILD_DIR/llwindow/metal/CONFIG/firestorm_metal_sampler_test \
+    --metallib BUILD_DIR/llwindow/metal/generated/bootstrap.metallib
+env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
+  BUILD_DIR/llwindow/metal/CONFIG/firestorm_metal_depth_raster_test \
+    --metallib BUILD_DIR/llwindow/metal/generated/bootstrap.metallib
+env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
+  BUILD_DIR/llwindow/metal/CONFIG/firestorm_metal_blend_pipeline_test \
+    --metallib BUILD_DIR/llwindow/metal/generated/bootstrap.metallib
+env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
+  BUILD_DIR/llwindow/metal/CONFIG/firestorm_metal_render_pass_test \
+    --metallib BUILD_DIR/llwindow/metal/generated/bootstrap.metallib
+env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
+  BUILD_DIR/llwindow/metal/CONFIG/firestorm_metal_mrt_test \
+    --metallib BUILD_DIR/llwindow/metal/generated/bootstrap.metallib
+env MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
+  BUILD_DIR/llwindow/metal/CONFIG/firestorm_metal_color_gamma_test \
+    --metallib BUILD_DIR/llwindow/metal/generated/bootstrap.metallib
 ```

@@ -350,8 +350,12 @@ bool LLWMIMethods::getGenericSerialNumber(const BSTR &select, const LPCWSTR &var
 bool getSerialNumber(unsigned char *unique_id, size_t len)
 {
     CFStringRef serial_cf_str = NULL;
+#if defined(LL_ACTIVE_METAL_VIEWER)
+    io_service_t platformExpert = IOServiceGetMatchingService(kIOMainPortDefault,
+#else
     io_service_t platformExpert = IOServiceGetMatchingService(kIOMasterPortDefault,
-                                                                 IOServiceMatching("IOPlatformExpertDevice"));
+#endif
+                                                               IOServiceMatching("IOPlatformExpertDevice"));
     if (platformExpert)
     {
         serial_cf_str = (CFStringRef) IORegistryEntryCreateCFProperty(platformExpert,
