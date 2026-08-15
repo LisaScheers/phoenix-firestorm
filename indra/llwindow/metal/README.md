@@ -110,12 +110,30 @@ strongly owns each immutable native depth state by its canonical key. Cull mode
 and front-face winding remain explicit typed dynamic encoder state; no
 desired-state tracker or pipeline cache is introduced by this slice.
 
-`MetalRenderPipelineFamilyCache` fixes one generated-vertex shader pair, zero
-to four ordered color formats, an optional depth format, and one sample. Zero
-colors requires depth. An equally sized ordered set of canonical blend
-attachments varies between its strongly owned pipeline entries. Disabled,
-masked, format-absent, and otherwise ignored blend fields share entries without
-introducing a global pipeline cache or desired-state tracker.
+`MetalRenderPipelineFamilyCache` fixes one shader pair, zero to four ordered
+color formats, an optional depth format, and one sample. Its original
+generated-vertex constructor remains available. The artifact constructor takes
+only a validated `MetalProgramLibrary` and `MetalProgramId`, then derives the
+functions, attachments, and native vertex descriptor directly from that entry;
+callers cannot supply a second layout schema. The current artifact path accepts
+only the generated catalog's `per_vertex` layouts. Zero colors requires depth.
+An equally sized ordered set of canonical blend attachments varies between its
+strongly owned pipeline entries. Disabled, masked, format-absent, and otherwise
+ignored blend fields share entries without introducing a global pipeline cache
+or desired-state tracker. Typed artifact entries reuse that same canonical key
+and telemetry and are borrowed for the issuing cache's lifetime.
+
+`MetalArtifactGeometry` strongly owns exactly the private vertex streams named
+by one artifact program plus its native device/library identity. The factory
+accepts streams in any order but rejects missing, duplicate, extra,
+cross-device, misaligned, or undersized bindings. Offset and draw bounds use
+the artifact's per-stream stride plus maximum attribute alignment and extent.
+The narrow draw encoder supports only nonempty triangle lists and U16/U32
+indexed triangle lists; `firstIndex` is always in elements and checked
+multiplication produces the final byte offset. Every argument, identity, and
+buffer range is preflighted before the existing render encoder is mutated.
+Instancing, constant streams, base vertex, fans, indirect draws, uniform
+packing, and viewer integration remain deferred.
 
 `MetalRenderTarget` strongly groups zero to four ordered private,
 render-target-capable, single-sample color textures and an optional matching
@@ -246,18 +264,28 @@ nix shell nixpkgs#cmake nixpkgs#ninja nixpkgs#glslang \
 nix shell nixpkgs#cmake nixpkgs#ninja nixpkgs#glslang \
   nixpkgs#spirv-cross nixpkgs#spirv-tools -c \
   cmake --build .build/metal-programs \
-    --target firestorm_metal_program_library_test
+    --target firestorm_metal_program_library_test \
+             firestorm_metal_artifact_vertex_index_test
 nix shell nixpkgs#cmake -c \
   ctest --test-dir .build/metal-programs \
-    -R '^firestorm_metal_program_library$' --output-on-failure
+    -R '^firestorm_metal_(program_library|artifact_vertex_index)$' \
+    --output-on-failure
 ```
 
-The focused test validates the ordinary C++ catalog, exact IDs and key vertex
-contracts, explicit-path strong ownership, lookup, and creation of all 12
-declared PSOs from the same combined metallib under Metal API validation. The
-default-off option changes neither target graph. When explicitly enabled, a
-standalone build includes and registers the focused test; an embedded viewer
-keeps both artifact targets out of `all` and registers no viewer CTest.
+The program-library test validates the ordinary C++ catalog, exact IDs and key
+vertex contracts, explicit-path strong ownership, lookup, and creation of all
+12 declared PSOs from the same combined metallib under Metal API validation.
+The artifact vertex/index test uses the translated `ui_font` entry, its exact
+three-stream layout, reflected resource slots, a two-texel white/black texture,
+and test-only identity uniform bytes. Intended UVs sample white while the
+texcoord poison prefix clamps to black. After success-only private uploads, one
+render and asynchronous-readback submission verifies the top-to-bottom 6x4 BGRA8 atlas
+`RRGGMM`, `RRGGMM`, `BBYY..`, `BBYY..`. Its five scissored draws include
+nonindexed, U16, and U32 paths with poison prefixes, nonzero vertex/index
+offsets, and element-based nonzero `firstIndex` values. The default-off option
+changes neither target graph. When explicitly enabled, a standalone build
+registers both focused tests; an embedded viewer keeps the generated artifacts
+and both test executables out of `all` and registers no viewer CTest.
 
 ## Firestorm build integration
 

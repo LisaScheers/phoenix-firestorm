@@ -26,12 +26,14 @@
 
 #include "llmetalformat.h"
 #include "llmetalframecontext.h"
+#include "llmetalprogram.h"
 
 #include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace firestorm::metal
@@ -154,6 +156,45 @@ struct MetalRenderPipelineFamilyDesc
 };
 
 /**
+ * Unforgeable borrowed entry from an artifact-backed pipeline family.
+ *
+ * The native handle and identity remain valid only while the issuing cache
+ * lives. Copies do not retain the cache or pipeline state.
+ */
+class MetalArtifactPipeline final
+{
+public:
+    MetalArtifactPipeline(const MetalArtifactPipeline&) noexcept = default;
+    MetalArtifactPipeline& operator=(const MetalArtifactPipeline&) noexcept = default;
+    MetalArtifactPipeline(MetalArtifactPipeline&&) noexcept = default;
+    MetalArtifactPipeline& operator=(MetalArtifactPipeline&&) noexcept = default;
+
+    bool valid() const noexcept;
+    MetalRenderPipelineHandle nativeHandle() const noexcept;
+
+    /** Exact native and generated-program identity check for typed draw encoders. */
+    bool matches(MetalDeviceHandle         device,
+                 MetalProgramLibraryHandle library,
+                 MetalProgramId            program_id,
+                 std::string_view           reflection_sha256) const noexcept;
+
+private:
+    MetalArtifactPipeline(MetalRenderPipelineHandle handle,
+                          MetalDeviceHandle         device,
+                          MetalProgramLibraryHandle library,
+                          MetalProgramId            program_id,
+                          std::string_view           reflection_sha256) noexcept;
+
+    MetalRenderPipelineHandle  mHandle = nullptr;
+    MetalDeviceHandle          mDevice = nullptr;
+    MetalProgramLibraryHandle  mLibrary = nullptr;
+    MetalProgramId             mProgramId;
+    std::string_view           mReflectionSha256;
+
+    friend class MetalRenderPipelineFamilyCache;
+};
+
+/**
  * Strongly owns one fixed shader/attachment family of native pipeline states.
  *
  * Only the ordered canonical blend attachments vary between entries. A request
@@ -167,6 +208,14 @@ class MetalRenderPipelineFamilyCache final
 {
 public:
     MetalRenderPipelineFamilyCache(MetalDeviceHandle device, MetalLibraryHandle library, const MetalRenderPipelineFamilyDesc& descriptor);
+
+    /**
+     * Builds a family directly from one validated generated artifact entry.
+     * Functions, attachments, sample count, and vertex layout cannot be
+     * supplied independently by the caller.
+     */
+    MetalRenderPipelineFamilyCache(const MetalProgramLibrary& program_library,
+                                   MetalProgramId program_id);
     ~MetalRenderPipelineFamilyCache();
 
     MetalRenderPipelineFamilyCache(const MetalRenderPipelineFamilyCache&)            = delete;
@@ -179,13 +228,32 @@ public:
     std::optional<MetalRenderPipelineHandle> pipeline(
         const std::vector<BlendAttachmentDesc>& descriptors);
 
+    /** Uses the same canonical blend cache and telemetry as pipeline(). */
+    std::optional<MetalArtifactPipeline> artifactPipeline(
+        const std::vector<BlendAttachmentDesc>& descriptors);
+
     std::size_t hitCount() const noexcept;
     std::size_t missCount() const noexcept;
     std::size_t entryCount() const noexcept;
 
 private:
+    struct ArtifactConstructorTag {};
     struct Impl;
+
+    MetalRenderPipelineFamilyCache(MetalProgramLibraryHandle      library,
+                                   const MetalProgramDescriptor* program,
+                                   ArtifactConstructorTag);
+
     std::unique_ptr<Impl> mImpl;
 };
+
+inline MetalRenderPipelineFamilyCache::MetalRenderPipelineFamilyCache(
+    const MetalProgramLibrary& program_library,
+    MetalProgramId             program_id) :
+    MetalRenderPipelineFamilyCache(program_library.nativeLibrary(),
+                                   program_library.program(program_id),
+                                   ArtifactConstructorTag{})
+{
+}
 
 } // namespace firestorm::metal

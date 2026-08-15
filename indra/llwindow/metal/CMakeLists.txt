@@ -109,12 +109,14 @@ set(FIRESTORM_METAL_BOOTSTRAP_SOURCES
   )
 
 set_source_files_properties(
+  artifact-vertex-index-test-objc.mm
   blend-pipeline-test-objc.mm
   color-gamma-test-objc.mm
   depth-raster-test-objc.mm
   frame-context-test-objc.mm
   llmetalbootstrap-objc.mm
   llmetalframecontext-objc.mm
+  llmetalgeometry-objc.mm
   llmetalpipeline-objc.mm
   llmetalprogram-objc.mm
   llmetalrenderpass-objc.mm
@@ -865,6 +867,66 @@ if (FIRESTORM_BUILD_METAL_PROGRAM_ARTIFACTS)
     XCODE_ATTRIBUTE_MACOSX_DEPLOYMENT_TARGET
         "${FIRESTORM_METAL_BOOTSTRAP_MIN_MACOS}"
     )
+
+  add_executable(firestorm_metal_artifact_vertex_index_test
+    ${FIRESTORM_METAL_CPU_TEST_EXCLUDE_FROM_ALL}
+    ${FIRESTORM_METAL_RESOURCE_TEST_SOURCES}
+    artifact-vertex-index-test-objc.mm
+    llmetalgeometry.h
+    llmetalgeometry-objc.mm
+    llmetalpipeline.h
+    llmetalpipeline.cpp
+    llmetalpipeline-objc.mm
+    llmetalprogram.h
+    llmetalprogram.cpp
+    llmetalprogram-objc.mm
+    llmetalrenderpass.h
+    llmetalrenderpass-objc.mm
+    llmetalstate.h
+    llmetalvertexlayout.h
+    llmetalvertexlayout.cpp
+    "${FIRESTORM_METAL_PROGRAM_HEADER}"
+    "${FIRESTORM_METAL_PROGRAM_SOURCE}"
+    )
+  add_dependencies(firestorm_metal_artifact_vertex_index_test
+                   firestorm_metal_declared_programs)
+  target_include_directories(firestorm_metal_artifact_vertex_index_test PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${FIRESTORM_METAL_PROGRAM_CATALOG_DIR}"
+    )
+  target_compile_features(firestorm_metal_artifact_vertex_index_test PRIVATE
+                          cxx_std_17)
+  target_compile_options(firestorm_metal_artifact_vertex_index_test PRIVATE
+    "$<$<COMPILE_LANGUAGE:CXX,OBJCXX>:-Wall>"
+    "$<$<COMPILE_LANGUAGE:CXX,OBJCXX>:-Wextra>"
+    "$<$<COMPILE_LANGUAGE:CXX,OBJCXX>:-Wpedantic>"
+    "$<$<COMPILE_LANGUAGE:CXX,OBJCXX>:-Werror>"
+    "$<$<COMPILE_LANGUAGE:CXX,OBJCXX>:-Wconversion>"
+    "$<$<COMPILE_LANGUAGE:CXX,OBJCXX>:-Wsign-conversion>"
+    "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
+    "$<$<COMPILE_LANGUAGE:CXX,OBJCXX>:-mmacosx-version-min=${FIRESTORM_METAL_BOOTSTRAP_MIN_MACOS}>"
+    )
+  if (NOT FIRESTORM_METAL_BOOTSTRAP_IS_STANDALONE)
+    target_compile_options(firestorm_metal_artifact_vertex_index_test PRIVATE
+      -Wno-overriding-option
+      )
+  endif ()
+  target_link_options(firestorm_metal_artifact_vertex_index_test PRIVATE
+    "-mmacosx-version-min=${FIRESTORM_METAL_BOOTSTRAP_MIN_MACOS}"
+    )
+  target_link_libraries(firestorm_metal_artifact_vertex_index_test PRIVATE
+    "${FIRESTORM_FOUNDATION_FRAMEWORK}"
+    "${FIRESTORM_METAL_FRAMEWORK}"
+    )
+  set_target_properties(firestorm_metal_artifact_vertex_index_test PROPERTIES
+    CXX_EXTENSIONS OFF
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
+    OSX_ARCHITECTURES "arm64"
+    XCODE_ATTRIBUTE_CLANG_ENABLE_OBJC_ARC YES
+    XCODE_ATTRIBUTE_MACOSX_DEPLOYMENT_TARGET
+        "${FIRESTORM_METAL_BOOTSTRAP_MIN_MACOS}"
+    )
 endif ()
 
 if (FIRESTORM_METAL_BOOTSTRAP_IS_STANDALONE)
@@ -1018,6 +1080,20 @@ if (FIRESTORM_METAL_BOOTSTRAP_IS_STANDALONE)
         )
       set_tests_properties(
         firestorm_metal_program_library
+        PROPERTIES
+          LABELS "metal;gpu;shader-artifact"
+          TIMEOUT 120
+        )
+      add_test(
+        NAME firestorm_metal_artifact_vertex_index
+        COMMAND "${CMAKE_COMMAND}" -E env
+                MTL_DEBUG_LAYER=1
+                MTL_SHADER_VALIDATION=1
+                "$<TARGET_FILE:firestorm_metal_artifact_vertex_index_test>"
+                --metallib "${FIRESTORM_METAL_PROGRAM_LIBRARY}"
+        )
+      set_tests_properties(
+        firestorm_metal_artifact_vertex_index
         PROPERTIES
           LABELS "metal;gpu;shader-artifact"
           TIMEOUT 120

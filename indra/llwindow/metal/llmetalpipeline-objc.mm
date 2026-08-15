@@ -1,6 +1,6 @@
 /**
  * @file llmetalpipeline-objc.mm
- * @brief Native ownership for bounded generated-vertex Metal pipeline families.
+ * @brief Native ownership for generated and artifact-backed Metal pipeline families.
  *
  * $LicenseInfo:firstyear=2026&license=viewerlgpl$
  * Phoenix Firestorm Viewer Source Code
@@ -49,11 +49,62 @@ bool isMetalLibrary(MetalLibraryHandle handle)
     return object != nil && [object conformsToProtocol:@protocol(MTLLibrary)];
 }
 
-NSString* nativeString(const std::string& value)
+NSString* nativeString(std::string_view value)
 {
     return [[NSString alloc] initWithBytes:value.data()
                                     length:value.size()
                                   encoding:NSUTF8StringEncoding];
+}
+
+std::optional<MTLVertexFormat>
+nativeVertexFormat(MetalVertexFormat format) noexcept
+{
+    switch (format)
+    {
+        case MetalVertexFormat::float32:
+            return MTLVertexFormatFloat;
+        case MetalVertexFormat::float32x2:
+            return MTLVertexFormatFloat2;
+        case MetalVertexFormat::float32x3:
+            return MTLVertexFormatFloat3;
+        case MetalVertexFormat::float32x4:
+            return MTLVertexFormatFloat4;
+        case MetalVertexFormat::int32:
+            return MTLVertexFormatInt;
+        case MetalVertexFormat::int32x2:
+            return MTLVertexFormatInt2;
+        case MetalVertexFormat::int32x3:
+            return MTLVertexFormatInt3;
+        case MetalVertexFormat::int32x4:
+            return MTLVertexFormatInt4;
+        case MetalVertexFormat::uint32:
+            return MTLVertexFormatUInt;
+        case MetalVertexFormat::uint32x2:
+            return MTLVertexFormatUInt2;
+        case MetalVertexFormat::uint32x3:
+            return MTLVertexFormatUInt3;
+        case MetalVertexFormat::uint32x4:
+            return MTLVertexFormatUInt4;
+        case MetalVertexFormat::uint8x4_normalized:
+            return MTLVertexFormatUChar4Normalized;
+        case MetalVertexFormat::uint16x4:
+            return MTLVertexFormatUShort4;
+    }
+    return std::nullopt;
+}
+
+std::optional<MTLVertexStepFunction>
+nativeVertexStepFunction(MetalVertexStepFunction step) noexcept
+{
+    switch (step)
+    {
+        case MetalVertexStepFunction::per_vertex:
+            return MTLVertexStepFunctionPerVertex;
+        case MetalVertexStepFunction::per_instance:
+        case MetalVertexStepFunction::constant:
+            return std::nullopt;
+    }
+    return std::nullopt;
 }
 
 std::optional<MTLPixelFormat> nativePixelFormat(PixelFormat format) noexcept
@@ -244,14 +295,20 @@ struct MetalRenderPipelineFamilyCache::Impl
          id<MTLFunction>                native_fragment,
          std::vector<PixelFormat>        source_color_formats,
          std::vector<MTLPixelFormat>     native_color_formats,
-         std::optional<MTLPixelFormat>  native_depth_format) :
+         std::optional<MTLPixelFormat>   native_depth_format,
+         MTLVertexDescriptor*            native_vertex_descriptor,
+         std::optional<MetalProgramId>   artifact_program_id,
+         std::string                     artifact_reflection_sha256) :
         device(native_device),
         library(native_library),
         vertex(native_vertex),
         fragment(native_fragment),
         sourceColorFormats(std::move(source_color_formats)),
         colorFormats(std::move(native_color_formats)),
-        depthFormat(native_depth_format)
+        depthFormat(native_depth_format),
+        vertexDescriptor(native_vertex_descriptor),
+        artifactProgramId(artifact_program_id),
+        artifactReflectionSha256(std::move(artifact_reflection_sha256))
     {
     }
 
@@ -262,6 +319,9 @@ struct MetalRenderPipelineFamilyCache::Impl
     std::vector<PixelFormat> sourceColorFormats;
     std::vector<MTLPixelFormat> colorFormats;
     std::optional<MTLPixelFormat> depthFormat;
+    __strong MTLVertexDescriptor* vertexDescriptor;
+    std::optional<MetalProgramId> artifactProgramId;
+    std::string artifactReflectionSha256;
     std::unordered_map<PipelineKey,
                        NativePipeline,
                        PipelineKeyHash> entries;
@@ -335,7 +395,112 @@ MetalRenderPipelineFamilyCache::MetalRenderPipelineFamilyCache(
                                    fragment,
                                    descriptor.colorFormats,
                                    std::move(color_formats),
-                                   depth_format);
+                                   depth_format,
+                                   nil,
+                                   std::nullopt,
+                                   std::string{});
+}
+
+MetalRenderPipelineFamilyCache::MetalRenderPipelineFamilyCache(
+    MetalProgramLibraryHandle      library,
+    const MetalProgramDescriptor* program,
+    ArtifactConstructorTag)
+{
+    if (!isMetalLibrary(library) || program == nullptr ||
+        program->sampleCount != 1 || program->vertexLayouts.empty() ||
+        program->vertexAttributes.empty() ||
+        program->colorFormats.size() > kMaximumColorAttachments ||
+        (program->colorFormats.empty() && !program->depthFormat) ||
+        (program->depthFormat && !isDepthFormat(*program->depthFormat)))
+    {
+        return;
+    }
+
+    id<MTLLibrary> native_library = (__bridge id<MTLLibrary>)library;
+    id<MTLDevice> native_device = native_library.device;
+    if (native_device == nil)
+    {
+        return;
+    }
+
+    std::vector<MTLPixelFormat> color_formats;
+    color_formats.reserve(program->colorFormats.size());
+    for (PixelFormat format : program->colorFormats)
+    {
+        const auto native_format = nativePixelFormat(format);
+        if (!isColorFormat(format) || !native_format)
+        {
+            return;
+        }
+        color_formats.push_back(*native_format);
+    }
+    const auto depth_format = program->depthFormat
+        ? nativePixelFormat(*program->depthFormat)
+        : std::optional<MTLPixelFormat>{};
+    if (program->depthFormat && !depth_format)
+    {
+        return;
+    }
+
+    NSString* vertex_name = nativeString(program->vertexFunction);
+    NSString* fragment_name = nativeString(program->fragmentFunction);
+    if (vertex_name == nil || fragment_name == nil)
+    {
+        return;
+    }
+    id<MTLFunction> vertex = [native_library newFunctionWithName:vertex_name];
+    id<MTLFunction> fragment = [native_library newFunctionWithName:fragment_name];
+    if (vertex == nil || fragment == nil ||
+        vertex.functionType != MTLFunctionTypeVertex ||
+        fragment.functionType != MTLFunctionTypeFragment)
+    {
+        return;
+    }
+
+    MTLVertexDescriptor* vertex_descriptor = [MTLVertexDescriptor vertexDescriptor];
+    if (vertex_descriptor == nil)
+    {
+        return;
+    }
+    for (const MetalVertexAttributeDescriptor& attribute : program->vertexAttributes)
+    {
+        const auto format = nativeVertexFormat(attribute.format);
+        if (!format)
+        {
+            return;
+        }
+        MTLVertexAttributeDescriptor* native_attribute =
+            vertex_descriptor.attributes[attribute.location];
+        native_attribute.format = *format;
+        native_attribute.offset = attribute.offset;
+        native_attribute.bufferIndex = attribute.bufferIndex;
+    }
+    for (const MetalVertexBufferLayoutDescriptor& layout : program->vertexLayouts)
+    {
+        const auto step = nativeVertexStepFunction(layout.stepFunction);
+        if (!step)
+        {
+            return;
+        }
+        MTLVertexBufferLayoutDescriptor* native_layout =
+            vertex_descriptor.layouts[layout.bufferIndex];
+        native_layout.stride = layout.stride;
+        native_layout.stepFunction = *step;
+        native_layout.stepRate = 1;
+    }
+
+    mImpl = std::make_unique<Impl>(native_device,
+                                   native_library,
+                                   vertex,
+                                   fragment,
+                                   std::vector<PixelFormat>(
+                                       program->colorFormats.begin(),
+                                       program->colorFormats.end()),
+                                   std::move(color_formats),
+                                   depth_format,
+                                   vertex_descriptor,
+                                   program->id,
+                                   std::string(program->reflectionSha256));
 }
 
 MetalRenderPipelineFamilyCache::~MetalRenderPipelineFamilyCache() = default;
@@ -344,7 +509,10 @@ bool MetalRenderPipelineFamilyCache::valid() const noexcept
 {
     return mImpl != nullptr && mImpl->device != nil &&
            mImpl->library != nil && mImpl->vertex != nil &&
-           mImpl->fragment != nil;
+           mImpl->fragment != nil &&
+           (!mImpl->artifactProgramId ||
+            (mImpl->vertexDescriptor != nil &&
+             !mImpl->artifactReflectionSha256.empty()));
 }
 
 std::optional<MetalRenderPipelineHandle>
@@ -410,7 +578,7 @@ MetalRenderPipelineFamilyCache::pipeline(
     native_descriptor.vertexFunction = mImpl->vertex;
     native_descriptor.fragmentFunction = mImpl->fragment;
     native_descriptor.rasterSampleCount = 1;
-    native_descriptor.vertexDescriptor = nil;
+    native_descriptor.vertexDescriptor = mImpl->vertexDescriptor;
     native_descriptor.depthAttachmentPixelFormat = mImpl->depthFormat
         ? *mImpl->depthFormat
         : MTLPixelFormatInvalid;
@@ -448,6 +616,63 @@ MetalRenderPipelineFamilyCache::pipeline(
         return std::nullopt;
     }
     return (__bridge void*)inserted.first->second.state;
+}
+
+MetalArtifactPipeline::MetalArtifactPipeline(
+    MetalRenderPipelineHandle handle,
+    MetalDeviceHandle         device,
+    MetalProgramLibraryHandle library,
+    MetalProgramId            program_id,
+    std::string_view          reflection_sha256) noexcept :
+    mHandle(handle),
+    mDevice(device),
+    mLibrary(library),
+    mProgramId(program_id),
+    mReflectionSha256(reflection_sha256)
+{
+}
+
+bool MetalArtifactPipeline::valid() const noexcept
+{
+    return mHandle != nullptr && mDevice != nullptr && mLibrary != nullptr &&
+           !mReflectionSha256.empty();
+}
+
+MetalRenderPipelineHandle MetalArtifactPipeline::nativeHandle() const noexcept
+{
+    return valid() ? mHandle : nullptr;
+}
+
+bool MetalArtifactPipeline::matches(
+    MetalDeviceHandle          device,
+    MetalProgramLibraryHandle library,
+    MetalProgramId             program_id,
+    std::string_view           reflection_sha256) const noexcept
+{
+    return valid() && mDevice == device && mLibrary == library &&
+           mProgramId == program_id &&
+           mReflectionSha256 == reflection_sha256;
+}
+
+std::optional<MetalArtifactPipeline>
+MetalRenderPipelineFamilyCache::artifactPipeline(
+    const std::vector<BlendAttachmentDesc>& descriptors)
+{
+    if (!valid() || !mImpl->artifactProgramId)
+    {
+        return std::nullopt;
+    }
+    const auto native_pipeline = pipeline(descriptors);
+    if (!native_pipeline)
+    {
+        return std::nullopt;
+    }
+    return MetalArtifactPipeline(
+        *native_pipeline,
+        (__bridge void*)mImpl->device,
+        (__bridge void*)mImpl->library,
+        *mImpl->artifactProgramId,
+        mImpl->artifactReflectionSha256);
 }
 
 std::size_t MetalRenderPipelineFamilyCache::hitCount() const noexcept
