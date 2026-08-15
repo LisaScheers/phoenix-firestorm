@@ -293,26 +293,29 @@ bool resizeCocoaMetalWindow(
 
 std::string getBundledMetalLibraryPath()
 {
-    const std::string_view resource =
-        firestorm::metal::metalProgramCatalog().libraryResource;
-    NSString *filename = [[NSString alloc]
-        initWithBytes:resource.data()
-               length:resource.size()
-             encoding:NSUTF8StringEncoding];
-    if (!filename)
+    @autoreleasepool
     {
-        return {};
-    }
+        const std::string_view resource =
+            firestorm::metal::metalProgramCatalog().libraryResource;
+        NSString *filename = [[[NSString alloc]
+            initWithBytes:resource.data()
+                   length:resource.size()
+                 encoding:NSUTF8StringEncoding] autorelease];
+        if (!filename)
+        {
+            return {};
+        }
 
-    NSString *extension = filename.pathExtension;
-    NSString *basename = filename.stringByDeletingPathExtension;
-    NSURL *url = [[NSBundle mainBundle] URLForResource:basename
-                                         withExtension:extension];
-    if (!url.isFileURL || !url.fileSystemRepresentation)
-    {
-        return {};
+        NSString *extension = filename.pathExtension;
+        NSString *basename = filename.stringByDeletingPathExtension;
+        NSURL *url = [[NSBundle mainBundle] URLForResource:basename
+                                             withExtension:extension];
+        if (!url.isFileURL || !url.fileSystemRepresentation)
+        {
+            return {};
+        }
+        return url.fileSystemRepresentation;
     }
-    return url.fileSystemRepresentation;
 }
 
 bool runCocoaInputSelfTest(GLViewRef view_ref, std::string& report)

@@ -768,7 +768,7 @@ private:
                                  0);
         if (!batch.valid())
         {
-            mRenderFrames->cancel(lease->token);
+            batch.cancel();
             error = "could not create the artifact transfer batch";
             return false;
         }
@@ -820,7 +820,7 @@ private:
         auto transfer_completion = batch.finish();
         if (!transfer_completion)
         {
-            mRenderFrames->cancel(lease->token);
+            batch.cancel();
             error = "could not finish the artifact transfer batch";
             return false;
         }
