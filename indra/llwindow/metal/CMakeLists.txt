@@ -1243,6 +1243,8 @@ finally:
             "Pinned detached Firestorm worktree used only by the opt-in OpenGL semantic oracle"
             FORCE)
 
+        set(FIRESTORM_METAL_ORACLE_PINNED_COMMIT
+            "1e8fd5491bde91fe6daca7d78f217a4d46084a5b")
         find_package(Git REQUIRED)
         string(REPLACE "\\" "\\\\" FIRESTORM_METAL_ORACLE_GIT_EXECUTABLE_ESCAPED
                        "${GIT_EXECUTABLE}")
@@ -1256,7 +1258,7 @@ finally:
         file(GENERATE
           OUTPUT "${FIRESTORM_METAL_FXAA_SEMANTIC_CONFIG_HEADER}"
           CONTENT
-            "#pragma once\n\n#define FIRESTORM_METAL_ORACLE_GIT_EXECUTABLE \"${FIRESTORM_METAL_ORACLE_GIT_EXECUTABLE_ESCAPED}\"\n"
+            "#pragma once\n\n#define FIRESTORM_METAL_ORACLE_GIT_EXECUTABLE \"${FIRESTORM_METAL_ORACLE_GIT_EXECUTABLE_ESCAPED}\"\n#define FIRESTORM_METAL_ORACLE_PINNED_COMMIT \"${FIRESTORM_METAL_ORACLE_PINNED_COMMIT}\"\n"
           )
         execute_process(
           COMMAND "${GIT_EXECUTABLE}" --no-optional-locks -C
@@ -1294,9 +1296,9 @@ finally:
                   "Could not read FIRESTORM_METAL_OPENGL_ORACLE_WORKTREE HEAD: ${FIRESTORM_METAL_OPENGL_ORACLE_HEAD_ERROR}")
         endif ()
         if (NOT FIRESTORM_METAL_OPENGL_ORACLE_HEAD STREQUAL
-            "1e8fd5491bde91fe6daca7d78f217a4d46084a5b")
+            FIRESTORM_METAL_ORACLE_PINNED_COMMIT)
           message(FATAL_ERROR
-                  "FIRESTORM_METAL_OPENGL_ORACLE_WORKTREE must be at 1e8fd5491bde91fe6daca7d78f217a4d46084a5b, found ${FIRESTORM_METAL_OPENGL_ORACLE_HEAD}")
+                  "FIRESTORM_METAL_OPENGL_ORACLE_WORKTREE must be at ${FIRESTORM_METAL_ORACLE_PINNED_COMMIT}, found ${FIRESTORM_METAL_OPENGL_ORACLE_HEAD}")
         endif ()
 
         execute_process(

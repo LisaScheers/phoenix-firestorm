@@ -48,11 +48,15 @@
 #error "FIRESTORM_METAL_ORACLE_GIT_EXECUTABLE must be provided by CMake"
 #endif
 
+#ifndef FIRESTORM_METAL_ORACLE_PINNED_COMMIT
+#error "FIRESTORM_METAL_ORACLE_PINNED_COMMIT must be provided by CMake"
+#endif
+
 namespace
 {
 
 constexpr std::string_view kPinnedCommit =
-    "1e8fd5491bde91fe6daca7d78f217a4d46084a5b";
+    FIRESTORM_METAL_ORACLE_PINNED_COMMIT;
 constexpr std::string_view kOracleGitExecutable =
     FIRESTORM_METAL_ORACLE_GIT_EXECUTABLE;
 constexpr int kWidth = 128;
@@ -548,7 +552,7 @@ std::vector<T> flipRows(const std::vector<T>& input, std::size_t rowWidth)
 
 std::uint64_t fnv1a64(const std::vector<std::uint8_t>& bytes)
 {
-    std::uint64_t hash = 1469598103934665603ULL;
+    std::uint64_t hash = 14695981039346656037ULL;
     for (const std::uint8_t byte : bytes)
     {
         hash ^= byte;

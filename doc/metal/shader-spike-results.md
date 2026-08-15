@@ -185,10 +185,10 @@ and mips, depth reconstruction, and final gamma. Viewer and login flows remain
 reflection alone does not close it.
 
 The separate source-pinned FXAA CTest exists while the pinned OpenGL oracle
-corpus itself remains intentionally incomplete. Further fixtures, test
-identity, capture instrumentation, repeated screenshots, timings, memory
-measurements, and self-variance are still needed. No visual or performance
-parity claim is made here beyond the narrow FXAA check.
+corpus itself remains intentionally incomplete. Broader fixtures and gates
+still need their own test identity, capture instrumentation, repeated
+screenshots, timings, memory measurements, and self-variance. No visual or
+performance parity claim is made here beyond the narrow FXAA check.
 
 ## Reproduction record
 
