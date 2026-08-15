@@ -34,7 +34,7 @@ combined metallib and path-free JSON/C++ catalog.
 | `fxaa_low` | SMAA or FXAA | runtime variant, preset 12 | pass | 1 |
 | `fxaa_medium` | SMAA or FXAA | runtime variant, preset 23 | pass | 1 |
 | `fxaa_high` | SMAA or FXAA | runtime variant, preset 28 | pass | 1 |
-| `fxaa` | SMAA or FXAA | runtime, depthless | pass | 1 |
+| `fxaa` | SMAA or FXAA | runtime, Ultra preset 39, depthless | pass | 1 |
 | `fxaa_depth_write` | SMAA or FXAA | capability | pass | 1 |
 
 The ten warnings are unused generated constant declarations. The gate rejects
