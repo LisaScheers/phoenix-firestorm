@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import importlib.util
 import json
@@ -59,12 +60,24 @@ class ShaderSpikeTest(unittest.TestCase):
         )
         return directory
 
-    def test_manifest_is_exact_fifteen_recipe_ten_family_contract(self) -> None:
+    def _assert_manifest_rejected(
+        self, document: dict[str, object], pattern: str
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            manifest = Path(directory, "manifest.json")
+            manifest.write_text(json.dumps(document), encoding="utf-8")
+            with self.assertRaisesRegex(shader_spike.ManifestError, pattern):
+                shader_spike.load_manifest(manifest)
+
+    def test_manifest_preserves_original_recipes_and_adds_exact_fxaa_variants(
+        self,
+    ) -> None:
         source_root, programs = self._programs()
         shader_spike.validate_sources(source_root, programs)
-        self.assertEqual(15, len(programs))
+        self.assertEqual(18, len(programs))
         self.assertEqual(
-            shader_spike.REQUIRED_PROGRAM_IDS, {item.program_id for item in programs}
+            shader_spike.REQUIRED_PROGRAM_IDS | shader_spike.REQUIRED_FXAA_VARIANT_IDS,
+            {item.program_id for item in programs},
         )
         self.assertEqual(
             shader_spike.REQUIRED_FAMILIES, {item.family for item in programs}
@@ -77,6 +90,7 @@ class ShaderSpikeTest(unittest.TestCase):
         self.assertEqual(set(shader_spike.BASELINE_SETTING_TYPES), set(baseline))
         self.assertTrue(baseline["RenderHDREnabled"])
         self.assertFalse(baseline["RenderEnableEmissiveBuffer"])
+        self.assertEqual(0, baseline["RenderFSAASamples"])
         self.assertEqual(0, baseline["RenderShadowDetail"])
         shadow = next(
             item for item in programs if item.program_id == "shadow_alpha_mask"
@@ -93,7 +107,10 @@ class ShaderSpikeTest(unittest.TestCase):
         self.assertEqual({"RenderShadowDetail": 1}, pbr_alpha.settings_overrides)
         self.assertEqual("1", pbr_alpha.global_defines["SUN_SHADOW"])
         self.assertNotIn("SPOT_SHADOW", pbr_alpha.global_defines)
-        self.assertEqual({"RenderFSAAType": 1}, fxaa.settings_overrides)
+        self.assertEqual(
+            {"RenderFSAASamples": 3, "RenderFSAAType": 1},
+            fxaa.settings_overrides,
+        )
 
     def test_runtime_pipeline_formats_match_manifest_contract(self) -> None:
         _, programs = self._programs()
@@ -119,7 +136,8 @@ class ShaderSpikeTest(unittest.TestCase):
         self.assertEqual((("rg11b10float",), None), actual["reflection_probe"])
         self.assertEqual((("bgra8unorm",), None), actual["presentation_copy"])
         self.assertEqual((("rgba16float",), "depth32float"), actual["depth_copy"])
-        self.assertEqual((("rgba8unorm",), None), actual["fxaa"])
+        for program_id in ("fxaa_low", "fxaa_medium", "fxaa_high", "fxaa"):
+            self.assertEqual((("rgba8unorm",), None), actual[program_id])
         self.assertEqual((("bgra8unorm",), None), actual["ui_font"])
 
     def test_presentation_copy_recipe_is_the_uniform_free_frame_contract(self) -> None:
@@ -279,10 +297,16 @@ class ShaderSpikeTest(unittest.TestCase):
     def test_stress_and_semantic_states_are_honest(self) -> None:
         _, programs = self._programs()
         by_id = {item.program_id: item for item in programs}
+        actual_kinds = {item.program_id: item.recipe_kind for item in programs}
         self.assertEqual(
             shader_spike.REQUIRED_RECIPE_KINDS,
-            {item.program_id: item.recipe_kind for item in programs},
+            {
+                program_id: actual_kinds[program_id]
+                for program_id in shader_spike.REQUIRED_RECIPE_KINDS
+            },
         )
+        for program_id in ("fxaa_low", "fxaa_medium", "fxaa_high"):
+            self.assertEqual("runtime_variant", actual_kinds[program_id])
         self.assertEqual("stress", by_id["indexed_material_stress_16"].recipe_kind)
         self.assertEqual(
             16, by_id["indexed_material_stress_16"].indexed_texture_channels
@@ -293,16 +317,29 @@ class ShaderSpikeTest(unittest.TestCase):
         )
         self.assertTrue(all(item.semantic_parity != "passed" for item in programs))
 
-    def test_recipe_kind_relabel_cannot_swap_runtime_and_capability(self) -> None:
+    def test_original_recipe_kind_relabel_cannot_escape_frozen_inventory(self) -> None:
         document = json.loads(self.manifest.read_text(encoding="utf-8"))
         by_id = {item["id"]: item for item in document["programs"]}
-        by_id["fxaa"]["recipe_kind"] = "capability"
-        by_id["fxaa_depth_write"]["recipe_kind"] = "runtime"
+        by_id["terrain"]["recipe_kind"] = "runtime_variant"
         with tempfile.TemporaryDirectory() as directory:
             manifest = Path(directory, "manifest.json")
             manifest.write_text(json.dumps(document), encoding="utf-8")
             source_root, programs = shader_spike.load_manifest(manifest)
             with self.assertRaisesRegex(shader_spike.ManifestError, "recipe inventory"):
+                shader_spike.validate_sources(source_root, programs)
+
+    def test_original_fifteen_recipes_remain_a_mandatory_subset(self) -> None:
+        document = json.loads(self.manifest.read_text(encoding="utf-8"))
+        document["programs"] = [
+            item for item in document["programs"] if item["id"] != "depth_copy"
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            manifest = Path(directory, "manifest.json")
+            manifest.write_text(json.dumps(document), encoding="utf-8")
+            source_root, programs = shader_spike.load_manifest(manifest)
+            with self.assertRaisesRegex(
+                shader_spike.ManifestError, "missing required recipes: depth_copy"
+            ):
                 shader_spike.validate_sources(source_root, programs)
 
     def test_program_family_labels_cannot_be_swapped(self) -> None:
@@ -618,7 +655,17 @@ class ShaderSpikeTest(unittest.TestCase):
                 spec_path,
             )
             spec = json.loads(spec_path.read_text(encoding="utf-8"))
-        self.assertEqual(4, spec["schema"])
+        self.assertEqual(5, spec["schema"])
+        self.assertEqual(
+            {
+                "source_symbol": "gUIProgram",
+                "source_index": None,
+                "shader_class": 2,
+                "boolean_settings": [],
+                "integer_settings": [],
+            },
+            spec["selection"],
+        )
         self.assertEqual(
             [16, 18, 20], [item["buffer_index"] for item in spec["vertex_layouts"]]
         )
@@ -1264,10 +1311,305 @@ class ShaderSpikeTest(unittest.TestCase):
         self.assertIsNone(report["full_translation_gate_passed"])
         self.assertEqual("not_run", report["semantic_parity_gate"])
 
+    def test_bundled_source_indices_and_selection_keys_are_exact(self) -> None:
+        _, programs = self._programs()
+        bundled = [
+            item
+            for item in programs
+            if item.recipe_kind in shader_spike.BUNDLED_RECIPE_KINDS
+        ]
+        self.assertEqual(16, len(bundled))
+        scalar = [item for item in bundled if item.source_symbol != "gFXAAProgram"]
+        self.assertTrue(all(item.source_index is None for item in scalar))
+        self.assertEqual(
+            len(bundled),
+            len({shader_spike.program_selection_key(item) for item in bundled}),
+        )
+
+    def test_program_selection_partitions_and_sorts_setting_types(self) -> None:
+        _, programs = self._programs()
+        ui = next(item for item in programs if item.program_id == "ui_font")
+        recipe = replace(
+            ui,
+            settings_overrides={
+                "RenderUIBuffer": True,
+                "RenderShadowDetail": 2,
+                "RenderHDREnabled": False,
+                "RenderFSAASamples": 1,
+            },
+        )
+        self.assertEqual(
+            {
+                "source_symbol": "gUIProgram",
+                "source_index": None,
+                "shader_class": 2,
+                "boolean_settings": [
+                    {"name": "RenderHDREnabled", "value": False},
+                    {"name": "RenderUIBuffer", "value": True},
+                ],
+                "integer_settings": [
+                    {"name": "RenderFSAASamples", "value": 1},
+                    {"name": "RenderShadowDetail", "value": 2},
+                ],
+            },
+            shader_spike.program_selection(recipe),
+        )
+
+    def test_fxaa_variants_emit_exact_typed_selections(self) -> None:
+        _, programs = self._programs()
+        by_id = {item.program_id: item for item in programs}
+        expected = {
+            "fxaa_low": (0, "12"),
+            "fxaa_medium": (1, "23"),
+            "fxaa_high": (2, "28"),
+            "fxaa": (3, "39"),
+        }
+        vertex = {"inputs": [{"name": "position", "type": "vec3", "location": 0}]}
+        fragment = {
+            "outputs": [{"name": "frag_color", "type": "vec4", "location": 0}],
+            "textures": [{"name": "diffuseMap", "type": "sampler2D", "binding": 0}],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for program_id, (source_index, preset) in expected.items():
+                recipe = by_id[program_id]
+                path = root / f"{program_id}.json"
+                shader_spike.write_pipeline_spec(
+                    recipe,
+                    vertex,
+                    fragment,
+                    self._stage_msl_sources(vertex, fragment),
+                    root / f"{program_id}.metallib",
+                    path,
+                )
+                spec = json.loads(path.read_text(encoding="utf-8"))
+                with self.subTest(program_id=program_id):
+                    self.assertEqual(5, spec["schema"])
+                    self.assertEqual(
+                        {
+                            "source_symbol": "gFXAAProgram",
+                            "source_index": source_index,
+                            "shader_class": 3,
+                            "boolean_settings": [],
+                            "integer_settings": [
+                                {
+                                    "name": "RenderFSAASamples",
+                                    "value": source_index,
+                                },
+                                {"name": "RenderFSAAType", "value": 1},
+                            ],
+                        },
+                        spec["selection"],
+                    )
+                    self.assertEqual(preset, recipe.defines["FXAA_QUALITY__PRESET"])
+
+    def test_nonbundled_pipeline_specs_remain_schema_four_without_selection(
+        self,
+    ) -> None:
+        _, programs = self._programs()
+        capability = next(
+            item for item in programs if item.program_id == "fxaa_depth_write"
+        )
+        vertex = {"inputs": [{"name": "position", "type": "vec3", "location": 0}]}
+        fragment = {
+            "outputs": [{"name": "frag_color", "type": "vec4", "location": 0}],
+            "textures": [
+                {"name": "diffuseMap", "type": "sampler2D", "binding": 0},
+                {"name": "depthMap", "type": "sampler2D", "binding": 1},
+            ],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory, "capability.json")
+            shader_spike.write_pipeline_spec(
+                capability,
+                vertex,
+                fragment,
+                self._stage_msl_sources(vertex, fragment),
+                Path(directory, "capability.metallib"),
+                path,
+            )
+            spec = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(4, spec["schema"])
+        self.assertNotIn("selection", spec)
+
+    def test_manifest_selection_and_fxaa_mutations_fail_closed(self) -> None:
+        original = json.loads(self.manifest.read_text(encoding="utf-8"))
+
+        def mutate(
+            program_id: str, field: tuple[str, ...], value: object
+        ) -> dict[str, object]:
+            document = copy.deepcopy(original)
+            programs = {item["id"]: item for item in document["programs"]}
+            target = programs[program_id]
+            for key in field[:-1]:
+                target = target[key]
+            target[field[-1]] = value
+            return document
+
+        mutations = (
+            (
+                "wrong FXAA index",
+                mutate("fxaa_high", ("source_index",), 1),
+                "selection key collides|exact FXAA mapping",
+            ),
+            (
+                "wrong FXAA preset",
+                mutate("fxaa_medium", ("defines", "FXAA_QUALITY__PRESET"), "28"),
+                "exact FXAA mapping",
+            ),
+            (
+                "wrong FXAA sample setting",
+                mutate("fxaa_low", ("settings_overrides", "RenderFSAASamples"), 1),
+                "exact FXAA mapping",
+            ),
+            (
+                "wrong FXAA type setting",
+                mutate("fxaa", ("settings_overrides", "RenderFSAAType"), 2),
+                "exact FXAA mapping",
+            ),
+            (
+                "wrong FXAA symbol",
+                mutate("fxaa", ("source_symbol",), "gUIProgram"),
+                "scalar source_symbol|exact FXAA mapping",
+            ),
+            (
+                "wrong FXAA class",
+                mutate("fxaa", ("shader_class",), 2),
+                "exact FXAA mapping",
+            ),
+            (
+                "scalar numeric index",
+                mutate("ui_font", ("source_index",), 0),
+                "scalar source_symbol",
+            ),
+            (
+                "capability class outside source range",
+                mutate("fxaa_depth_write", ("shader_class",), 4),
+                r"supported source range \[1, 3\]",
+            ),
+            (
+                "stress class outside source range",
+                mutate("indexed_material_stress_16", ("shader_class",), 4),
+                r"supported source range \[1, 3\]",
+            ),
+        )
+        for label, document, pattern in mutations:
+            with self.subTest(label=label):
+                self._assert_manifest_rejected(document, pattern)
+
+        missing_index = copy.deepcopy(original)
+        ui = next(item for item in missing_index["programs"] if item["id"] == "ui_font")
+        del ui["source_index"]
+        self._assert_manifest_rejected(missing_index, "source_index is required")
+
+        capability_index = copy.deepcopy(original)
+        depth_probe = next(
+            item
+            for item in capability_index["programs"]
+            if item["id"] == "fxaa_depth_write"
+        )
+        depth_probe["source_index"] = None
+        self._assert_manifest_rejected(
+            capability_index, "source_index is only valid for bundled"
+        )
+
+        collision = copy.deepcopy(original)
+        depth_copy = next(
+            item for item in collision["programs"] if item["id"] == "depth_copy"
+        )
+        depth_copy["source_symbol"] = "gCopyProgram"
+        self._assert_manifest_rejected(collision, "selection key collides")
+
+        old_schema = copy.deepcopy(original)
+        old_schema["schema"] = 3
+        self._assert_manifest_rejected(old_schema, "manifest schema must be 4")
+
+    @unittest.skipUnless(
+        sys.platform == "darwin", "native Metal validator is macOS-only"
+    )
+    def test_native_validator_rejects_selection_contract_inversions(self) -> None:
+        _, programs = self._programs()
+        fxaa = next(item for item in programs if item.program_id == "fxaa_high")
+        capability = next(
+            item for item in programs if item.program_id == "fxaa_depth_write"
+        )
+        vertex = {"inputs": [{"name": "position", "type": "vec3", "location": 0}]}
+        fragment = {
+            "outputs": [{"name": "frag_color", "type": "vec4", "location": 0}],
+            "textures": [{"name": "diffuseMap", "type": "sampler2D", "binding": 0}],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            spec_path = root / "fxaa-high.json"
+            shader_spike.write_pipeline_spec(
+                fxaa,
+                vertex,
+                fragment,
+                self._stage_msl_sources(vertex, fragment),
+                root / "not-loaded.metallib",
+                spec_path,
+            )
+            validator = shader_spike.build_pipeline_validator(
+                root, programs[0].input_snapshot
+            )
+
+            def validate(
+                document: dict[str, object],
+            ) -> subprocess.CompletedProcess[str]:
+                spec_path.write_text(json.dumps(document), encoding="utf-8")
+                return subprocess.run(
+                    [str(validator), str(spec_path)],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+
+            fxaa_spec = json.loads(spec_path.read_text(encoding="utf-8"))
+            mismatched_settings = copy.deepcopy(fxaa_spec)
+            mismatched_settings["selection"]["integer_settings"][0]["value"] = 1
+            result = validate(mismatched_settings)
+            self.assertEqual(2, result.returncode)
+            self.assertIn("exact FXAA settings mapping", result.stderr)
+            self.assertNotIn("cannot load metallib", result.stderr)
+
+            downgraded = copy.deepcopy(fxaa_spec)
+            downgraded["schema"] = 4
+            del downgraded["selection"]
+            result = validate(downgraded)
+            self.assertEqual(2, result.returncode)
+            self.assertIn("bundled pipeline spec requires schema 5", result.stderr)
+            self.assertNotIn("cannot load metallib", result.stderr)
+
+            capability_path = root / "fxaa-depth-write.json"
+            shader_spike.write_pipeline_spec(
+                capability,
+                vertex,
+                fragment,
+                self._stage_msl_sources(vertex, fragment),
+                root / "not-loaded.metallib",
+                capability_path,
+            )
+            upgraded = json.loads(capability_path.read_text(encoding="utf-8"))
+            upgraded["schema"] = 5
+            upgraded["selection"] = {
+                "source_symbol": "gCapabilityProbe",
+                "source_index": None,
+                "shader_class": 3,
+                "boolean_settings": [],
+                "integer_settings": [],
+            }
+            result = validate(upgraded)
+            self.assertEqual(2, result.returncode)
+            self.assertIn(
+                "selector-free pipeline spec requires schema 4", result.stderr
+            )
+            self.assertNotIn("cannot load metallib", result.stderr)
+
     def test_fxaa_variants_preserve_default_gl_depth_behavior(self) -> None:
         _, programs = self._programs()
         by_id = {item.program_id: item for item in programs}
-        self.assertEqual("1", by_id["fxaa"].defines["FXAA_NO_DEPTH_WRITE"])
+        for program_id in ("fxaa_low", "fxaa_medium", "fxaa_high", "fxaa"):
+            self.assertEqual("1", by_id[program_id].defines["FXAA_NO_DEPTH_WRITE"])
         depth_probe = by_id["fxaa_depth_write"]
         self.assertEqual("capability", depth_probe.recipe_kind)
         self.assertNotIn("FXAA_NO_DEPTH_WRITE", depth_probe.defines)

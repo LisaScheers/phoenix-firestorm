@@ -3,18 +3,18 @@
 Translation feasibility: **accepted on the pinned baseline**. Mandatory family
 semantic parity: **not run**.
 
-All 15 recipes pass the complete build-time path: compiler-linked GLSL objects,
+All 18 recipes pass the complete build-time path: compiler-linked GLSL objects,
 SPIR-V validation and reflection, cross-stage interface validation,
 SPIRV-Cross, Apple's Metal compiler, per-program `.metallib` linking, and real
 `MTLRenderPipelineState` creation under Metal API validation. The set contains
-13 representative runtime contracts, a depth-writing FXAA capability probe,
-and a separate 16-channel indexed-texture stress case, covering all ten
-required families. The 13 runtime AIR pairs also link in lexical ID then
-vertex/fragment order into one path-free
+12 scalar runtime contracts, four selectable FXAA runtime recipes, a
+depth-writing FXAA capability probe, and a separate 16-channel indexed-texture
+stress case, covering all ten required families. The 16 bundled AIR pairs also
+link in lexical ID then vertex/fragment order into one path-free
 `firestorm-declared-programs.metallib`; every runtime PSO is recreated from
 that same library under Metal API validation. A second build root reproduced
-all 109 checked artifacts byte for byte: the prior 105 per-program artifacts
-plus the combined metallib and path-free JSON/C++ catalog.
+all 130 checked artifacts byte for byte: the 126 per-program artifacts plus the
+combined metallib and path-free JSON/C++ catalog.
 
 | Program | Required family | Recipe | Metal PSO | Metal warnings |
 | --- | --- | --- | ---: | ---: |
@@ -31,10 +31,13 @@ plus the combined metallib and path-free JSON/C++ catalog.
 | `reflection_probe` | Reflection probe | runtime | pass | 0 |
 | `presentation_copy` | Depth write and copy | runtime | pass | 0 |
 | `depth_copy` | Depth write and copy | runtime | pass | 0 |
+| `fxaa_low` | SMAA or FXAA | runtime variant, preset 12 | pass | 1 |
+| `fxaa_medium` | SMAA or FXAA | runtime variant, preset 23 | pass | 1 |
+| `fxaa_high` | SMAA or FXAA | runtime variant, preset 28 | pass | 1 |
 | `fxaa` | SMAA or FXAA | runtime, depthless | pass | 1 |
 | `fxaa_depth_write` | SMAA or FXAA | capability | pass | 1 |
 
-The seven warnings are unused generated constant declarations. The gate rejects
+The ten warnings are unused generated constant declarations. The gate rejects
 possibly-uninitialized diagnostics; none remain. Full output is retained in
 the local report. Compilation success does not waive semantic checks or make
 the remaining warnings accepted renderer behavior.
@@ -66,6 +69,12 @@ the remaining warnings accepted renderer behavior.
 - Metal defines `FXAA_NO_DEPTH_WRITE` for the real depthless post target. The
   source-controlled default depth-writing form remains covered by the separate
   capability recipe; it is not presented as a runtime Metal path.
+- The bundled FXAA set preserves the source array's exact Low, Medium, High,
+  and Ultra ordering: indices 0 through 3 select presets 12, 23, 28, and 39.
+  Artifact schema v2 carries `gFXAAProgram`, the optional source index, shader
+  class 3, and typed `RenderFSAAType=1`/`RenderFSAASamples=index` overrides.
+  Scalar program globals retain a null source index, and duplicate selector
+  triples fail catalog generation and ordinary-C++ validation.
 - The `presentation_copy` runtime recipe uses the real `gCopyProgram` sources
   with one BGRA8Unorm color target, the position-only vertex contract, and the
   paired `diffuseMap` texture and sampler. Both stages expose no uniform
@@ -75,12 +84,12 @@ the remaining warnings accepted renderer behavior.
   pipeline, not merely by packaging AIR into a metallib. Pipeline reflection
   must exactly match stage bindings, buffer sizes and recursive member layouts,
   and texture access, dimension, scalar type, array length, and depth usage.
-  Artifact schema v1 admits only the matrix layouts present here: `mat3` and
+  Artifact schema v2 admits only the matrix layouts present here: `mat3` and
   `mat4`, column-major with stride 16. Producer, catalog, and native schema
   validation reject other shapes, strides, or major orders, while native
   reflection proves the remaining matrix data type.
 - Entry-point names are stable program ID plus stage names.
-- The runtime-only artifact has exactly the combined library's 26 expected
+- The runtime-only artifact has exactly the combined library's 32 expected
   entry points. Its immutable C++17 descriptors use the existing renderer
   `PixelFormat`, typed vertex layouts and stage buffer/texture/sampler
   summaries, per-buffer layout digests, and full per-stage reflection digests.
@@ -105,9 +114,11 @@ become canonical.
 ## Scope and remaining gates
 
 This result proves that the selected translation architecture can build and
-link 13 representative Firestorm runtime recipes into structurally valid Metal
-pipelines. It is not the complete viewer shader inventory and does not prove
-selection integration or rendering equivalence. The mandatory family pass
+link 16 representative Firestorm runtime recipes and variants into
+structurally valid Metal pipelines. It also proves exact typed catalog lookup
+for the four source-backed FXAA quality indices. It is not the complete viewer
+shader inventory and does not prove renderer selection integration or
+rendering equivalence. The mandatory family pass
 conditions still need deterministic draws and readback for orientation,
 blending, G-buffer channels, terrain, shadows, probe faces and mips, depth
 reconstruction, and final gamma. Avatar CPU/runtime layout parity is also still

@@ -1,5 +1,5 @@
 {
-  "schema": 3,
+  "schema": 4,
   "glsl_version": 400,
   "baseline_commit": "1e8fd5491bde91fe6daca7d78f217a4d46084a5b",
   "source_root": "indra/newview/app_settings/shaders",
@@ -48,6 +48,7 @@
   "baseline_settings": {
     "RenderAvatarCloth": false,
     "RenderEnableEmissiveBuffer": false,
+    "RenderFSAASamples": 0,
     "RenderFSAAType": 0,
     "RenderHDREnabled": true,
     "RenderMirrors": false,
@@ -175,6 +176,7 @@
       "semantic_parity": "not_run",
       "source_reference": "indra/newview/llviewershadermgr.cpp:3247",
       "source_symbol": "gUIProgram",
+      "source_index": null,
       "shader_class": 2,
       "defines": {},
       "indexed_texture_channels": 0,
@@ -212,6 +214,7 @@
       "semantic_parity": "not_run",
       "source_reference": "indra/newview/llviewershadermgr.cpp:1230",
       "source_symbol": "gDeferredDiffuseProgram",
+      "source_index": null,
       "shader_class": 3,
       "defines": {},
       "indexed_texture_channels": 4,
@@ -310,6 +313,7 @@
       "semantic_parity": "not_run",
       "source_reference": "indra/newview/llviewershadermgr.cpp:1280",
       "source_symbol": "gDeferredBumpProgram",
+      "source_index": null,
       "shader_class": 3,
       "defines": {},
       "indexed_texture_channels": 0,
@@ -356,6 +360,7 @@
       "semantic_parity": "not_run",
       "source_reference": "indra/newview/llviewershadermgr.cpp:1387",
       "source_symbol": "gDeferredPBROpaqueProgram",
+      "source_index": null,
       "shader_class": 3,
       "defines": {},
       "indexed_texture_channels": 0,
@@ -405,6 +410,7 @@
       "semantic_parity": "not_run",
       "source_reference": "indra/newview/llviewershadermgr.cpp:1473",
       "source_symbol": "gDeferredPBRAlphaProgram",
+      "source_index": null,
       "shader_class": 3,
       "defines": {
         "DIFFUSE_ALPHA_MODE": "1",
@@ -509,6 +515,7 @@
       "semantic_parity": "not_run",
       "source_reference": "indra/newview/llviewershadermgr.cpp:2366",
       "source_symbol": "gDeferredTerrainProgram",
+      "source_index": null,
       "shader_class": 3,
       "defines": {},
       "indexed_texture_channels": 0,
@@ -569,6 +576,7 @@
       "semantic_parity": "cpu_runtime_layout_open",
       "source_reference": "indra/newview/llviewershadermgr.cpp:2386",
       "source_symbol": "gDeferredAvatarProgram",
+      "source_index": null,
       "shader_class": 3,
       "defines": {"AVATAR_CLOTH": "0"},
       "indexed_texture_channels": 0,
@@ -616,6 +624,7 @@
       "semantic_parity": "not_run",
       "source_reference": "indra/newview/llviewershadermgr.cpp:2283",
       "source_symbol": "gDeferredShadowAlphaMaskProgram",
+      "source_index": null,
       "shader_class": 3,
       "defines": {},
       "indexed_texture_channels": 4,
@@ -656,6 +665,7 @@
       "semantic_parity": "not_run",
       "source_reference": "indra/newview/llviewershadermgr.cpp:1796",
       "source_symbol": "gDeferredAlphaProgram",
+      "source_index": null,
       "shader_class": 2,
       "defines": {
         "HAS_ALPHA_MASK": "1",
@@ -754,6 +764,7 @@
       "semantic_parity": "not_run",
       "source_reference": "indra/newview/llviewershadermgr.cpp:3568",
       "source_symbol": "gRadianceGenProgram",
+      "source_index": null,
       "shader_class": 2,
       "defines": {"PROBE_FILTER_SAMPLES": "32"},
       "indexed_texture_channels": 0,
@@ -795,6 +806,7 @@
       "semantic_parity": "not_run",
       "source_reference": "indra/newview/llviewershadermgr.cpp:3468",
       "source_symbol": "gCopyProgram",
+      "source_index": null,
       "shader_class": 2,
       "defines": {},
       "indexed_texture_channels": 0,
@@ -832,6 +844,7 @@
       "semantic_parity": "not_run",
       "source_reference": "indra/newview/llviewershadermgr.cpp:3478",
       "source_symbol": "gCopyDepthProgram",
+      "source_index": null,
       "shader_class": 2,
       "defines": {"COPY_DEPTH": "1"},
       "indexed_texture_channels": 0,
@@ -866,13 +879,194 @@
       }
     },
     {
-      "id": "fxaa",
+      "id": "fxaa_low",
       "family": "SMAA or FXAA",
-      "recipe_kind": "runtime",
-      "settings_overrides": {"RenderFSAAType": 1},
+      "recipe_kind": "runtime_variant",
+      "settings_overrides": {
+        "RenderFSAASamples": 0,
+        "RenderFSAAType": 1
+      },
       "semantic_parity": "not_run",
       "source_reference": "indra/newview/llviewershadermgr.cpp:2620",
       "source_symbol": "gFXAAProgram",
+      "source_index": 0,
+      "shader_class": 3,
+      "defines": {
+        "FXAA_GLSL_400": "1",
+        "FXAA_NO_DEPTH_WRITE": "1",
+        "FXAA_QUALITY__PRESET": "12"
+      },
+      "indexed_texture_channels": 0,
+      "required_reflection": {
+        "fragment": [
+          {"group": "textures", "name": "diffuseMap", "type": "sampler2D"}
+        ]
+      },
+      "pipeline": {
+        "color_formats": ["rgba8unorm"],
+        "depth_format": null,
+        "sample_count": 1,
+        "vertex_contract": "position_only",
+        "source_evidence": [
+          {
+            "path": "indra/newview/pipeline.cpp",
+            "contains": "mPostPongMap.allocate(resX, resY, GL_RGBA)"
+          },
+          {
+            "path": "indra/newview/app_settings/shaders/class1/deferred/fxaaF.glsl",
+            "contains": "#ifndef FXAA_NO_DEPTH_WRITE\nuniform sampler2D depthMap;"
+          }
+        ]
+      },
+      "stages": {
+        "vertex": [
+          "deferred/postDeferredV.glsl",
+          "windlight/atmosphericsVarsV.glsl",
+          "deferred/textureUtilV.glsl",
+          "objects/nonindexedTextureV.glsl"
+        ],
+        "fragment": [
+          "deferred/fxaaF.glsl",
+          "deferred/globalF.glsl",
+          "environment/srgbF.glsl",
+          "windlight/atmosphericsVarsF.glsl",
+          "deferred/deferredUtil.glsl",
+          "windlight/gammaF.glsl",
+          "windlight/atmosphericsFuncs.glsl",
+          "windlight/atmosphericsF.glsl"
+        ]
+      }
+    },
+    {
+      "id": "fxaa_medium",
+      "family": "SMAA or FXAA",
+      "recipe_kind": "runtime_variant",
+      "settings_overrides": {
+        "RenderFSAASamples": 1,
+        "RenderFSAAType": 1
+      },
+      "semantic_parity": "not_run",
+      "source_reference": "indra/newview/llviewershadermgr.cpp:2620",
+      "source_symbol": "gFXAAProgram",
+      "source_index": 1,
+      "shader_class": 3,
+      "defines": {
+        "FXAA_GLSL_400": "1",
+        "FXAA_NO_DEPTH_WRITE": "1",
+        "FXAA_QUALITY__PRESET": "23"
+      },
+      "indexed_texture_channels": 0,
+      "required_reflection": {
+        "fragment": [
+          {"group": "textures", "name": "diffuseMap", "type": "sampler2D"}
+        ]
+      },
+      "pipeline": {
+        "color_formats": ["rgba8unorm"],
+        "depth_format": null,
+        "sample_count": 1,
+        "vertex_contract": "position_only",
+        "source_evidence": [
+          {
+            "path": "indra/newview/pipeline.cpp",
+            "contains": "mPostPongMap.allocate(resX, resY, GL_RGBA)"
+          },
+          {
+            "path": "indra/newview/app_settings/shaders/class1/deferred/fxaaF.glsl",
+            "contains": "#ifndef FXAA_NO_DEPTH_WRITE\nuniform sampler2D depthMap;"
+          }
+        ]
+      },
+      "stages": {
+        "vertex": [
+          "deferred/postDeferredV.glsl",
+          "windlight/atmosphericsVarsV.glsl",
+          "deferred/textureUtilV.glsl",
+          "objects/nonindexedTextureV.glsl"
+        ],
+        "fragment": [
+          "deferred/fxaaF.glsl",
+          "deferred/globalF.glsl",
+          "environment/srgbF.glsl",
+          "windlight/atmosphericsVarsF.glsl",
+          "deferred/deferredUtil.glsl",
+          "windlight/gammaF.glsl",
+          "windlight/atmosphericsFuncs.glsl",
+          "windlight/atmosphericsF.glsl"
+        ]
+      }
+    },
+    {
+      "id": "fxaa_high",
+      "family": "SMAA or FXAA",
+      "recipe_kind": "runtime_variant",
+      "settings_overrides": {
+        "RenderFSAASamples": 2,
+        "RenderFSAAType": 1
+      },
+      "semantic_parity": "not_run",
+      "source_reference": "indra/newview/llviewershadermgr.cpp:2620",
+      "source_symbol": "gFXAAProgram",
+      "source_index": 2,
+      "shader_class": 3,
+      "defines": {
+        "FXAA_GLSL_400": "1",
+        "FXAA_NO_DEPTH_WRITE": "1",
+        "FXAA_QUALITY__PRESET": "28"
+      },
+      "indexed_texture_channels": 0,
+      "required_reflection": {
+        "fragment": [
+          {"group": "textures", "name": "diffuseMap", "type": "sampler2D"}
+        ]
+      },
+      "pipeline": {
+        "color_formats": ["rgba8unorm"],
+        "depth_format": null,
+        "sample_count": 1,
+        "vertex_contract": "position_only",
+        "source_evidence": [
+          {
+            "path": "indra/newview/pipeline.cpp",
+            "contains": "mPostPongMap.allocate(resX, resY, GL_RGBA)"
+          },
+          {
+            "path": "indra/newview/app_settings/shaders/class1/deferred/fxaaF.glsl",
+            "contains": "#ifndef FXAA_NO_DEPTH_WRITE\nuniform sampler2D depthMap;"
+          }
+        ]
+      },
+      "stages": {
+        "vertex": [
+          "deferred/postDeferredV.glsl",
+          "windlight/atmosphericsVarsV.glsl",
+          "deferred/textureUtilV.glsl",
+          "objects/nonindexedTextureV.glsl"
+        ],
+        "fragment": [
+          "deferred/fxaaF.glsl",
+          "deferred/globalF.glsl",
+          "environment/srgbF.glsl",
+          "windlight/atmosphericsVarsF.glsl",
+          "deferred/deferredUtil.glsl",
+          "windlight/gammaF.glsl",
+          "windlight/atmosphericsFuncs.glsl",
+          "windlight/atmosphericsF.glsl"
+        ]
+      }
+    },
+    {
+      "id": "fxaa",
+      "family": "SMAA or FXAA",
+      "recipe_kind": "runtime",
+      "settings_overrides": {
+        "RenderFSAASamples": 3,
+        "RenderFSAAType": 1
+      },
+      "semantic_parity": "not_run",
+      "source_reference": "indra/newview/llviewershadermgr.cpp:2620",
+      "source_symbol": "gFXAAProgram",
+      "source_index": 3,
       "shader_class": 3,
       "defines": {
         "FXAA_GLSL_400": "1",

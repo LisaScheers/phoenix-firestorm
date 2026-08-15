@@ -6,6 +6,8 @@ import copy
 import hashlib
 import importlib.util
 import json
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -29,8 +31,15 @@ class RuntimeProgramsTest(unittest.TestCase):
     @staticmethod
     def _spec(program_id: str = "ui_font") -> dict[str, object]:
         return {
-            "schema": 4,
+            "schema": 5,
             "id": program_id,
+            "selection": {
+                "source_symbol": program_id,
+                "source_index": None,
+                "shader_class": 2,
+                "boolean_settings": [{"name": "RenderHDREnabled", "value": True}],
+                "integer_settings": [{"name": "RenderShadowDetail", "value": 0}],
+            },
             "metallib": "/deliberately/not/copied/to/runtime/catalog.metallib",
             "vertex_function": f"{program_id}_vertex",
             "fragment_function": f"{program_id}_fragment",
@@ -139,7 +148,7 @@ class RuntimeProgramsTest(unittest.TestCase):
         runtime = [
             item
             for item in self.manifest["programs"]
-            if item["recipe_kind"] == "runtime"
+            if item["recipe_kind"] in {"runtime", "runtime_variant"}
         ]
         self.assertEqual(
             [
@@ -147,6 +156,9 @@ class RuntimeProgramsTest(unittest.TestCase):
                 "deferred_diffuse",
                 "depth_copy",
                 "fxaa",
+                "fxaa_high",
+                "fxaa_low",
+                "fxaa_medium",
                 "indexed_material",
                 "pbr_alpha",
                 "pbr_opaque",
@@ -159,7 +171,7 @@ class RuntimeProgramsTest(unittest.TestCase):
             ],
             sorted(item["id"] for item in runtime),
         )
-        self.assertEqual(13, len(runtime))
+        self.assertEqual(16, len(runtime))
         self.assertEqual(10, len({item["family"] for item in runtime}))
         self.assertTrue(
             all("runtime_id" not in item for item in self.manifest["programs"])
@@ -303,6 +315,7 @@ class RuntimeProgramsTest(unittest.TestCase):
             document["source_manifest_sha256"],
         )
         self.assertEqual(self.manifest["baseline_commit"], document["baseline_commit"])
+        self.assertEqual(2, document["schema"])
         header = runtime_programs.render_header(document).decode()
         source = runtime_programs.render_source(
             document, "firestorm-declared-programs.h"
@@ -312,6 +325,288 @@ class RuntimeProgramsTest(unittest.TestCase):
         self.assertIn("Values are deterministic lexical ordinals", header)
         self.assertNotIn("/deliberately/", source)
         self.assertNotIn(str(self.repository), header + source)
+
+    def test_selection_is_typed_rendered_and_part_of_program_identity(self) -> None:
+        spec = self._spec()
+        spec["selection"] = {
+            "source_symbol": "gUIProgram",
+            "source_index": None,
+            "shader_class": 2,
+            "boolean_settings": [
+                {"name": "RenderAvatarCloth", "value": False},
+                {"name": "RenderHDREnabled", "value": True},
+            ],
+            "integer_settings": [
+                {"name": "RenderFSAAType", "value": 1},
+                {"name": "RenderShadowDetail", "value": 0},
+            ],
+        }
+        original = runtime_programs.make_program_record(
+            "UI and font glyph", spec, self._reflections()
+        )
+        self.assertEqual(spec["selection"], original["selection"])
+
+        for field, value in (
+            ("source_symbol", "gUIProgramVariant"),
+            ("source_index", 0),
+            ("shader_class", 3),
+        ):
+            with self.subTest(field=field):
+                changed = copy.deepcopy(spec)
+                changed["selection"][field] = value
+                changed_record = runtime_programs.make_program_record(
+                    "UI and font glyph", changed, self._reflections()
+                )
+                self.assertNotEqual(
+                    original["reflection_sha256"],
+                    changed_record["reflection_sha256"],
+                )
+
+        for setting_kind, replacement in (
+            ("boolean_settings", False),
+            ("integer_settings", 2),
+        ):
+            with self.subTest(setting_kind=setting_kind):
+                changed = copy.deepcopy(spec)
+                changed["selection"][setting_kind][1]["value"] = replacement
+                changed_record = runtime_programs.make_program_record(
+                    "UI and font glyph", changed, self._reflections()
+                )
+                self.assertNotEqual(
+                    original["reflection_sha256"],
+                    changed_record["reflection_sha256"],
+                )
+
+        document = runtime_programs.make_artifact_document(
+            [original], "1" * 64, 4, "2" * 64, "3" * 40
+        )
+        header = runtime_programs.render_header(document).decode()
+        source = runtime_programs.render_source(
+            document, "firestorm-declared-programs.h"
+        ).decode()
+        self.assertIn("std::optional<std::uint16_t> source_index", header)
+        self.assertIn(
+            "MetalBooleanSettingDescriptor k_ui_font_boolean_settings", source
+        )
+        self.assertIn(
+            "MetalIntegerSettingDescriptor k_ui_font_integer_settings", source
+        )
+        self.assertIn('"gUIProgram", std::nullopt, 2', source)
+        self.assertIn("program.sourceIndex == source_index", source)
+
+    def test_selection_validation_fails_closed(self) -> None:
+        mutations: list[tuple[str, object]] = []
+
+        unsafe_symbol = self._spec()
+        unsafe_symbol["selection"]["source_symbol"] = "../gUIProgram"
+        mutations.append(("source_symbol is invalid", unsafe_symbol))
+
+        for field, value in (
+            ("source_index", True),
+            ("source_index", -1),
+            ("source_index", 2**16),
+            ("shader_class", 0),
+            ("shader_class", 4),
+        ):
+            malformed = self._spec()
+            malformed["selection"][field] = value
+            mutations.append((field, malformed))
+
+        unsorted = self._spec()
+        unsorted["selection"]["integer_settings"] = [
+            {"name": "Zulu", "value": 1},
+            {"name": "Alpha", "value": 2},
+        ]
+        mutations.append(("strictly name ordered", unsorted))
+
+        unsafe_setting = self._spec()
+        unsafe_setting["selection"]["boolean_settings"][0]["name"] = "../unsafe"
+        mutations.append(("name is invalid", unsafe_setting))
+
+        duplicate = self._spec()
+        duplicate["selection"]["boolean_settings"] = [
+            {"name": "SameSetting", "value": True}
+        ]
+        duplicate["selection"]["integer_settings"] = [
+            {"name": "SameSetting", "value": 1}
+        ]
+        mutations.append(("repeats settings across", duplicate))
+
+        wrong_boolean = self._spec()
+        wrong_boolean["selection"]["boolean_settings"][0]["value"] = 1
+        mutations.append(("must be boolean", wrong_boolean))
+
+        wrong_integer = self._spec()
+        wrong_integer["selection"]["integer_settings"][0]["value"] = True
+        mutations.append(("signed 32-bit integer", wrong_integer))
+
+        for expected, spec in mutations:
+            with (
+                self.subTest(expected=expected),
+                self.assertRaisesRegex(runtime_programs.RuntimeProgramError, expected),
+            ):
+                runtime_programs.make_program_record(
+                    "UI and font glyph", spec, self._reflections()
+                )
+
+    def test_duplicate_selection_keys_reject_but_null_and_zero_are_distinct(
+        self,
+    ) -> None:
+        scalar_spec = self._spec("alpha_program")
+        scalar_spec["selection"]["source_symbol"] = "gSharedProgram"
+        scalar = runtime_programs.make_program_record(
+            "UI and font glyph", scalar_spec, self._reflections()
+        )
+        indexed_spec = self._spec("zulu_program")
+        indexed_spec["selection"]["source_symbol"] = "gSharedProgram"
+        indexed_spec["selection"]["source_index"] = 0
+        indexed = runtime_programs.make_program_record(
+            "UI and font glyph", indexed_spec, self._reflections()
+        )
+        runtime_programs.make_artifact_document(
+            [scalar, indexed], "1" * 64, 4, "2" * 64, "3" * 40
+        )
+
+        duplicate_spec = self._spec("zulu_program")
+        duplicate_spec["selection"]["source_symbol"] = "gSharedProgram"
+        duplicate = runtime_programs.make_program_record(
+            "UI and font glyph", duplicate_spec, self._reflections()
+        )
+        with self.assertRaisesRegex(
+            runtime_programs.RuntimeProgramError, "duplicate program selection keys"
+        ):
+            runtime_programs.make_artifact_document(
+                [scalar, duplicate], "1" * 64, 4, "2" * 64, "3" * 40
+            )
+
+    def test_generated_lookup_and_selection_validation_compile_as_ordinary_cpp(
+        self,
+    ) -> None:
+        compiler = shutil.which("clang++") or shutil.which("c++")
+        if compiler is None:
+            self.skipTest("no C++ compiler is available")
+
+        scalar_spec = self._spec("alpha_program")
+        scalar_spec["selection"] = {
+            "source_symbol": "gSharedProgram",
+            "source_index": None,
+            "shader_class": 2,
+            "boolean_settings": [],
+            "integer_settings": [],
+        }
+        indexed_spec = self._spec("zulu_program")
+        indexed_spec["selection"] = {
+            "source_symbol": "gSharedProgram",
+            "source_index": 0,
+            "shader_class": 2,
+            "boolean_settings": [],
+            "integer_settings": [],
+        }
+        records = [
+            runtime_programs.make_program_record(
+                "UI and font glyph", scalar_spec, self._reflections()
+            ),
+            runtime_programs.make_program_record(
+                "UI and font glyph", indexed_spec, self._reflections()
+            ),
+        ]
+        document = runtime_programs.make_artifact_document(
+            records, "1" * 64, 4, "2" * 64, "3" * 40
+        )
+        metal_root = self.repository / "indra/llwindow/metal"
+        harness = r"""
+#include "firestorm-declared-programs.h"
+
+#include <cstdint>
+#include <optional>
+#include <string>
+
+using namespace firestorm::metal;
+
+int main()
+{
+    std::string error;
+    if (!validateDeclaredMetalPrograms(&error)) return 1;
+    const auto* scalar = metalProgramDescriptor("gSharedProgram", std::nullopt, 2);
+    const auto* indexed = metalProgramDescriptor(
+        "gSharedProgram", std::optional<std::uint16_t>{0}, 2);
+    if (scalar == nullptr || scalar->name != "alpha_program") return 2;
+    if (indexed == nullptr || indexed->name != "zulu_program") return 3;
+    if (metalProgramDescriptor(
+            "gSharedProgram", std::optional<std::uint16_t>{1}, 2) != nullptr) return 4;
+
+    MetalProgramDescriptor changed[] = {*scalar, *indexed};
+    changed[1].sourceIndex = std::nullopt;
+    if (validateMetalProgramDescriptors(metalArrayView(changed), &error)) return 5;
+
+    MetalBooleanSettingDescriptor unordered[] = {
+        {"Zulu", true}, {"Alpha", false}
+    };
+    changed[0] = *scalar;
+    changed[1] = *indexed;
+    changed[0].booleanSettings = metalArrayView(unordered);
+    if (validateMetalProgramDescriptors(metalArrayView(changed), &error)) return 6;
+
+    MetalBooleanSettingDescriptor boolean_setting[] = {{"SameSetting", true}};
+    MetalIntegerSettingDescriptor integer_setting[] = {{"SameSetting", 1}};
+    changed[0] = *scalar;
+    changed[0].booleanSettings = metalArrayView(boolean_setting);
+    changed[0].integerSettings = metalArrayView(integer_setting);
+    if (validateMetalProgramDescriptors(metalArrayView(changed), &error)) return 7;
+
+    changed[0] = *scalar;
+    changed[0].sourceSymbol = "../bad";
+    if (validateMetalProgramDescriptors(metalArrayView(changed), &error)) return 8;
+    changed[0] = *scalar;
+    changed[0].shaderClass = 0;
+    if (validateMetalProgramDescriptors(metalArrayView(changed), &error)) return 9;
+    changed[0] = *scalar;
+    changed[0].shaderClass = 4;
+    if (validateMetalProgramDescriptors(metalArrayView(changed), &error)) return 10;
+    MetalBooleanSettingDescriptor unsafe_setting[] = {{"../bad", true}};
+    changed[0] = *scalar;
+    changed[0].booleanSettings = metalArrayView(unsafe_setting);
+    if (validateMetalProgramDescriptors(metalArrayView(changed), &error)) return 11;
+    return 0;
+}
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            runtime_programs.write_cpp(document, output)
+            harness_path = output / "selection-test.cpp"
+            harness_path.write_text(harness, encoding="utf-8")
+            executable = output / "selection-test"
+            compile_result = subprocess.run(
+                [
+                    compiler,
+                    "-std=c++17",
+                    "-Wall",
+                    "-Wextra",
+                    "-Werror",
+                    f"-I{output}",
+                    f"-I{metal_root}",
+                    str(output / "firestorm-declared-programs.cpp"),
+                    str(metal_root / "llmetalprogram.cpp"),
+                    str(metal_root / "llmetalvertexlayout.cpp"),
+                    str(harness_path),
+                    "-o",
+                    str(executable),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(
+                0,
+                compile_result.returncode,
+                compile_result.stdout + compile_result.stderr,
+            )
+            run_result = subprocess.run(
+                [str(executable)], capture_output=True, text=True, check=False
+            )
+            self.assertEqual(
+                0, run_result.returncode, run_result.stdout + run_result.stderr
+            )
 
     def test_json_and_cpp_bytes_are_deterministic_across_roots(self) -> None:
         document = self._document([self._record()])

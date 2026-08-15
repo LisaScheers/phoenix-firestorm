@@ -28,6 +28,7 @@ constexpr std::size_t MAX_VERTEX_ATTRIBUTES = 31;
 constexpr std::size_t MAX_BUFFER_BINDINGS    = 31;
 constexpr std::size_t MAX_TEXTURE_BINDINGS   = 128;
 constexpr std::size_t MAX_SAMPLER_BINDINGS   = 16;
+constexpr std::uint8_t MAX_SHADER_CLASS = 3;
 
 bool reject(std::string* error, const std::string& message)
 {
@@ -222,6 +223,58 @@ bool validTextureDataType(MetalTextureDataType type) noexcept
             return true;
     }
     return false;
+}
+
+template<typename Setting>
+bool validateSettings(MetalArrayView<Setting> settings,
+                      std::string_view type,
+                      std::string* error)
+{
+    if (!validView(settings))
+    {
+        return reject(error, std::string(type) + " settings have an invalid array view");
+    }
+    std::string_view previous_name;
+    for (const Setting& setting : settings)
+    {
+        if (!safeIdentifier(setting.name) ||
+            (!previous_name.empty() && setting.name <= previous_name))
+        {
+            return reject(error,
+                          std::string(type) +
+                              " settings are invalid or not strictly name ordered");
+        }
+        previous_name = setting.name;
+    }
+    return true;
+}
+
+bool validateSelection(const MetalProgramDescriptor& program, std::string* error)
+{
+    if (!safeIdentifier(program.sourceSymbol) || program.shaderClass == 0 ||
+        program.shaderClass > MAX_SHADER_CLASS)
+    {
+        return reject(error, "program selection identity is invalid");
+    }
+    if (!validateSettings(program.booleanSettings, "boolean", error) ||
+        !validateSettings(program.integerSettings, "integer", error))
+    {
+        return false;
+    }
+    for (const MetalBooleanSettingDescriptor& boolean_setting :
+         program.booleanSettings)
+    {
+        for (const MetalIntegerSettingDescriptor& integer_setting :
+             program.integerSettings)
+        {
+            if (boolean_setting.name == integer_setting.name)
+            {
+                return reject(error,
+                              "program selection repeats a setting across types");
+            }
+        }
+    }
+    return true;
 }
 
 template<typename T>
@@ -529,6 +582,10 @@ bool validateMetalProgramDescriptors(MetalArrayView<MetalProgramDescriptor> prog
         {
             return reject(error, "program function name is not derived from its ID");
         }
+        if (!validateSelection(program, error))
+        {
+            return false;
+        }
         if (!validView(program.colorFormats) || program.colorFormats.size() > 4 ||
             program.sampleCount != 1 ||
             (program.colorFormats.empty() && !program.depthFormat.has_value()))
@@ -575,6 +632,18 @@ bool validateMetalProgramDescriptors(MetalArrayView<MetalProgramDescriptor> prog
         }
         ++expected_id;
         previous_name = program.name;
+    }
+    for (std::size_t left = 0; left < programs.size(); ++left)
+    {
+        for (std::size_t right = left + 1; right < programs.size(); ++right)
+        {
+            if (programs[left].sourceSymbol == programs[right].sourceSymbol &&
+                programs[left].sourceIndex == programs[right].sourceIndex &&
+                programs[left].shaderClass == programs[right].shaderClass)
+            {
+                return reject(error, "program table has duplicate selection keys");
+            }
+        }
     }
     if (error != nullptr)
     {

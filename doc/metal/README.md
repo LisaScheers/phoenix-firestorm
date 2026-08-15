@@ -26,9 +26,10 @@ The feature ownership and parity state live in `feature-ledger.csv`.
 
 ## Shader feasibility gate
 
-`shader-spike.json` captures 15 representative recipes across the ten required
-shader families: 13 runtime contracts, a depth-writing FXAA capability probe,
-and a separate 16-channel indexed-texture stress case. The spike reconstructs
+`shader-spike.json` captures 18 representative recipes across the ten required
+shader families: 12 scalar runtime contracts, four selectable FXAA runtime
+recipes, a depth-writing FXAA capability probe, and a separate 16-channel
+indexed-texture stress case. The spike reconstructs
 Firestorm's class fallback, shader-object preprocessing environments, feature
 order, defines, settings overrides, and indexed-texture lookup before
 translating the compiler-linked program:
@@ -45,13 +46,13 @@ SoA vertex contracts. Metal reflection must also match the complete expected
 binding set, typed textures, and recursive uniform-buffer layout. Recipes that
 require depth-comparison textures must retain both SPIR-V comparison samples
 and generated MSL `.sample_compare` calls. Inputs are captured once before
-translation. A normal run still validates all 15 feasibility recipes
-independently, then links the 13 `runtime` recipes in lexical program/stage
-order into one `firestorm-declared-programs.metallib`. The capability and
-stress recipes are not runtime artifacts. Every runtime PSO is recreated from
-that one library, and a second output root compares the 105 per-program
-artifacts plus the path-free catalog JSON, generated C++17 header and source,
-and combined metallib byte for byte.
+translation. A normal run validates all 18 feasibility recipes independently,
+then links the 16 `runtime` and `runtime_variant` recipes in lexical
+program/stage order into one `firestorm-declared-programs.metallib`. The
+capability and stress recipes are not runtime artifacts. Every bundled PSO is
+recreated from that one library, and a second output root compares the 126
+per-program artifacts plus the path-free catalog JSON, generated C++17 header
+and source, and combined metallib byte for byte.
 
 Run its focused tests and the complete Apple compiler path with:
 
@@ -75,11 +76,16 @@ C++ exposes typed binding summaries and the per-buffer/full-stage digests, not
 a duplicate recursive member tree. String program IDs and logical binding names
 are authoritative. Each binding's generated `metal_name` is validated exactly
 against native reflection, but is toolchain-owned diagnostic identity rather
-than a persistence ABI. Artifact schema v1 accepts only the matrix forms in the
-frozen inventory: `mat3` and `mat4`, column-major with stride 16. The producer,
-catalog validator, and native specification validator reject every other matrix
-shape, stride, or major order; the remaining type is checked against Metal
-reflection. Generated `MetalProgramId` values are deterministic lexical
+than a persistence ABI. Artifact schema v2 also records each program's source
+symbol, optional array index, shader class, and typed settings overrides.
+Scalar globals retain no array index; the four `gFXAAProgram` descriptors carry
+indices 0 through 3 and the source-backed quality setting mapping. Generated
+code provides exact typed lookup by that selection identity. Artifact schema
+v2 accepts only the matrix forms in the frozen inventory: `mat3` and `mat4`,
+column-major with stride 16. The producer, catalog validator, and native
+specification validator reject every other matrix shape, stride, or major
+order; the remaining type is checked against Metal reflection. Generated
+`MetalProgramId` values are deterministic lexical
 ordinals for this build, not a persistence or telemetry ABI. Runtime code
 parses no JSON and compiles no shader source.
 
@@ -92,9 +98,10 @@ inventing a recursive CPU uniform packer; semantic parity remains `not_run`.
 ## Review boundary
 
 The foundation review covers the pinned inventory, shader feasibility result,
-and native bootstrap contracts. The declared catalog is 13 representative
-runtime recipes, not the complete viewer program inventory, shader-selection
-integration, or renderer semantic parity. The semantic pass condition for each
+and native bootstrap contracts. The declared catalog is 16 representative
+runtime recipes and variants, not the complete viewer program inventory,
+renderer selection integration, or renderer semantic parity. The semantic pass
+condition for each
 shader family still requires the offscreen and oracle comparisons named in the
 migration plan.
 

@@ -94,8 +94,20 @@ struct MetalStageBindingDescriptors
     MetalArrayView<MetalSamplerBindingDescriptor> samplers;
 };
 
-inline constexpr std::uint16_t kSupportedMetalProgramArtifactSchema = 1;
-inline constexpr std::uint16_t kSupportedMetalSourceManifestSchema = 3;
+struct MetalBooleanSettingDescriptor
+{
+    std::string_view name;
+    bool             value;
+};
+
+struct MetalIntegerSettingDescriptor
+{
+    std::string_view name;
+    std::int32_t     value;
+};
+
+inline constexpr std::uint16_t kSupportedMetalProgramArtifactSchema = 2;
+inline constexpr std::uint16_t kSupportedMetalSourceManifestSchema = 4;
 
 struct MetalProgramCatalogMetadata
 {
@@ -115,6 +127,11 @@ struct MetalProgramDescriptor
     MetalProgramId                              id;
     std::string_view                            name;
     std::string_view                            family;
+    std::string_view                            sourceSymbol;
+    std::optional<std::uint16_t>                sourceIndex;
+    std::uint8_t                                shaderClass;
+    MetalArrayView<MetalBooleanSettingDescriptor> booleanSettings;
+    MetalArrayView<MetalIntegerSettingDescriptor> integerSettings;
     std::string_view                            vertexFunction;
     std::string_view                            fragmentFunction;
     MetalArrayView<PixelFormat>                 colorFormats;
@@ -164,6 +181,10 @@ public:
     MetalProgramLibraryHandle nativeLibrary() const noexcept;
     const MetalProgramDescriptor* program(MetalProgramId id) const noexcept;
     const MetalProgramDescriptor* program(std::string_view id) const noexcept;
+    const MetalProgramDescriptor* program(
+        std::string_view source_symbol,
+        std::optional<std::uint16_t> source_index,
+        std::uint8_t shader_class) const noexcept;
 
 private:
     struct Impl;

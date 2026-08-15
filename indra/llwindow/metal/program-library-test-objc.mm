@@ -61,11 +61,14 @@ using firestorm::metal::declaredMetalPrograms;
 using firestorm::metal::validateMetalProgramCatalogMetadata;
 using firestorm::metal::validateMetalProgramDescriptors;
 
-constexpr std::array<std::string_view, 13> EXPECTED_IDS{
+constexpr std::array<std::string_view, 16> EXPECTED_IDS{
     "avatar_skinning",
     "deferred_diffuse",
     "depth_copy",
     "fxaa",
+    "fxaa_high",
+    "fxaa_low",
+    "fxaa_medium",
     "indexed_material",
     "pbr_alpha",
     "pbr_opaque",
@@ -280,6 +283,94 @@ bool hasVertexBuffer(const MetalProgramDescriptor& program, std::uint8_t index)
     return false;
 }
 
+template<typename T, typename Equal>
+bool sameView(MetalArrayView<T> left, MetalArrayView<T> right, Equal equal)
+{
+    if (left.size() != right.size())
+    {
+        return false;
+    }
+    for (std::size_t index = 0; index < left.size(); ++index)
+    {
+        if (!equal(left[index], right[index]))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool sameStageBindings(const firestorm::metal::MetalStageBindingDescriptors& left,
+                       const firestorm::metal::MetalStageBindingDescriptors& right)
+{
+    // Native metalName values are toolchain diagnostics; the logical contract
+    // is the declared name, slot, access, type, size, and layout identity.
+    const bool same_buffers = sameView(
+        left.buffers,
+        right.buffers,
+        [](const auto& left_binding, const auto& right_binding) {
+            return left_binding.name == right_binding.name &&
+                   left_binding.index == right_binding.index &&
+                   left_binding.access == right_binding.access &&
+                   left_binding.size == right_binding.size &&
+                   left_binding.alignment == right_binding.alignment &&
+                   left_binding.layoutSha256 == right_binding.layoutSha256;
+        });
+    const bool same_textures = sameView(
+        left.textures,
+        right.textures,
+        [](const auto& left_binding, const auto& right_binding) {
+            return left_binding.name == right_binding.name &&
+                   left_binding.index == right_binding.index &&
+                   left_binding.access == right_binding.access &&
+                   left_binding.type == right_binding.type &&
+                   left_binding.dataType == right_binding.dataType &&
+                   left_binding.arrayLength == right_binding.arrayLength &&
+                   left_binding.depth == right_binding.depth;
+        });
+    const bool same_samplers = sameView(
+        left.samplers,
+        right.samplers,
+        [](const auto& left_binding, const auto& right_binding) {
+            return left_binding.name == right_binding.name &&
+                   left_binding.index == right_binding.index;
+        });
+    return same_buffers && same_textures && same_samplers;
+}
+
+bool samePipelineContract(const MetalProgramDescriptor& left,
+                          const MetalProgramDescriptor& right)
+{
+    const bool same_colors = sameView(
+        left.colorFormats,
+        right.colorFormats,
+        [](PixelFormat left_format, PixelFormat right_format) {
+            return left_format == right_format;
+        });
+    const bool same_attributes = sameView(
+        left.vertexAttributes,
+        right.vertexAttributes,
+        [](const auto& left_attribute, const auto& right_attribute) {
+            return left_attribute.name == right_attribute.name &&
+                   left_attribute.location == right_attribute.location &&
+                   left_attribute.format == right_attribute.format &&
+                   left_attribute.offset == right_attribute.offset &&
+                   left_attribute.bufferIndex == right_attribute.bufferIndex;
+        });
+    const bool same_layouts = sameView(
+        left.vertexLayouts,
+        right.vertexLayouts,
+        [](const auto& left_layout, const auto& right_layout) {
+            return left_layout.bufferIndex == right_layout.bufferIndex &&
+                   left_layout.stride == right_layout.stride &&
+                   left_layout.stepFunction == right_layout.stepFunction;
+        });
+    return same_colors && left.depthFormat == right.depthFormat &&
+           left.sampleCount == right.sampleCount && same_attributes &&
+           same_layouts && sameStageBindings(left.vertexBindings, right.vertexBindings) &&
+           sameStageBindings(left.fragmentBindings, right.fragmentBindings);
+}
+
 void testPureValidation()
 {
     EXPECT(nativeStepRate(MetalVertexStepFunction::per_vertex) == 1);
@@ -398,6 +489,51 @@ void testPureValidation()
     metadata.sourceManifestSchema = static_cast<std::uint16_t>(
         firestorm::metal::kSupportedMetalSourceManifestSchema + 1U);
     EXPECT(!validateMetalProgramCatalogMetadata(metadata, &error));
+
+    changed.assign(declaredMetalPrograms().begin(), declaredMetalPrograms().end());
+    changed[0].sourceSymbol = "../unsafe";
+    EXPECT(!validateMetalProgramDescriptors({ changed.data(), changed.size() }, &error));
+
+    changed.assign(declaredMetalPrograms().begin(), declaredMetalPrograms().end());
+    changed[0].shaderClass = 0;
+    EXPECT(!validateMetalProgramDescriptors({ changed.data(), changed.size() }, &error));
+
+    changed.assign(declaredMetalPrograms().begin(), declaredMetalPrograms().end());
+    changed[0].shaderClass = 4;
+    EXPECT(!validateMetalProgramDescriptors({ changed.data(), changed.size() }, &error));
+
+    changed.assign(declaredMetalPrograms().begin(), declaredMetalPrograms().end());
+    changed[0].booleanSettings = { nullptr, 1 };
+    EXPECT(!validateMetalProgramDescriptors({ changed.data(), changed.size() }, &error));
+
+    const std::array<firestorm::metal::MetalBooleanSettingDescriptor, 2>
+        reversed_boolean_settings{{ { "SecondSetting", false },
+                                    { "FirstSetting", true } }};
+    changed.assign(declaredMetalPrograms().begin(), declaredMetalPrograms().end());
+    changed[0].booleanSettings = {
+        reversed_boolean_settings.data(),
+        reversed_boolean_settings.size(),
+    };
+    EXPECT(!validateMetalProgramDescriptors({ changed.data(), changed.size() }, &error));
+
+    const std::array<firestorm::metal::MetalBooleanSettingDescriptor, 1>
+        duplicate_boolean_setting{{ { "DuplicateSetting", true } }};
+    const std::array<firestorm::metal::MetalIntegerSettingDescriptor, 1>
+        duplicate_integer_setting{{ { "DuplicateSetting", 1 } }};
+    changed.assign(declaredMetalPrograms().begin(), declaredMetalPrograms().end());
+    changed[0].booleanSettings = {
+        duplicate_boolean_setting.data(),
+        duplicate_boolean_setting.size(),
+    };
+    changed[0].integerSettings = {
+        duplicate_integer_setting.data(),
+        duplicate_integer_setting.size(),
+    };
+    EXPECT(!validateMetalProgramDescriptors({ changed.data(), changed.size() }, &error));
+
+    changed.assign(declaredMetalPrograms().begin(), declaredMetalPrograms().end());
+    changed[4].sourceIndex = changed[3].sourceIndex;
+    EXPECT(!validateMetalProgramDescriptors({ changed.data(), changed.size() }, &error));
 }
 
 void testExactCatalog(const MetalProgramLibrary& library)
@@ -420,6 +556,13 @@ void testExactCatalog(const MetalProgramLibrary& library)
         EXPECT(static_cast<std::uint16_t>(programs[index].id) == index + 1);
         EXPECT(library.program(programs[index].id) == &programs[index]);
         EXPECT(library.program(programs[index].name) == &programs[index]);
+        EXPECT(library.program(
+                   programs[index].sourceSymbol,
+                   programs[index].sourceIndex,
+                   programs[index].shaderClass) == &programs[index]);
+        EXPECT(programs[index].sourceSymbol == "gFXAAProgram"
+                   ? programs[index].sourceIndex.has_value()
+                   : !programs[index].sourceIndex.has_value());
         EXPECT(defaultUniformSlotsAre24(programs[index]));
     }
     EXPECT(library.program(static_cast<MetalProgramId>(0)) == nullptr);
@@ -525,6 +668,72 @@ void testExactCatalog(const MetalProgramLibrary& library)
     }
 }
 
+void testSelectionLookup(const MetalProgramLibrary& library)
+{
+    constexpr std::array<std::string_view, 4> FXAA_IDS{
+        "fxaa_low",
+        "fxaa_medium",
+        "fxaa_high",
+        "fxaa",
+    };
+
+    const MetalProgramDescriptor* fxaa_contract = nullptr;
+    for (std::size_t index = 0; index < FXAA_IDS.size(); ++index)
+    {
+        const auto source_index = static_cast<std::uint16_t>(index);
+        const MetalProgramDescriptor* program =
+            library.program("gFXAAProgram", source_index, 3);
+        EXPECT(program != nullptr);
+        if (program == nullptr)
+        {
+            continue;
+        }
+        EXPECT(program->name == FXAA_IDS[index]);
+        EXPECT(program->sourceSymbol == "gFXAAProgram");
+        EXPECT(program->sourceIndex == source_index);
+        EXPECT(program->shaderClass == 3);
+        EXPECT(program->booleanSettings.empty());
+        EXPECT(program->integerSettings.size() == 2);
+        if (program->integerSettings.size() == 2)
+        {
+            EXPECT(program->integerSettings[0].name == "RenderFSAASamples");
+            EXPECT(program->integerSettings[0].value ==
+                   static_cast<std::int32_t>(source_index));
+            EXPECT(program->integerSettings[1].name == "RenderFSAAType");
+            EXPECT(program->integerSettings[1].value == 1);
+        }
+        EXPECT(library.program(
+                   program->sourceSymbol,
+                   program->sourceIndex,
+                   program->shaderClass) == program);
+        if (fxaa_contract == nullptr)
+        {
+            fxaa_contract = program;
+        }
+        else
+        {
+            EXPECT(samePipelineContract(*fxaa_contract, *program));
+        }
+    }
+
+    EXPECT(library.program("gFXAAProgram", std::uint16_t{4}, 3) == nullptr);
+    EXPECT(library.program("gFXAAProgram", std::uint16_t{0}, 2) == nullptr);
+    EXPECT(library.program("gFXAAProgram", std::uint16_t{0}, 4) == nullptr);
+    EXPECT(library.program("missingProgram", std::uint16_t{0}, 3) == nullptr);
+    EXPECT(library.program("", std::uint16_t{0}, 3) == nullptr);
+    EXPECT(library.program("gFXAAProgram", std::nullopt, 3) == nullptr);
+
+    const MetalProgramDescriptor* ui =
+        library.program("gUIProgram", std::nullopt, 2);
+    EXPECT(ui == library.program("ui_font"));
+    EXPECT(ui != nullptr);
+    if (ui != nullptr)
+    {
+        EXPECT(!ui->sourceIndex.has_value());
+    }
+    EXPECT(library.program("gUIProgram", std::uint16_t{0}, 2) == nullptr);
+}
+
 } // namespace
 
 int main(int argc, const char* argv[])
@@ -546,6 +755,7 @@ int main(int argc, const char* argv[])
         }
         MetalProgramLibrary invalid(nullptr, metallib_path);
         EXPECT(!invalid.valid());
+        EXPECT(invalid.program("gFXAAProgram", std::uint16_t{0}, 3) == nullptr);
         MetalProgramLibrary library((__bridge void*)device, metallib_path);
         if (!library.valid())
         {
@@ -554,6 +764,7 @@ int main(int argc, const char* argv[])
         }
         EXPECT(library.nativeLibrary() != nullptr);
         testExactCatalog(library);
+        testSelectionLookup(library);
 
         id<MTLLibrary> native_library =
             (__bridge id<MTLLibrary>)library.nativeLibrary();

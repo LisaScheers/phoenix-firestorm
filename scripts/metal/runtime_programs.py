@@ -15,7 +15,7 @@ class RuntimeProgramError(ValueError):
 
 
 ARTIFACT_BASENAME: Final = "firestorm-declared-programs"
-ARTIFACT_SCHEMA: Final = 1
+ARTIFACT_SCHEMA: Final = 2
 STAGES: Final = ("vertex", "fragment")
 KINDS: Final = ("buffer", "sampler", "texture")
 COLOR_FORMATS: Final = {
@@ -216,6 +216,85 @@ def _require_int(value: object, field: str, minimum: int, maximum: int) -> int:
             f"{field} must be an integer in [{minimum}, {maximum}]"
         )
     return value
+
+
+def _validate_typed_settings(
+    value: object, field: str, value_type: type[bool | int]
+) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        raise RuntimeProgramError(f"{field} must be an array")
+    result: list[dict[str, object]] = []
+    previous_name: str | None = None
+    for index, item in enumerate(value):
+        prefix = f"{field}[{index}]"
+        if not isinstance(item, dict):
+            raise RuntimeProgramError(f"{prefix} must be an object")
+        _require_exact_keys(item, {"name", "value"}, prefix)
+        name = _require_string(item.get("name"), f"{prefix}.name", _IDENTIFIER)
+        setting = item.get("value")
+        if value_type is bool:
+            if not isinstance(setting, bool):
+                raise RuntimeProgramError(f"{prefix}.value must be boolean")
+        elif (
+            not isinstance(setting, int)
+            or isinstance(setting, bool)
+            or setting < -(2**31)
+            or setting > 2**31 - 1
+        ):
+            raise RuntimeProgramError(f"{prefix}.value must be a signed 32-bit integer")
+        if previous_name is not None and name <= previous_name:
+            raise RuntimeProgramError(f"{field} must be strictly name ordered")
+        result.append({"name": name, "value": setting})
+        previous_name = name
+    return result
+
+
+def _validate_selection(value: object, field: str) -> dict[str, object]:
+    if not isinstance(value, dict):
+        raise RuntimeProgramError(f"{field} must be an object")
+    _require_exact_keys(
+        value,
+        {
+            "source_symbol",
+            "source_index",
+            "shader_class",
+            "boolean_settings",
+            "integer_settings",
+        },
+        field,
+    )
+    source_symbol = _require_string(
+        value.get("source_symbol"), f"{field}.source_symbol", _IDENTIFIER
+    )
+    raw_source_index = value.get("source_index")
+    source_index = (
+        None
+        if raw_source_index is None
+        else _require_int(raw_source_index, f"{field}.source_index", 0, 2**16 - 1)
+    )
+    shader_class = _require_int(
+        value.get("shader_class"), f"{field}.shader_class", 1, 3
+    )
+    boolean_settings = _validate_typed_settings(
+        value.get("boolean_settings"), f"{field}.boolean_settings", bool
+    )
+    integer_settings = _validate_typed_settings(
+        value.get("integer_settings"), f"{field}.integer_settings", int
+    )
+    boolean_names = {str(item["name"]) for item in boolean_settings}
+    integer_names = {str(item["name"]) for item in integer_settings}
+    overlap = sorted(boolean_names & integer_names)
+    if overlap:
+        raise RuntimeProgramError(
+            f"{field} repeats settings across boolean and integer types: {overlap}"
+        )
+    return {
+        "source_symbol": source_symbol,
+        "source_index": source_index,
+        "shader_class": shader_class,
+        "boolean_settings": boolean_settings,
+        "integer_settings": integer_settings,
+    }
 
 
 def _validate_member_type(value: object, field: str, depth: int) -> dict[str, object]:
@@ -670,6 +749,7 @@ def make_program_record(
         {
             "schema",
             "id",
+            "selection",
             "metallib",
             "vertex_function",
             "fragment_function",
@@ -682,12 +762,15 @@ def make_program_record(
         },
         "pipeline spec",
     )
-    if pipeline_spec.get("schema") != 4:
-        raise RuntimeProgramError("pipeline spec.schema must be 4")
+    if pipeline_spec.get("schema") != 5:
+        raise RuntimeProgramError("pipeline spec.schema must be 5")
     program_id = _require_string(
         pipeline_spec.get("id"), "pipeline spec.id", _PROGRAM_ID
     )
     family = _require_string(family, f"{program_id}.family", _DISPLAY_TEXT)
+    selection = _validate_selection(
+        pipeline_spec.get("selection"), f"{program_id}.selection"
+    )
     vertex_function = _require_string(
         pipeline_spec.get("vertex_function"),
         f"{program_id}.vertex_function",
@@ -750,8 +833,9 @@ def make_program_record(
             )
         reflection_digests[stage] = sha256_hex(reflection)
     semantic = {
-        "schema": 1,
+        "schema": 2,
         "id": program_id,
+        "selection": selection,
         "vertex_function": vertex_function,
         "fragment_function": fragment_function,
         "color_formats": colors_value,
@@ -772,12 +856,32 @@ def make_artifact_document(
     manifest_sha256: str,
     baseline_commit: str,
 ) -> dict[str, object]:
-    ordered = sorted(programs, key=lambda item: str(item.get("id", "")))
-    if not ordered:
+    ordered_values = sorted(programs, key=lambda item: str(item.get("id", "")))
+    if not ordered_values:
         raise RuntimeProgramError("runtime artifact has no programs")
-    ids = [str(item.get("id")) for item in ordered]
+    ids = [str(item.get("id")) for item in ordered_values]
     if len(ids) != len(set(ids)):
         raise RuntimeProgramError("runtime artifact has duplicate program IDs")
+    selection_keys: list[tuple[str, int | None, int]] = []
+    ordered: list[dict[str, object]] = []
+    for index, item in enumerate(ordered_values):
+        selection = _validate_selection(
+            item.get("selection"), f"runtime artifact programs[{index}].selection"
+        )
+        ordered.append({**item, "selection": selection})
+        selection_keys.append(
+            (
+                str(selection["source_symbol"]),
+                None
+                if selection["source_index"] is None
+                else int(selection["source_index"]),
+                int(selection["shader_class"]),
+            )
+        )
+    if len(selection_keys) != len(set(selection_keys)):
+        raise RuntimeProgramError(
+            "runtime artifact has duplicate program selection keys"
+        )
     if _HEX_SHA256.fullmatch(metallib_sha256) is None:
         raise RuntimeProgramError("runtime artifact metallib digest is invalid")
     if _HEX_SHA256.fullmatch(manifest_sha256) is None:
@@ -791,7 +895,11 @@ def make_artifact_document(
     identity = {
         "schema": ARTIFACT_SCHEMA,
         "programs": [
-            {"id": item["id"], "reflection_sha256": item["reflection_sha256"]}
+            {
+                "id": item["id"],
+                "selection": item["selection"],
+                "reflection_sha256": item["reflection_sha256"],
+            }
             for item in ordered
         ],
     }
@@ -861,6 +969,7 @@ def render_header(document: dict[str, object]) -> bytes:
             '#include "llmetalprogram.h"',
             "",
             "#include <cstdint>",
+            "#include <optional>",
             "#include <string_view>",
             "",
             "namespace firestorm::metal",
@@ -876,6 +985,10 @@ def render_header(document: dict[str, object]) -> bytes:
             "MetalArrayView<MetalProgramDescriptor> declaredMetalPrograms() noexcept;",
             "const MetalProgramDescriptor* metalProgramDescriptor(MetalProgramId id) noexcept;",
             "const MetalProgramDescriptor* metalProgramDescriptor(std::string_view id) noexcept;",
+            "const MetalProgramDescriptor* metalProgramDescriptor(",
+            "    std::string_view source_symbol,",
+            "    std::optional<std::uint16_t> source_index,",
+            "    std::uint8_t shader_class) noexcept;",
             "bool validateDeclaredMetalPrograms(std::string* error = nullptr);",
             "",
             "} // namespace firestorm::metal",
@@ -896,6 +1009,34 @@ def render_source(document: dict[str, object], header_name: str) -> bytes:
             raise RuntimeProgramError("artifact program must be an object")
         program_id = str(program_value["id"])
         symbol = f"k_{program_id}"
+
+        selection = _validate_selection(
+            program_value.get("selection"), f"{program_id}.selection"
+        )
+        boolean_settings = [
+            "{"
+            + ", ".join(
+                [_cpp_string(item["name"]), "true" if item["value"] else "false"]
+            )
+            + "}"
+            for item in selection["boolean_settings"]
+        ]
+        lines, boolean_settings_view = _array_declaration(
+            "MetalBooleanSettingDescriptor",
+            f"{symbol}_boolean_settings",
+            boolean_settings,
+        )
+        declarations.extend(lines)
+        integer_settings = [
+            "{" + ", ".join([_cpp_string(item["name"]), str(item["value"])]) + "}"
+            for item in selection["integer_settings"]
+        ]
+        lines, integer_settings_view = _array_declaration(
+            "MetalIntegerSettingDescriptor",
+            f"{symbol}_integer_settings",
+            integer_settings,
+        )
+        declarations.extend(lines)
 
         colors = [
             _cpp_mapped_enum("PixelFormat", item, CPP_PIXEL_FORMATS)
@@ -1040,6 +1181,15 @@ def render_source(document: dict[str, object], header_name: str) -> bytes:
                     f"MetalProgramId::{program_id}",
                     _cpp_string(program_id),
                     _cpp_string(program_value["family"]),
+                    _cpp_string(selection["source_symbol"]),
+                    (
+                        "std::nullopt"
+                        if selection["source_index"] is None
+                        else str(selection["source_index"])
+                    ),
+                    str(selection["shader_class"]),
+                    boolean_settings_view,
+                    integer_settings_view,
                     _cpp_string(program_value["vertex_function"]),
                     _cpp_string(program_value["fragment_function"]),
                     colors_view,
@@ -1113,6 +1263,23 @@ def render_source(document: dict[str, object], header_name: str) -> bytes:
             "    for (const MetalProgramDescriptor& program : kPrograms)",
             "    {",
             "        if (program.name == id)",
+            "        {",
+            "            return &program;",
+            "        }",
+            "    }",
+            "    return nullptr;",
+            "}",
+            "",
+            "const MetalProgramDescriptor* metalProgramDescriptor(",
+            "    std::string_view source_symbol,",
+            "    std::optional<std::uint16_t> source_index,",
+            "    std::uint8_t shader_class) noexcept",
+            "{",
+            "    for (const MetalProgramDescriptor& program : kPrograms)",
+            "    {",
+            "        if (program.sourceSymbol == source_symbol &&",
+            "            program.sourceIndex == source_index &&",
+            "            program.shaderClass == shader_class)",
             "        {",
             "            return &program;",
             "        }",

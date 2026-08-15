@@ -2,6 +2,7 @@
 #import <Metal/Metal.h>
 
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 #include <limits>
 
@@ -58,6 +59,62 @@ bool unsigned_integer(id value, NSUInteger* result)
         return false;
     }
     *result = static_cast<NSUInteger>(converted);
+    return true;
+}
+
+bool signed_32_integer(id value, std::int32_t* result)
+{
+    if (![value isKindOfClass:[NSNumber class]] || is_boolean(value))
+    {
+        return false;
+    }
+    const char* encoding = [value objCType];
+    if (std::strcmp(encoding, @encode(float)) == 0
+        || std::strcmp(encoding, @encode(double)) == 0)
+    {
+        return false;
+    }
+
+    double numeric = [value doubleValue];
+    if (!std::isfinite(numeric) || std::floor(numeric) != numeric
+        || numeric < static_cast<double>(std::numeric_limits<std::int32_t>::min())
+        || numeric > static_cast<double>(std::numeric_limits<std::int32_t>::max()))
+    {
+        return false;
+    }
+    long long converted = [value longLongValue];
+    if (static_cast<double>(converted) != numeric)
+    {
+        return false;
+    }
+    *result = static_cast<std::int32_t>(converted);
+    return true;
+}
+
+bool is_identifier(NSString* value)
+{
+    if (![value isKindOfClass:[NSString class]] || value.length == 0)
+    {
+        return false;
+    }
+    auto valid_initial = [](unichar character) {
+        return (character >= 'A' && character <= 'Z')
+            || (character >= 'a' && character <= 'z') || character == '_';
+    };
+    auto valid_subsequent = [&](unichar character) {
+        return valid_initial(character) || (character >= '0' && character <= '9');
+    };
+    if (!valid_initial([value characterAtIndex:0]))
+    {
+        return false;
+    }
+    for (NSUInteger index = 1; index < value.length; ++index)
+    {
+        if (!valid_subsequent([value characterAtIndex:index]))
+        {
+            return false;
+        }
+    }
     return true;
 }
 
@@ -1096,6 +1153,224 @@ bool validate_expected_arguments(NSDictionary* expected,
     return true;
 }
 
+bool validate_selection_settings(NSArray* settings,
+                                 bool boolean_values,
+                                 NSMutableSet<NSString*>* names,
+                                 NSString* path,
+                                 NSString* __autoreleasing* error)
+{
+    NSString* previous_name = nil;
+    for (NSUInteger index = 0; index < settings.count; ++index)
+    {
+        NSString* item_path = [NSString stringWithFormat:@"%@[%lu]",
+                                                         path,
+                                                         static_cast<unsigned long>(index)];
+        id value = settings[index];
+        if (![value isKindOfClass:[NSDictionary class]])
+        {
+            return reject(error,
+                          [NSString stringWithFormat:@"%@ must be an object", item_path]);
+        }
+        NSDictionary* setting = value;
+        if (!validate_keys(setting,
+                           @[@"name", @"value"],
+                           @[@"name", @"value"],
+                           item_path,
+                           error))
+        {
+            return false;
+        }
+        NSString* name = require_string(setting, @"name", item_path, error);
+        if (name == nil || !is_identifier(name))
+        {
+            return reject(error,
+                          [NSString stringWithFormat:@"%@.name must be an identifier",
+                                                     item_path]);
+        }
+        if (previous_name != nil && [previous_name compare:name] != NSOrderedAscending)
+        {
+            return reject(error,
+                          [NSString stringWithFormat:
+                                        @"%@ must be strictly ordered by setting name",
+                                        path]);
+        }
+        if ([names containsObject:name])
+        {
+            return reject(error,
+                          [NSString stringWithFormat:
+                                        @"selection setting name appears more than once: %@",
+                                        name]);
+        }
+        [names addObject:name];
+        previous_name = name;
+
+        if (boolean_values)
+        {
+            BOOL unused = NO;
+            if (!require_boolean(setting, @"value", item_path, &unused, error))
+            {
+                return false;
+            }
+        }
+        else
+        {
+            std::int32_t unused = 0;
+            if (!signed_32_integer(setting[@"value"], &unused))
+            {
+                return reject(error,
+                              [NSString stringWithFormat:
+                                            @"%@.value must be a signed 32-bit integer",
+                                            item_path]);
+            }
+        }
+    }
+    return true;
+}
+
+bool validate_selection(NSDictionary* selection,
+                        NSString* program_id,
+                        NSString* __autoreleasing* error)
+{
+    NSArray<NSString*>* fields = @[
+        @"source_symbol",
+        @"source_index",
+        @"shader_class",
+        @"boolean_settings",
+        @"integer_settings",
+    ];
+    if (!validate_keys(selection, fields, fields, @"pipeline spec.selection", error))
+    {
+        return false;
+    }
+    NSString* source_symbol = require_string(selection,
+                                             @"source_symbol",
+                                             @"pipeline spec.selection",
+                                             error);
+    if (source_symbol == nil || !is_identifier(source_symbol))
+    {
+        return reject(error, @"pipeline spec.selection.source_symbol must be an identifier");
+    }
+
+    id source_index_value = selection[@"source_index"];
+    NSUInteger source_index = 0;
+    bool has_source_index = source_index_value != [NSNull null];
+    if (has_source_index
+        && (!unsigned_integer(source_index_value, &source_index)
+            || source_index > std::numeric_limits<std::uint16_t>::max()))
+    {
+        return reject(error,
+                      @"pipeline spec.selection.source_index must be null or an unsigned 16-bit integer");
+    }
+    NSUInteger shader_class = 0;
+    if (!require_unsigned_integer(selection,
+                                  @"shader_class",
+                                  @"pipeline spec.selection",
+                                  &shader_class,
+                                  error)
+        || shader_class < 1 || shader_class > 3)
+    {
+        return reject(error,
+                      @"pipeline spec.selection.shader_class must be in [1, 3]");
+    }
+
+    NSArray* boolean_settings = require_array(selection,
+                                              @"boolean_settings",
+                                              @"pipeline spec.selection",
+                                              error);
+    NSArray* integer_settings = require_array(selection,
+                                              @"integer_settings",
+                                              @"pipeline spec.selection",
+                                              error);
+    if (boolean_settings == nil || integer_settings == nil)
+    {
+        return false;
+    }
+    NSMutableSet<NSString*>* setting_names = [NSMutableSet set];
+    if (!validate_selection_settings(boolean_settings,
+                                     true,
+                                     setting_names,
+                                     @"pipeline spec.selection.boolean_settings",
+                                     error)
+        || !validate_selection_settings(integer_settings,
+                                        false,
+                                        setting_names,
+                                        @"pipeline spec.selection.integer_settings",
+                                        error))
+    {
+        return false;
+    }
+
+    NSDictionary<NSString*, NSNumber*>* fxaa_indices = @{
+        @"fxaa_low": @0,
+        @"fxaa_medium": @1,
+        @"fxaa_high": @2,
+        @"fxaa": @3,
+    };
+    NSNumber* expected_fxaa_index = fxaa_indices[program_id];
+    if ([source_symbol isEqualToString:@"gFXAAProgram"])
+    {
+        if (expected_fxaa_index == nil || !has_source_index
+            || source_index != expected_fxaa_index.unsignedIntegerValue
+            || shader_class != 3 || boolean_settings.count != 0
+            || integer_settings.count != 2)
+        {
+            return reject(error,
+                          @"pipeline spec.selection does not match the exact FXAA source mapping");
+        }
+        NSDictionary* samples = integer_settings[0];
+        NSDictionary* type = integer_settings[1];
+        std::int32_t samples_value = -1;
+        std::int32_t type_value = -1;
+        if (![samples[@"name"] isEqualToString:@"RenderFSAASamples"]
+            || ![type[@"name"] isEqualToString:@"RenderFSAAType"]
+            || !signed_32_integer(samples[@"value"], &samples_value)
+            || !signed_32_integer(type[@"value"], &type_value)
+            || samples_value != static_cast<std::int32_t>(source_index)
+            || type_value != 1)
+        {
+            return reject(error,
+                          @"pipeline spec.selection does not match the exact FXAA settings mapping");
+        }
+    }
+    else if (has_source_index)
+    {
+        return reject(error,
+                      @"pipeline spec.selection scalar source_symbol requires a null source_index");
+    }
+    else if (expected_fxaa_index != nil)
+    {
+        return reject(error,
+                      @"pipeline spec.selection FXAA id requires gFXAAProgram");
+    }
+    return true;
+}
+
+bool is_bundled_program_id(NSString* program_id)
+{
+    return [program_id isEqualToString:@"avatar_skinning"]
+        || [program_id isEqualToString:@"deferred_diffuse"]
+        || [program_id isEqualToString:@"depth_copy"]
+        || [program_id isEqualToString:@"fxaa"]
+        || [program_id isEqualToString:@"fxaa_high"]
+        || [program_id isEqualToString:@"fxaa_low"]
+        || [program_id isEqualToString:@"fxaa_medium"]
+        || [program_id isEqualToString:@"indexed_material"]
+        || [program_id isEqualToString:@"pbr_alpha"]
+        || [program_id isEqualToString:@"pbr_opaque"]
+        || [program_id isEqualToString:@"presentation_copy"]
+        || [program_id isEqualToString:@"reflection_probe"]
+        || [program_id isEqualToString:@"shadow_alpha_mask"]
+        || [program_id isEqualToString:@"shadow_alpha_receiver"]
+        || [program_id isEqualToString:@"terrain"]
+        || [program_id isEqualToString:@"ui_font"];
+}
+
+bool is_selector_free_program_id(NSString* program_id)
+{
+    return [program_id isEqualToString:@"fxaa_depth_write"]
+        || [program_id isEqualToString:@"indexed_material_stress_16"];
+}
+
 bool validate_spec(NSDictionary* spec, NSString* __autoreleasing* error)
 {
     NSArray<NSString*>* fields = @[
@@ -1110,9 +1385,11 @@ bool validate_spec(NSDictionary* spec, NSString* __autoreleasing* error)
         @"vertex_attributes",
         @"vertex_layouts",
         @"expected_arguments",
+        @"selection",
     ];
     NSMutableArray<NSString*>* required_fields = [fields mutableCopy];
     [required_fields removeObject:@"depth_format"];
+    [required_fields removeObject:@"selection"];
     if (!validate_keys(spec, required_fields, fields, @"pipeline spec", error))
     {
         return false;
@@ -1123,13 +1400,51 @@ bool validate_spec(NSDictionary* spec, NSString* __autoreleasing* error)
     {
         return false;
     }
-    if (schema != 4)
+    if (schema != 4 && schema != 5)
     {
-        return reject(error, @"pipeline spec.schema must be 4");
+        return reject(error, @"pipeline spec.schema must be 4 or 5");
     }
-    for (NSString* key in @[@"id", @"metallib", @"vertex_function", @"fragment_function"])
+    NSString* program_id = require_string(spec, @"id", @"pipeline spec", error);
+    if (program_id == nil)
+    {
+        return false;
+    }
+    const bool bundled_program = is_bundled_program_id(program_id);
+    const bool selector_free_program = is_selector_free_program_id(program_id);
+    if (!bundled_program && !selector_free_program)
+    {
+        return reject(error, @"pipeline spec.id is not in the frozen program inventory");
+    }
+    if ((bundled_program && schema != 5) || (selector_free_program && schema != 4))
+    {
+        return reject(error,
+                      bundled_program
+                          ? @"bundled pipeline spec requires schema 5 selection"
+                          : @"selector-free pipeline spec requires schema 4");
+    }
+
+    for (NSString* key in @[@"metallib", @"vertex_function", @"fragment_function"])
     {
         if (require_string(spec, key, @"pipeline spec", error) == nil)
+        {
+            return false;
+        }
+    }
+    id selection_value = spec[@"selection"];
+    if (schema == 4)
+    {
+        if (selection_value != nil)
+        {
+            return reject(error, @"pipeline spec schema 4 must not contain selection");
+        }
+    }
+    else
+    {
+        if (![selection_value isKindOfClass:[NSDictionary class]])
+        {
+            return reject(error, @"pipeline spec schema 5 requires selection");
+        }
+        if (!validate_selection(selection_value, program_id, error))
         {
             return false;
         }

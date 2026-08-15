@@ -247,4 +247,14 @@ const MetalProgramDescriptor* MetalProgramLibrary::program(std::string_view id) 
     return valid() ? metalProgramDescriptor(id) : nullptr;
 }
 
+const MetalProgramDescriptor* MetalProgramLibrary::program(
+    std::string_view source_symbol,
+    std::optional<std::uint16_t> source_index,
+    std::uint8_t shader_class) const noexcept
+{
+    return valid()
+               ? metalProgramDescriptor(source_symbol, source_index, shader_class)
+               : nullptr;
+}
+
 } // namespace firestorm::metal

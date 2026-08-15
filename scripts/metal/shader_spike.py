@@ -39,6 +39,7 @@ STAGE_SUFFIX: Final = {"vertex": "vert", "fragment": "frag"}
 SPIRV_CROSS_STAGE: Final = {"vertex": "vert", "fragment": "frag"}
 REFLECTION_GROUPS: Final = {"inputs", "outputs", "textures", "ubos"}
 RECIPE_KINDS: Final = {"capability", "runtime", "runtime_variant", "stress"}
+BUNDLED_RECIPE_KINDS: Final = {"runtime", "runtime_variant"}
 COLOR_FORMATS: Final = {
     "bgra8unorm",
     "rg11b10float",
@@ -55,6 +56,9 @@ DEFAULT_UNIFORM_BUFFER_INDEX: Final = 24
 MAX_METAL_BUFFER_INDEX: Final = 30
 MAX_METAL_TEXTURE_INDEX: Final = 127
 MAX_METAL_SAMPLER_INDEX: Final = 15
+MAX_SOURCE_INDEX: Final = 2**16 - 1
+MAX_SHADER_CLASS: Final = 3
+MAX_SELECTION_SETTING: Final = 2**31 - 1
 SPIRV_MAGIC: Final = 0x07230203
 SPIRV_COMPARISON_SAMPLE_OPCODES: Final = {89, 90, 93, 94, 97}
 REQUIRED_RECIPE_INVENTORY: Final = {
@@ -84,10 +88,23 @@ REQUIRED_RECIPE_KINDS: Final = {
 }
 REQUIRED_FAMILIES: Final = set(REQUIRED_PROGRAM_FAMILIES.values())
 REQUIRED_PROGRAM_IDS: Final = set(REQUIRED_RECIPE_INVENTORY)
+FXAA_VARIANT_CONTRACT: Final = {
+    "fxaa_low": ("runtime_variant", 0, "12"),
+    "fxaa_medium": ("runtime_variant", 1, "23"),
+    "fxaa_high": ("runtime_variant", 2, "28"),
+    "fxaa": ("runtime", 3, "39"),
+}
+REQUIRED_FXAA_VARIANT_IDS: Final = set(FXAA_VARIANT_CONTRACT)
+REQUIRED_BUNDLED_PROGRAM_IDS: Final = {
+    program_id
+    for program_id, recipe_kind in REQUIRED_RECIPE_KINDS.items()
+    if recipe_kind == "runtime"
+} | REQUIRED_FXAA_VARIANT_IDS
 REQUIRED_BUFFER_FREE_PROGRAM_IDS: Final = {"presentation_copy"}
 BASELINE_SETTING_TYPES: Final = {
     "RenderAvatarCloth": bool,
     "RenderEnableEmissiveBuffer": bool,
+    "RenderFSAASamples": int,
     "RenderFSAAType": int,
     "RenderHDREnabled": bool,
     "RenderMirrors": bool,
@@ -356,6 +373,7 @@ class ProgramRecipe:
     recipe_kind: str
     source_reference: str
     source_symbol: str
+    source_index: int | None
     shader_class: int
     defines: dict[str, str]
     global_defines: dict[str, str]
@@ -399,6 +417,15 @@ def _require_int(value: object, field: str, minimum: int = 0) -> int:
     if not isinstance(value, int) or isinstance(value, bool) or value < minimum:
         raise ManifestError(f"{field} must be an integer >= {minimum}")
     return value
+
+
+def _load_source_index(value: object, field: str) -> int | None:
+    if value is None:
+        return None
+    index = _require_int(value, field)
+    if index > MAX_SOURCE_INDEX:
+        raise ManifestError(f"{field} exceeds the unsigned 16-bit range")
+    return index
 
 
 def _require_defines(value: object, field: str) -> dict[str, str]:
@@ -673,6 +700,8 @@ def _load_settings(
             raise ManifestError(f"{field}.{name} has the wrong value type")
         if expected_type is int and int(item) < 0:
             raise ManifestError(f"{field}.{name} must be non-negative")
+        if expected_type is int and int(item) > MAX_SELECTION_SETTING:
+            raise ManifestError(f"{field}.{name} exceeds the signed 32-bit range")
         result[name] = item
     return dict(sorted(result.items()))
 
@@ -710,6 +739,102 @@ def _validate_settings_xml(
         if expected is None and actual not in {"S32", "U32"}:
             raise ManifestError(
                 f"baseline setting {name} is not integer in settings.xml"
+            )
+
+
+def program_selection_key(recipe: ProgramRecipe) -> tuple[str, int | None, int]:
+    """Return the source-level identity used to select one bundled program."""
+
+    return recipe.source_symbol, recipe.source_index, recipe.shader_class
+
+
+def program_selection(recipe: ProgramRecipe) -> dict[str, object]:
+    """Render the exact typed selector consumed by the runtime artifact catalog."""
+
+    if recipe.recipe_kind not in BUNDLED_RECIPE_KINDS:
+        raise ManifestError(f"{recipe.program_id} is not a bundled runtime program")
+    boolean_settings = [
+        {"name": name, "value": value}
+        for name, value in sorted(recipe.settings_overrides.items())
+        if type(value) is bool
+    ]
+    integer_settings = [
+        {"name": name, "value": value}
+        for name, value in sorted(recipe.settings_overrides.items())
+        if type(value) is int
+    ]
+    return {
+        "source_symbol": recipe.source_symbol,
+        "source_index": recipe.source_index,
+        "shader_class": recipe.shader_class,
+        "boolean_settings": boolean_settings,
+        "integer_settings": integer_settings,
+    }
+
+
+def _validate_program_selection_contracts(programs: list[ProgramRecipe]) -> None:
+    by_id = {recipe.program_id: recipe for recipe in programs}
+    missing_variants = sorted(REQUIRED_FXAA_VARIANT_IDS - set(by_id))
+    if missing_variants:
+        raise ManifestError(
+            f"the FXAA variant contract is incomplete: {', '.join(missing_variants)}"
+        )
+
+    keys: dict[tuple[str, int | None, int], str] = {}
+    for recipe in programs:
+        if recipe.recipe_kind not in BUNDLED_RECIPE_KINDS:
+            continue
+        if recipe.source_symbol == "gFXAAProgram":
+            if recipe.program_id not in REQUIRED_FXAA_VARIANT_IDS:
+                raise ManifestError(
+                    f"unexpected bundled gFXAAProgram variant: {recipe.program_id}"
+                )
+        elif recipe.source_index is not None:
+            raise ManifestError(
+                f"{recipe.program_id} scalar source_symbol requires a null source_index"
+            )
+        key = program_selection_key(recipe)
+        if previous := keys.get(key):
+            raise ManifestError(
+                f"bundled program selection key collides: {previous} and "
+                f"{recipe.program_id}"
+            )
+        keys[key] = recipe.program_id
+
+    ultra = by_id["fxaa"]
+    for program_id, (
+        recipe_kind,
+        source_index,
+        preset,
+    ) in FXAA_VARIANT_CONTRACT.items():
+        recipe = by_id[program_id]
+        if (
+            recipe.family != "SMAA or FXAA"
+            or recipe.recipe_kind != recipe_kind
+            or recipe.source_symbol != "gFXAAProgram"
+            or recipe.source_index != source_index
+            or recipe.shader_class != 3
+            or recipe.settings_overrides
+            != {"RenderFSAASamples": source_index, "RenderFSAAType": 1}
+            or recipe.defines
+            != {
+                "FXAA_GLSL_400": "1",
+                "FXAA_NO_DEPTH_WRITE": "1",
+                "FXAA_QUALITY__PRESET": preset,
+            }
+        ):
+            raise ManifestError(f"{program_id} does not match the exact FXAA mapping")
+        if (
+            recipe.source_reference != ultra.source_reference
+            or recipe.indexed_texture_channels != ultra.indexed_texture_channels
+            or recipe.stages != ultra.stages
+            or recipe.required_reflection != ultra.required_reflection
+            or recipe.comparison_sample_counts != ultra.comparison_sample_counts
+            or recipe.pipeline != ultra.pipeline
+            or recipe.semantic_parity != ultra.semantic_parity
+        ):
+            raise ManifestError(
+                f"{program_id} does not share the FXAA runtime recipe contract"
             )
 
 
@@ -770,8 +895,8 @@ def load_manifest(
         },
         "manifest",
     )
-    if document.get("schema") != 3:
-        raise ManifestError("manifest schema must be 3")
+    if document.get("schema") != 4:
+        raise ManifestError("manifest schema must be 4")
 
     root = repository_root().resolve()
     source_root_value = _require_string(document.get("source_root"), "source_root")
@@ -792,6 +917,8 @@ def load_manifest(
     baseline_settings = _load_settings(
         document.get("baseline_settings"), "baseline_settings", require_all=True
     )
+    if baseline_settings["RenderFSAASamples"] > 3:
+        raise ManifestError("baseline RenderFSAASamples must select an index in [0, 3]")
     _validate_settings_xml(baseline_settings, root, inputs)
     global_defines = _require_defines(
         document.get("global_defines", {}), "global_defines"
@@ -894,6 +1021,8 @@ def load_manifest(
         }
         if "comparison_sample_counts" in value:
             program_keys.add("comparison_sample_counts")
+        if "source_index" in value:
+            program_keys.add("source_index")
         _require_exact_keys(value, program_keys, prefix)
         program_id = _require_string(value.get("id"), f"{prefix}.id")
         if not re.fullmatch(r"[a-z][a-z0-9_]*", program_id):
@@ -907,6 +1036,32 @@ def load_manifest(
             raise ManifestError(
                 f"{prefix}.recipe_kind must be one of {', '.join(sorted(RECIPE_KINDS))}"
             )
+        bundled = recipe_kind in BUNDLED_RECIPE_KINDS
+        if bundled and "source_index" not in value:
+            raise ManifestError(
+                f"{prefix}.source_index is required for bundled recipes"
+            )
+        if not bundled and "source_index" in value:
+            raise ManifestError(
+                f"{prefix}.source_index is only valid for bundled recipes"
+            )
+        source_index = _load_source_index(
+            value.get("source_index"), f"{prefix}.source_index"
+        )
+        source_symbol = _require_string(
+            value.get("source_symbol"), f"{prefix}.source_symbol"
+        )
+        if bundled and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", source_symbol) is None:
+            raise ManifestError(
+                f"{prefix}.source_symbol must be a C identifier for bundled recipes"
+            )
+        shader_class = _require_int(
+            value.get("shader_class"), f"{prefix}.shader_class", 1
+        )
+        if shader_class > MAX_SHADER_CLASS:
+            raise ManifestError(
+                f"{prefix}.shader_class must be in the supported source range [1, 3]"
+            )
 
         settings_overrides = _load_settings(
             value.get("settings_overrides", {}),
@@ -914,6 +1069,10 @@ def load_manifest(
             require_all=False,
         )
         effective_settings = baseline_settings | settings_overrides
+        if effective_settings["RenderFSAASamples"] > 3:
+            raise ManifestError(
+                f"{program_id} RenderFSAASamples must select an index in [0, 3]"
+            )
         if (
             program_id == "shadow_alpha_mask"
             and effective_settings["RenderShadowDetail"] < 1
@@ -996,12 +1155,9 @@ def load_manifest(
                 source_reference=_require_string(
                     value.get("source_reference"), f"{prefix}.source_reference"
                 ),
-                source_symbol=_require_string(
-                    value.get("source_symbol"), f"{prefix}.source_symbol"
-                ),
-                shader_class=_require_int(
-                    value.get("shader_class"), f"{prefix}.shader_class", 1
-                ),
+                source_symbol=source_symbol,
+                source_index=source_index,
+                shader_class=shader_class,
                 defines=defines,
                 global_defines=effective_global_defines,
                 glsl_version=glsl_version,
@@ -1022,6 +1178,7 @@ def load_manifest(
                 input_snapshot=inputs,
             )
         )
+    _validate_program_selection_contracts(programs)
     return source_root, programs
 
 
@@ -2031,8 +2188,9 @@ def write_pipeline_spec(
             f"{recipe.program_id} vertex streams collide with shader buffers: {collisions}"
         )
 
+    bundled = recipe.recipe_kind in BUNDLED_RECIPE_KINDS
     spec = {
-        "schema": 4,
+        "schema": 5 if bundled else 4,
         "id": recipe.program_id,
         "metallib": str(metallib_path.resolve()),
         "vertex_function": f"{recipe.program_id}_vertex",
@@ -2044,6 +2202,8 @@ def write_pipeline_spec(
         "vertex_layouts": layouts,
         "expected_arguments": expected_arguments,
     }
+    if bundled:
+        spec["selection"] = program_selection(recipe)
     spec_path.write_text(
         json.dumps(spec, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
@@ -2620,12 +2780,16 @@ def validate_sources(
     ):
         raise ManifestError("Git provenance does not validate the manifest baseline")
     program_ids = {recipe.program_id for recipe in programs}
-    if program_ids != REQUIRED_PROGRAM_IDS:
-        raise ManifestError("the spike does not contain the exact required recipes")
+    if not REQUIRED_PROGRAM_IDS.issubset(program_ids):
+        missing = ", ".join(sorted(REQUIRED_PROGRAM_IDS - program_ids))
+        raise ManifestError(f"the spike is missing required recipes: {missing}")
     recipe_inventory = {
         recipe.program_id: (recipe.family, recipe.recipe_kind) for recipe in programs
     }
-    if recipe_inventory != REQUIRED_RECIPE_INVENTORY:
+    if any(
+        recipe_inventory.get(program_id) != expected
+        for program_id, expected in REQUIRED_RECIPE_INVENTORY.items()
+    ):
         raise ManifestError(
             "the spike recipe inventory does not match the frozen contract"
         )
@@ -2633,7 +2797,7 @@ def validate_sources(
     runtime_families: set[str] = set()
     for recipe in programs:
         families.add(recipe.family)
-        if recipe.recipe_kind == "runtime":
+        if recipe.recipe_kind in BUNDLED_RECIPE_KINDS:
             runtime_families.add(recipe.family)
         _validate_source_reference(recipe, inputs)
         for evidence in recipe.pipeline.source_evidence:
@@ -2857,19 +3021,16 @@ def build_runtime_artifacts(
     """Link and validate the representative runtime-only artifact set."""
 
     runtime_recipes = sorted(
-        (recipe for recipe in programs if recipe.recipe_kind == "runtime"),
+        (recipe for recipe in programs if recipe.recipe_kind in BUNDLED_RECIPE_KINDS),
         key=lambda recipe: recipe.program_id,
     )
-    required_runtime_ids = {
-        program_id
-        for program_id, recipe_kind in REQUIRED_RECIPE_KINDS.items()
-        if recipe_kind == "runtime"
-    }
-    if {recipe.program_id for recipe in runtime_recipes} != required_runtime_ids or len(
+    if {
+        recipe.program_id for recipe in runtime_recipes
+    } != REQUIRED_BUNDLED_PROGRAM_IDS or len(
         {item.family for item in runtime_recipes}
     ) != 10:
         raise RuntimeProgramError(
-            "runtime artifact requires the exact 13 runtime recipes across 10 families"
+            "runtime artifact requires the exact 16 bundled recipes across 10 families"
         )
     by_id = {str(result.get("id")): result for result in results}
     if len(by_id) != len(results):
