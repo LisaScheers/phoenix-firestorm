@@ -1,5 +1,5 @@
 {
-  "schema": 1,
+  "schema": 2,
   "kind": "firestorm-opengl-oracle-corpus",
   "baseline": {
     "remote": "https://github.com/FirestormViewer/phoenix-firestorm",
@@ -36,10 +36,16 @@
       "description": "Logged-out login panel, menus, icons, text, and font atlas composition.",
       "definition_status": "blocked",
       "definition_blockers": [
-        "A static local login-page fixture for ForceLoginURL has not been added and hashed."
+        "A static local LoginPage fixture has not been added and hashed."
+      ],
+      "machine_contract_status": "blocked",
+      "machine_contract_blockers": [
+        "A deterministic machine capture path has not been implemented and verified for this slot."
       ],
       "conditions": {
         "settings": {
+          "LoginPage": "http://127.0.0.1:19472/login_ui/index.html",
+          "ForceLoginURL": "",
           "Language": "en",
           "RenderFSAASamples": 0,
           "RenderFSAAType": 0,
@@ -61,7 +67,7 @@
           "asset_manifest_sha256": null,
           "requirements": [
             "Fresh settings directory with no saved credentials",
-            "Default English login layout with ForceLoginURL set to a static local page",
+            "Default English login layout with LoginPage set to the static local page and ForceLoginURL empty",
             "No modal dialog or transient notification"
           ]
         },
@@ -101,6 +107,10 @@
       "definition_blockers": [
         "The offline oracle region fixture and its asset manifest have not been published.",
         "The fixed EEP environment asset has not been selected and hashed."
+      ],
+      "machine_contract_status": "blocked",
+      "machine_contract_blockers": [
+        "A deterministic machine capture path has not been implemented and verified for this slot."
       ],
       "conditions": {
         "settings": {
@@ -174,6 +184,10 @@
         "The material fixture assets and exact texture payload hashes do not exist yet.",
         "The fixed EEP environment asset has not been selected and hashed."
       ],
+      "machine_contract_status": "blocked",
+      "machine_contract_blockers": [
+        "A deterministic machine capture path has not been implemented and verified for this slot."
+      ],
       "conditions": {
         "settings": {
           "RenderEnableEmissiveBuffer": false,
@@ -246,6 +260,10 @@
         "A redistributable avatar outfit, pose, and baked-texture fixture has not been published.",
         "The offline test account and region are not provisioned."
       ],
+      "machine_contract_status": "blocked",
+      "machine_contract_blockers": [
+        "A deterministic machine capture path has not been implemented and verified for this slot."
+      ],
       "conditions": {
         "settings": {
           "RenderEnableEmissiveBuffer": false,
@@ -316,6 +334,10 @@
       "definition_blockers": [
         "The water/sky fixture and fixed EEP asset have not been published.",
         "Cloud motion must be disabled in a purpose-built environment asset."
+      ],
+      "machine_contract_status": "blocked",
+      "machine_contract_blockers": [
+        "A deterministic machine capture path has not been implemented and verified for this slot."
       ],
       "conditions": {
         "settings": {
@@ -388,6 +410,10 @@
         "The reflection-probe fixture and capture-order settling procedure do not exist yet.",
         "The fixed EEP environment asset has not been selected and hashed."
       ],
+      "machine_contract_status": "blocked",
+      "machine_contract_blockers": [
+        "A deterministic machine capture path has not been implemented and verified for this slot."
+      ],
       "conditions": {
         "settings": {
           "RenderEnableEmissiveBuffer": false,
@@ -458,6 +484,10 @@
       "definition_blockers": [
         "The post-processing edge/chart fixture has not been published.",
         "The final parity AA mode must be selected before this slot can become ready."
+      ],
+      "machine_contract_status": "blocked",
+      "machine_contract_blockers": [
+        "A deterministic machine capture path has not been implemented and verified for this slot."
       ],
       "conditions": {
         "settings": {
@@ -555,6 +585,10 @@
         "The deterministic tool-action script and selected-object fixture do not exist yet.",
         "A machine capture hook must emit the snapshot, raw color, and raw depth together from one frame without relying on a daily-driver viewer."
       ],
+      "machine_contract_status": "blocked",
+      "machine_contract_blockers": [
+        "A deterministic machine capture path has not been implemented and verified for this slot."
+      ],
       "conditions": {
         "settings": {
           "RenderEnableEmissiveBuffer": false,
@@ -624,6 +658,10 @@
       "definition_blockers": [
         "Redistributable HUD attachments and deterministic nearby-avatar identities have not been published.",
         "The offline test identities and fixed indicator states are not provisioned."
+      ],
+      "machine_contract_status": "blocked",
+      "machine_contract_blockers": [
+        "A deterministic machine capture path has not been implemented and verified for this slot."
       ],
       "conditions": {
         "settings": {
@@ -695,6 +733,10 @@
       "definition_blockers": [
         "The multi-avatar fixture, forced-impostor placement, and deterministic particle payload do not exist yet.",
         "A capture hook for freezing the particle simulation at a named phase is required."
+      ],
+      "machine_contract_status": "blocked",
+      "machine_contract_blockers": [
+        "A deterministic machine capture path has not been implemented and verified for this slot."
       ],
       "conditions": {
         "settings": {
@@ -773,6 +815,10 @@
         "A versioned localhost media payload and redistributable preview assets have not been published.",
         "A deterministic action script for opening and positioning each preview floater is required."
       ],
+      "machine_contract_status": "blocked",
+      "machine_contract_blockers": [
+        "A deterministic machine capture path has not been implemented and verified for this slot."
+      ],
       "conditions": {
         "settings": {
           "RenderEnableEmissiveBuffer": false,
@@ -842,6 +888,10 @@
       "definition_blockers": [
         "The paired day/night EEP assets and shared scene manifest have not been published."
       ],
+      "machine_contract_status": "blocked",
+      "machine_contract_blockers": [
+        "A deterministic machine capture path has not been implemented and verified for this slot."
+      ],
       "conditions": {
         "settings": {
           "RenderEnableEmissiveBuffer": false,
@@ -909,6 +959,10 @@
       "definition_status": "blocked",
       "definition_blockers": [
         "The paired day/night EEP assets and shared scene manifest have not been published."
+      ],
+      "machine_contract_status": "blocked",
+      "machine_contract_blockers": [
+        "A deterministic machine capture path has not been implemented and verified for this slot."
       ],
       "conditions": {
         "settings": {

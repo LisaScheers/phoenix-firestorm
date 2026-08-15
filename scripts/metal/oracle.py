@@ -60,6 +60,7 @@ REQUIRED_FEATURES: Final = {
 }
 HASH_PATTERN: Final = re.compile(r"[0-9a-f]{64}")
 COMMIT_PATTERN: Final = re.compile(r"[0-9a-f]{40}")
+LOGIN_UI_PAGE_URL: Final = "http://127.0.0.1:19472/login_ui/index.html"
 MAX_PNG_BYTES: Final = 256 * 1024 * 1024
 MAX_JSON_BYTES: Final = 16 * 1024 * 1024
 MAX_BLOB_BYTES: Final = 256 * 1024 * 1024
@@ -1042,7 +1043,7 @@ def validate_manifest(
     document: dict[str, object], fixture_root: Path | None = None
 ) -> None:
     fixture_root = fixture_root or repository_root()
-    _require_exact_integer(document.get("schema"), "manifest schema", 1)
+    _require_exact_integer(document.get("schema"), "manifest schema", 2)
     if document.get("kind") != "firestorm-opengl-oracle-corpus":
         raise OracleError("manifest kind must be firestorm-opengl-oracle-corpus")
 
@@ -1105,6 +1106,17 @@ def validate_manifest(
         _validate_conditions(
             slot.get("conditions"), f"{field}.conditions", fixture_root
         )
+        if slot_id == "login_ui":
+            settings = slot["conditions"]["settings"]
+            if settings.get("LoginPage") != LOGIN_UI_PAGE_URL:
+                raise OracleError(
+                    f"{field}.conditions.settings.LoginPage must equal "
+                    f"{LOGIN_UI_PAGE_URL}"
+                )
+            if settings.get("ForceLoginURL") != "":
+                raise OracleError(
+                    f"{field}.conditions.settings.ForceLoginURL must be empty"
+                )
         supporting_contracts = _validate_supporting_contracts(
             slot.get("required_supporting_artifacts"),
             slot["conditions"]["display"],
@@ -1136,6 +1148,29 @@ def validate_manifest(
         if status == "ready" and blockers:
             raise OracleError(
                 f"{field}.definition_blockers must be empty for a ready slot"
+            )
+        machine_status = slot.get("machine_contract_status")
+        if machine_status not in {"ready", "blocked"}:
+            raise OracleError(
+                f"{field}.machine_contract_status must be ready or blocked"
+            )
+        machine_blockers = _require_array(
+            slot.get("machine_contract_blockers"),
+            f"{field}.machine_contract_blockers",
+        )
+        if not all(
+            isinstance(blocker, str) and blocker for blocker in machine_blockers
+        ):
+            raise OracleError(
+                f"{field}.machine_contract_blockers must contain non-empty descriptions"
+            )
+        if machine_status == "blocked" and not machine_blockers:
+            raise OracleError(
+                f"{field}.machine_contract_blockers must explain a blocked slot"
+            )
+        if machine_status == "ready" and machine_blockers:
+            raise OracleError(
+                f"{field}.machine_contract_blockers must be empty for a ready slot"
             )
         if status == "ready":
             conditions = slot["conditions"]
@@ -1191,7 +1226,7 @@ def _session_definition_errors(
     if (
         not isinstance(session.get("schema"), int)
         or isinstance(session.get("schema"), bool)
-        or session.get("schema") != 1
+        or session.get("schema") != 2
         or session.get("kind") != "firestorm-opengl-oracle-session"
     ):
         return ["session schema or kind is invalid"]
@@ -1514,7 +1549,7 @@ def initialize_session(
         slot["definition_sha256"] = _canonical_hash(_slot_definition(slot))
         slots.append(slot)
     session: dict[str, object] = {
-        "schema": 1,
+        "schema": 2,
         "kind": "firestorm-opengl-oracle-session",
         "created_at": _utc_now(),
         "corpus_sha256": _canonical_hash(manifest),
@@ -1530,10 +1565,14 @@ def initialize_session(
             session_directory, request_directory, "requests"
         )
         request = {
-            "schema": 1,
+            "schema": 2,
             "slot_id": slot["id"],
             "description": slot["description"],
             "features": slot["features"],
+            "definition_status": slot["definition_status"],
+            "definition_blockers": slot["definition_blockers"],
+            "machine_contract_status": slot["machine_contract_status"],
+            "machine_contract_blockers": slot["machine_contract_blockers"],
             "conditions": slot["conditions"],
             "conditions_sha256": slot["conditions_sha256"],
             "definition_sha256": slot["definition_sha256"],
@@ -1724,6 +1763,8 @@ def record_slot(
         raise OracleError(f"slot {slot_id} already has evidence; start a new session")
     if slot.get("definition_status") != "ready":
         raise OracleError(f"slot {slot_id} is blocked by its corpus definition")
+    if slot.get("machine_contract_status") != "ready":
+        raise OracleError(f"slot {slot_id} is blocked by its machine capture contract")
 
     contract = manifest["capture_contract"]
     repetitions = int(contract["repetitions"])
@@ -1867,6 +1908,11 @@ def verify_session(
         if expected["definition_status"] != "ready":
             blockers = expected["definition_blockers"]
             errors.append(f"{slot_id}: definition is blocked ({'; '.join(blockers)})")
+        if expected["machine_contract_status"] != "ready":
+            blockers = expected["machine_contract_blockers"]
+            errors.append(
+                f"{slot_id}: machine contract is blocked ({'; '.join(blockers)})"
+            )
         evidence = value.get("evidence")
         if not isinstance(evidence, dict) or evidence.get("status") != "complete":
             errors.append(f"{slot_id}: required oracle evidence is missing")
@@ -2125,12 +2171,17 @@ def main(argv: list[str] | None = None) -> int:
                 arguments.oracle_worktree,
                 arguments.fixture_root,
             )
-            blocked = sum(
+            definition_blocked = sum(
                 slot["definition_status"] != "ready" for slot in session["slots"]
+            )
+            machine_blocked = sum(
+                slot["machine_contract_status"] != "ready"
+                for slot in session["slots"]
             )
             print(
                 f"initialized {len(session['slots'])} oracle slots at {arguments.session} "
-                f"({blocked} definitions blocked, all evidence missing)"
+                f"({definition_blocked} definitions blocked, "
+                f"{machine_blocked} machine contracts blocked, all evidence missing)"
             )
             return 0
         if arguments.command == "record":

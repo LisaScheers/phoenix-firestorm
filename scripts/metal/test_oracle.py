@@ -84,7 +84,7 @@ def _write_png(
 
 def _git(repository: Path, *arguments: str) -> str:
     return subprocess.run(
-        ["git", "-C", str(repository), *arguments],
+        ["git", "-C", str(repository), "-c", "commit.gpgsign=false", *arguments],
         check=True,
         capture_output=True,
         text=True,
@@ -104,6 +104,8 @@ class OracleCorpusTest(unittest.TestCase):
         slot = next(value for value in manifest["slots"] if value["id"] == slot_id)
         slot["definition_status"] = "ready"
         slot["definition_blockers"] = []
+        slot["machine_contract_status"] = "ready"
+        slot["machine_contract_blockers"] = []
         display = slot["conditions"]["display"]
         display["width_px"] = 4
         display["height_px"] = 3
@@ -242,6 +244,7 @@ class OracleCorpusTest(unittest.TestCase):
             )
 
     def test_manifest_pins_baseline_contract_and_required_coverage(self) -> None:
+        self.assertEqual(self.manifest["schema"], 2)
         self.assertEqual(
             self.manifest["baseline"]["commit"],
             "1e8fd5491bde91fe6daca7d78f217a4d46084a5b",
@@ -268,6 +271,10 @@ class OracleCorpusTest(unittest.TestCase):
         self.assertTrue(oracle.REQUIRED_GROUPS <= groups)
         self.assertTrue(oracle.REQUIRED_FEATURES <= features)
         self.assertTrue(all(slot["evidence"]["status"] == "missing" for slot in slots))
+        self.assertTrue(
+            all(slot["machine_contract_status"] == "blocked" for slot in slots)
+        )
+        self.assertTrue(all(slot["machine_contract_blockers"] for slot in slots))
         for slot in slots:
             if slot["conditions"]["camera"]["mode"] != "not_applicable":
                 settings = slot["conditions"]["settings"]
@@ -283,6 +290,7 @@ class OracleCorpusTest(unittest.TestCase):
                     slot["evidence"]["status"] == "missing" for slot in session["slots"]
                 )
             )
+            self.assertEqual(session["schema"], 2)
             self.assertTrue((session_path.parent / "requests/login_ui.json").is_file())
             errors = oracle.verify_session(self.manifest, session_path, check_git=False)
             self.assertTrue(
@@ -293,6 +301,110 @@ class OracleCorpusTest(unittest.TestCase):
             )
             self.assertTrue(
                 any("opaque_region: definition is blocked" in error for error in errors)
+            )
+            self.assertTrue(
+                any("login_ui: machine contract is blocked" in error for error in errors)
+            )
+            request = json.loads(
+                (session_path.parent / "requests/login_ui.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            login = next(
+                slot for slot in self.manifest["slots"] if slot["id"] == "login_ui"
+            )
+            session_login = next(
+                slot for slot in session["slots"] if slot["id"] == "login_ui"
+            )
+            self.assertEqual(request["schema"], 2)
+            self.assertEqual(
+                request["definition_status"],
+                login["definition_status"],
+            )
+            self.assertEqual(
+                request["definition_blockers"],
+                login["definition_blockers"],
+            )
+            self.assertEqual(
+                session_login["machine_contract_status"],
+                login["machine_contract_status"],
+            )
+            self.assertEqual(
+                session_login["machine_contract_blockers"],
+                login["machine_contract_blockers"],
+            )
+            self.assertEqual(
+                request["machine_contract_status"],
+                login["machine_contract_status"],
+            )
+            self.assertEqual(
+                request["machine_contract_blockers"],
+                login["machine_contract_blockers"],
+            )
+
+    def test_machine_contract_status_requires_matching_blockers(self) -> None:
+        cases = (
+            ("blocked", [], "must explain a blocked slot"),
+            ("ready", ["still blocked"], "must be empty for a ready slot"),
+            ("unknown", [], "must be ready or blocked"),
+        )
+        for status, blockers, expected in cases:
+            with self.subTest(status=status):
+                manifest = copy.deepcopy(self.manifest)
+                login = next(
+                    slot for slot in manifest["slots"] if slot["id"] == "login_ui"
+                )
+                login["machine_contract_status"] = status
+                login["machine_contract_blockers"] = blockers
+                with self.assertRaisesRegex(oracle.OracleError, expected):
+                    oracle.validate_manifest(manifest)
+
+    def test_login_ui_route_conditions_are_exact(self) -> None:
+        cases = (
+            ("LoginPage", "http://127.0.0.1:19472/other.html", "LoginPage must equal"),
+            ("ForceLoginURL", "http://127.0.0.1:19472/login_ui/index.html", "ForceLoginURL must be empty"),
+        )
+        for setting, value, expected in cases:
+            with self.subTest(setting=setting):
+                manifest = copy.deepcopy(self.manifest)
+                login = next(
+                    slot for slot in manifest["slots"] if slot["id"] == "login_ui"
+                )
+                login["conditions"]["settings"][setting] = value
+                with self.assertRaisesRegex(oracle.OracleError, expected):
+                    oracle.validate_manifest(manifest)
+
+    def test_machine_blocked_login_cannot_record_before_reading_captures(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            manifest, fixture_root = self._ready_manifest(directory)
+            login = next(slot for slot in manifest["slots"] if slot["id"] == "login_ui")
+            login["machine_contract_status"] = "blocked"
+            login["machine_contract_blockers"] = [
+                "The test capture driver is not implemented."
+            ]
+            oracle.validate_manifest(manifest, fixture_root)
+            session_path = self._initialize(directory, manifest, fixture_root)
+
+            with self.assertRaisesRegex(
+                oracle.OracleError, "blocked by its machine capture contract"
+            ):
+                oracle.record_slot(
+                    manifest,
+                    session_path,
+                    "login_ui",
+                    [directory / "capture-must-not-be-read.png"],
+                    directory / "measurements-must-not-be-read.json",
+                    fixture_root=fixture_root,
+                )
+
+            errors = oracle.verify_session(
+                manifest, session_path, check_git=False, fixture_root=fixture_root
+            )
+            self.assertIn(
+                "login_ui: machine contract is blocked "
+                "(The test capture driver is not implemented.)",
+                errors,
             )
 
     def test_record_rejects_session_slot_without_evidence_cleanly(self) -> None:
@@ -714,6 +826,8 @@ class OracleCorpusTest(unittest.TestCase):
             login = next(slot for slot in session["slots"] if slot["id"] == "login_ui")
             login["definition_status"] = "ready"
             login["definition_blockers"] = []
+            login["machine_contract_status"] = "ready"
+            login["machine_contract_blockers"] = []
             session["capture_contract"]["repetitions"] = 1
             session_path.write_text(json.dumps(session), encoding="utf-8")
             errors = oracle.verify_session(self.manifest, session_path, check_git=False)
@@ -795,6 +909,18 @@ class OracleCorpusTest(unittest.TestCase):
             session_path = self._initialize(directory, manifest, fixture_root)
             session = json.loads(session_path.read_text(encoding="utf-8"))
             session["schema"] = True
+            session_path.write_text(json.dumps(session), encoding="utf-8")
+            self.assertIn(
+                "session schema or kind is invalid",
+                oracle.verify_session(
+                    manifest,
+                    session_path,
+                    check_git=False,
+                    fixture_root=fixture_root,
+                ),
+            )
+
+            session["schema"] = 1
             session_path.write_text(json.dumps(session), encoding="utf-8")
             self.assertIn(
                 "session schema or kind is invalid",

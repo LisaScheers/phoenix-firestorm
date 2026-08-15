@@ -15,12 +15,24 @@ The required slots cover login/UI/fonts, opaque and terrain geometry, legacy
 and PBR materials, avatars and alpha, HUDs and name tags, impostors, particles,
 water/sky/shadows, reflection probes, paired day and night environments,
 post-processing, local media, asset previews, tools, snapshots, and raw
-readback. A slot cannot become `ready` until its fixture is available, its asset
-manifest and every named asset exist with matching sizes and SHA-256 hashes,
-and any fixed environment has a concrete asset identity. Rendered-world slots
-explicitly pin `RenderHDREnabled=true` and
+readback. Rendered-world slots explicitly pin `RenderHDREnabled=true` and
 `RenderEnableEmissiveBuffer=false`, matching the baseline three-attachment
 G-buffer contract.
+
+## Readiness gates
+
+Each slot has two independent gates. Its `definition_status` cannot become
+`ready` until its fixture is available, its asset manifest and every named asset
+exist with matching sizes and SHA-256 hashes, and any fixed environment has a
+concrete asset identity. Its `machine_contract_status` cannot become `ready`
+until an automated, deterministic driver and capture path can produce the
+required artifacts. Recording requires both gates to be ready: a ready
+definition is not by itself permission to record captures.
+
+The corpus currently leaves every machine contract blocked. `verify` reports
+definition blockers and machine-contract blockers separately, so a fixture
+definition can be completed without implying that machine-produced evidence is
+admissible.
 
 ## Safety boundary
 
@@ -53,6 +65,11 @@ content-conversion attributes,
 ignored untracked files, and mutable file-mode or symlink settings cannot relax
 this check.
 
+The session binds both readiness gates into each slot definition, and each
+request repeats the current definition and machine-contract statuses and
+blockers. A request must not be treated as capture authorization while either
+gate is blocked.
+
 Ready content uses `asset_manifest_path`, relative to `--fixture-root` (the
 repository root by default), plus the manifest's exact byte count and SHA-256.
 The fixture manifest must name at least one real asset, and no path may be
@@ -69,7 +86,18 @@ absolute, escape the fixture root, or traverse a symbolic link:
 }
 ```
 
-For a ready slot:
+### Login UI route
+
+The `login_ui` slot uses
+`LoginPage=http://127.0.0.1:19472/login_ui/index.html` and an empty
+`ForceLoginURL`. That route exists only in PR #25's explicit developer build:
+configure the viewer with `-DENABLE_OPENGL_ORACLE_CAPTURE=ON`. The default
+build keeps normal login-page behavior, and `ForceLoginURL` must remain empty
+to avoid its force-login modal. Enabling the route does not make the login
+definition ready; it remains blocked until the real local fixture and its
+hashed manifest are added.
+
+For a slot whose definition and machine contract are both ready:
 
 1. Apply every condition from its request before the warmup interval.
 2. Leave the camera, settings, environment, display, and content unchanged.
@@ -128,22 +156,23 @@ match when the snapshot is RGBA. Raw depth is tightly packed, top-left-origin
 depth values are rejected, and the complete role contract is stored beside
 each artifact hash.
 
-The current `tools_readback` definition remains blocked on a machine capture
+The current `tools_readback` machine contract remains blocked on a capture
 hook. That hook must emit the snapshot, raw color, and raw depth together from
 one frame; an operator-entered frame ID or hash is not admissible proof. Do not
-mark the slot ready or remove that blocker until the instrumentation and its
-machine-produced acquisition evidence exist.
+mark `machine_contract_status` ready or remove that blocker until the
+instrumentation and its machine-produced acquisition evidence exist.
 
 Recording reads each artifact once, validates and hashes those exact bytes,
-then writes them atomically into the session directory. It refuses blocked
-slots, wrong or incomplete measurement metadata, a changed oracle checkout,
-duplicate recording, and missing supporting artifacts. It also compares the
-session's baseline, capture contract, slot definitions, conditions, and
-canonical definition and condition hashes with the canonical manifest before
-trusting mutable evidence. These comparisons use canonical JSON bytes, so JSON
-booleans, integers, and floating-point numbers cannot substitute for one
-another. Editing a session to relax a blocker, capture count, feature list, or
-condition makes both recording and verification fail.
+then writes them atomically into the session directory. It refuses
+definition-blocked or machine-contract-blocked slots, wrong or incomplete
+measurement metadata, a changed oracle checkout, duplicate recording, and
+missing supporting artifacts. It also compares the session's baseline, capture
+contract, slot definitions, conditions, and canonical definition and condition
+hashes with the canonical manifest before trusting mutable evidence. These
+comparisons use canonical JSON bytes, so JSON booleans, integers, and
+floating-point numbers cannot substitute for one another. Editing a session to
+relax a blocker, capture count, feature list, or condition makes both recording
+and verification fail.
 
 Verify the complete corpus with:
 
@@ -153,8 +182,9 @@ python3 scripts/metal/oracle.py verify
 
 Verification is expected to fail today. All thirteen definitions are explicitly
 blocked on a static login page, unpublished fixtures, fixed environment assets,
-an offline test identity and region, or capture instrumentation. Those
-dependencies must be supplied and their manifest entries made concrete before
+an offline test identity and region, or capture instrumentation. All thirteen
+machine contracts are also explicitly blocked until their deterministic capture
+paths exist. Those definition and machine dependencies must be supplied before
 captures can become admissible.
 
 Run the harness tests with:
