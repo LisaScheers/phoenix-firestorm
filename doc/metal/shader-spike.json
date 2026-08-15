@@ -788,6 +788,43 @@
       }
     },
     {
+      "id": "presentation_copy",
+      "family": "Depth write and copy",
+      "recipe_kind": "runtime",
+      "settings_overrides": {},
+      "semantic_parity": "not_run",
+      "source_reference": "indra/newview/llviewershadermgr.cpp:3468",
+      "source_symbol": "gCopyProgram",
+      "shader_class": 2,
+      "defines": {},
+      "indexed_texture_channels": 0,
+      "required_reflection": {
+        "fragment": [
+          {"group": "textures", "name": "diffuseMap", "type": "sampler2D"}
+        ]
+      },
+      "pipeline": {
+        "color_formats": ["bgra8unorm"],
+        "depth_format": null,
+        "sample_count": 1,
+        "vertex_contract": "position_only",
+        "source_evidence": [
+          {
+            "path": "indra/llwindow/metal/llmetalbootstrap-objc.mm",
+            "contains": "return MTLPixelFormatBGRA8Unorm;"
+          }
+        ]
+      },
+      "stages": {
+        "vertex": [
+          "interface/copyV.glsl",
+          "deferred/textureUtilV.glsl",
+          "objects/nonindexedTextureV.glsl"
+        ],
+        "fragment": ["interface/copyF.glsl", "deferred/globalF.glsl"]
+      }
+    },
+    {
       "id": "depth_copy",
       "family": "Depth write and copy",
       "recipe_kind": "runtime",

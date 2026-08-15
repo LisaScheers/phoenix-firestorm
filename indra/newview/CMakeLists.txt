@@ -2308,7 +2308,7 @@ if (DARWIN AND FIRESTORM_BUILD_ACTIVE_METAL_VIEWER)
     MACOSX_PACKAGE_LOCATION Resources
     )
   add_dependencies(${VIEWER_BINARY_NAME}
-    firestorm_metal_bootstrap_shader_library
+    firestorm_metal_declared_programs
     )
   target_compile_definitions(${VIEWER_BINARY_NAME} PRIVATE
     LL_ACTIVE_METAL_VIEWER=1

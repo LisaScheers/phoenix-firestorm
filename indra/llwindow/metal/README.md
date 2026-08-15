@@ -229,7 +229,7 @@ The planned presentation policy is one manual final shader encode into a
 `FIRESTORM_BUILD_METAL_PROGRAM_ARTIFACTS` is default-off. When enabled, the
 explicit `firestorm_metal_declared_programs` target runs the frozen shader gate,
 then generates one path-free `firestorm-declared-programs.metallib` and an
-immutable C++17 catalog for the 12 representative `runtime` recipes. The
+immutable C++17 catalog for the 13 representative `runtime` recipes. The
 capability and stress recipes remain build-time feasibility evidence and are
 excluded. This is not the complete viewer program inventory and makes no
 semantic-parity claim.
@@ -247,8 +247,10 @@ v1 accepts only `mat3` and `mat4`, column-major with stride 16;
 producer, catalog, and native schema validation reject other matrix forms, and
 Metal reflection checks the remaining data type. Generated `MetalProgramId`
 numeric values are lexical build ordinals, not a persistence or telemetry ABI.
-`MetalProgramLibrary` accepts an explicit path, strongly owns that native
-library and all declared entry functions, requires the exact function
+`MetalProgramLibrary` accepts an explicit path, reads it once into owned bytes,
+verifies those exact bytes against the catalog's SHA-256, and passes the same
+bytes to Metal without reopening the path. It strongly owns the resulting
+native library and all declared entry functions, requires the exact function
 name/stage set, and exposes borrowed handles and immutable lookup. It performs
 no bundle lookup, JSON parsing, source compilation, function-constant
 selection, draw encoding, or hot reload.
@@ -268,13 +270,13 @@ nix shell nixpkgs#cmake nixpkgs#ninja nixpkgs#glslang \
              firestorm_metal_artifact_vertex_index_test
 nix shell nixpkgs#cmake -c \
   ctest --test-dir .build/metal-programs \
-    -R '^firestorm_metal_(program_library|artifact_vertex_index)$' \
+    -R '^firestorm_metal_(program_library(_digest_rejection)?|artifact_vertex_index)$' \
     --output-on-failure
 ```
 
 The program-library test validates the ordinary C++ catalog, exact IDs and key
 vertex contracts, explicit-path strong ownership, lookup, and creation of all
-12 declared PSOs from the same combined metallib under Metal API validation.
+13 declared PSOs from the same combined metallib under Metal API validation.
 The artifact vertex/index test uses the translated `ui_font` entry, its exact
 three-stream layout, reflected resource slots, a two-texel white/black texture,
 and test-only identity uniform bytes. Intended UVs sample white while the
@@ -284,8 +286,9 @@ render and asynchronous-readback submission verifies the top-to-bottom 6x4 BGRA8
 nonindexed, U16, and U32 paths with poison prefixes, nonzero vertex/index
 offsets, and element-based nonzero `firstIndex` values. The default-off option
 changes neither target graph. When explicitly enabled, a standalone build
-registers both focused tests; an embedded viewer keeps the generated artifacts
-and both test executables out of `all` and registers no viewer CTest.
+registers the library, digest-rejection, and geometry tests; an embedded viewer
+keeps the generated artifacts and test executables out of `all` and registers
+no viewer CTest.
 
 ## Firestorm build integration
 
@@ -302,6 +305,18 @@ developer app is excluded from the default build and can be built explicitly:
 ```sh
 cmake --build BUILD_DIR --target firestorm_metal_bootstrap
 ```
+
+`FIRESTORM_BUILD_ACTIVE_METAL_VIEWER=ON` implies declared-program generation
+for that configure without changing the standalone artifact option in the
+cache. The active app bundles only
+`firestorm-declared-programs.metallib`; its generated catalog supplies the
+resource basename and required digest. The renderer loads the verified bytes,
+derives the `presentation_copy` pipeline, vertex stream, and texture/sampler
+slots from that catalog, then uploads one private position stream and a small
+sampled texture asynchronously through its persistent three-slot frame
+context. Preparation reports back-pressure as `renderer_busy`; neither startup
+nor normal presentation waits for GPU completion. The standalone bootstrap
+remains independent and continues to bundle and use `bootstrap.metallib`.
 
 The contract tests are also excluded from an embedded default build. They can
 be requested explicitly without registering tests in the viewer's CTest tree:

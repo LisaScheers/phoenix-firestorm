@@ -67,6 +67,7 @@ REQUIRED_RECIPE_INVENTORY: Final = {
     "indexed_material_stress_16": ("Indexed-texture material", "stress"),
     "pbr_alpha": ("PBR opaque and alpha", "runtime"),
     "pbr_opaque": ("PBR opaque and alpha", "runtime"),
+    "presentation_copy": ("Depth write and copy", "runtime"),
     "reflection_probe": ("Reflection probe", "runtime"),
     "shadow_alpha_mask": ("Shadow alpha mask", "runtime"),
     "shadow_alpha_receiver": ("Shadow alpha mask", "runtime"),
@@ -83,6 +84,7 @@ REQUIRED_RECIPE_KINDS: Final = {
 }
 REQUIRED_FAMILIES: Final = set(REQUIRED_PROGRAM_FAMILIES.values())
 REQUIRED_PROGRAM_IDS: Final = set(REQUIRED_RECIPE_INVENTORY)
+REQUIRED_BUFFER_FREE_PROGRAM_IDS: Final = {"presentation_copy"}
 BASELINE_SETTING_TYPES: Final = {
     "RenderAvatarCloth": bool,
     "RenderEnableEmissiveBuffer": bool,
@@ -2011,6 +2013,12 @@ def write_pipeline_spec(
         "fragment": _expected_arguments(fragment_reflection, "fragment"),
     }
     _add_metal_binding_names(expected_arguments, stage_msl_sources)
+    if recipe.program_id in REQUIRED_BUFFER_FREE_PROGRAM_IDS and any(
+        argument["kind"] == "buffer"
+        for stage in STAGE_SUFFIX
+        for argument in expected_arguments[stage]
+    ):
+        raise ManifestError(f"{recipe.program_id} must not expose uniform buffers")
     vertex_streams = {layout.buffer_index for layout in recipe.pipeline.vertex_layouts}
     shader_buffers = {
         int(item["index"])
@@ -2861,7 +2869,7 @@ def build_runtime_artifacts(
         {item.family for item in runtime_recipes}
     ) != 10:
         raise RuntimeProgramError(
-            "runtime artifact requires the exact 12 runtime recipes across 10 families"
+            "runtime artifact requires the exact 13 runtime recipes across 10 families"
         )
     by_id = {str(result.get("id")): result for result in results}
     if len(by_id) != len(results):

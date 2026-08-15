@@ -59,10 +59,10 @@ class ShaderSpikeTest(unittest.TestCase):
         )
         return directory
 
-    def test_manifest_is_exact_fourteen_recipe_ten_family_contract(self) -> None:
+    def test_manifest_is_exact_fifteen_recipe_ten_family_contract(self) -> None:
         source_root, programs = self._programs()
         shader_spike.validate_sources(source_root, programs)
-        self.assertEqual(14, len(programs))
+        self.assertEqual(15, len(programs))
         self.assertEqual(
             shader_spike.REQUIRED_PROGRAM_IDS, {item.program_id for item in programs}
         )
@@ -117,9 +117,164 @@ class ShaderSpikeTest(unittest.TestCase):
             (("rgba16float",), "depth32float"), actual["shadow_alpha_receiver"]
         )
         self.assertEqual((("rg11b10float",), None), actual["reflection_probe"])
+        self.assertEqual((("bgra8unorm",), None), actual["presentation_copy"])
         self.assertEqual((("rgba16float",), "depth32float"), actual["depth_copy"])
         self.assertEqual((("rgba8unorm",), None), actual["fxaa"])
         self.assertEqual((("bgra8unorm",), None), actual["ui_font"])
+
+    def test_presentation_copy_recipe_is_the_uniform_free_frame_contract(self) -> None:
+        _, programs = self._programs()
+        recipe = next(
+            item for item in programs if item.program_id == "presentation_copy"
+        )
+        self.assertEqual(
+            {"presentation_copy"}, shader_spike.REQUIRED_BUFFER_FREE_PROGRAM_IDS
+        )
+        self.assertEqual("Depth write and copy", recipe.family)
+        self.assertEqual("runtime", recipe.recipe_kind)
+        self.assertEqual("not_run", recipe.semantic_parity)
+        self.assertEqual(
+            "indra/newview/llviewershadermgr.cpp:3468", recipe.source_reference
+        )
+        self.assertEqual("gCopyProgram", recipe.source_symbol)
+        self.assertEqual(2, recipe.shader_class)
+        self.assertEqual({}, recipe.settings_overrides)
+        self.assertEqual({}, recipe.defines)
+        self.assertEqual(0, recipe.indexed_texture_channels)
+        self.assertEqual(
+            {
+                "vertex": (
+                    "interface/copyV.glsl",
+                    "deferred/textureUtilV.glsl",
+                    "objects/nonindexedTextureV.glsl",
+                ),
+                "fragment": (
+                    "interface/copyF.glsl",
+                    "deferred/globalF.glsl",
+                ),
+            },
+            recipe.stages,
+        )
+        self.assertEqual(
+            {("textures", "diffuseMap", "sampler2D")},
+            {
+                (requirement.group, requirement.name, requirement.resource_type)
+                for requirement in recipe.required_reflection["fragment"]
+            },
+        )
+        self.assertEqual(("bgra8unorm",), recipe.pipeline.color_formats)
+        self.assertIsNone(recipe.pipeline.depth_format)
+        self.assertEqual(1, recipe.pipeline.sample_count)
+        self.assertEqual(1, len(recipe.pipeline.vertex_layouts))
+        layout = recipe.pipeline.vertex_layouts[0]
+        self.assertEqual(
+            (16, 16, "per_vertex"),
+            (
+                layout.buffer_index,
+                layout.stride,
+                layout.step_function,
+            ),
+        )
+        self.assertEqual(
+            [("position", 0, "float3", 0, 16)],
+            [
+                (
+                    attribute.name,
+                    attribute.location,
+                    attribute.format_name,
+                    attribute.offset,
+                    attribute.buffer_index,
+                )
+                for attribute in layout.attributes
+            ],
+        )
+
+    def test_presentation_copy_pipeline_descriptor_is_uniform_free(self) -> None:
+        _, programs = self._programs()
+        recipe = next(
+            item for item in programs if item.program_id == "presentation_copy"
+        )
+        vertex = {"inputs": [{"name": "position", "type": "vec3", "location": 0}]}
+        fragment = {
+            "outputs": [{"name": "frag_color", "type": "vec4", "location": 0}],
+            "textures": [{"name": "diffuseMap", "type": "sampler2D", "binding": 0}],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory, "presentation-copy.json")
+            shader_spike.write_pipeline_spec(
+                recipe,
+                vertex,
+                fragment,
+                self._stage_msl_sources(vertex, fragment),
+                Path(directory, "presentation-copy.metallib"),
+                path,
+            )
+            spec = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(["bgra8unorm"], spec["color_formats"])
+        self.assertIsNone(spec["depth_format"])
+        self.assertEqual(1, spec["sample_count"])
+        self.assertEqual(
+            [
+                {
+                    "buffer_index": 16,
+                    "format": "float3",
+                    "location": 0,
+                    "name": "position",
+                    "offset": 0,
+                }
+            ],
+            spec["vertex_attributes"],
+        )
+        self.assertEqual(
+            [{"buffer_index": 16, "step_function": "per_vertex", "stride": 16}],
+            spec["vertex_layouts"],
+        )
+        self.assertEqual([], spec["expected_arguments"]["vertex"])
+        self.assertEqual(
+            [("sampler", "diffuseMap", 0), ("texture", "diffuseMap", 0)],
+            [
+                (argument["kind"], argument["name"], argument["index"])
+                for argument in spec["expected_arguments"]["fragment"]
+            ],
+        )
+
+    def test_presentation_copy_rejects_uniform_reflection(self) -> None:
+        _, programs = self._programs()
+        recipe = next(
+            item for item in programs if item.program_id == "presentation_copy"
+        )
+        vertex = {
+            "inputs": [{"name": "position", "type": "vec3", "location": 0}],
+            "types": {
+                "_ubo": {"members": [{"name": "value", "type": "vec4", "offset": 0}]}
+            },
+            "ubos": [
+                {
+                    "name": "UnexpectedUniforms",
+                    "type": "_ubo",
+                    "binding": 24,
+                    "block_size": 16,
+                }
+            ],
+        }
+        fragment = {
+            "outputs": [{"name": "frag_color", "type": "vec4", "location": 0}],
+            "textures": [{"name": "diffuseMap", "type": "sampler2D", "binding": 0}],
+        }
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            self.assertRaisesRegex(
+                shader_spike.ManifestError, "must not expose uniform buffers"
+            ),
+        ):
+            shader_spike.write_pipeline_spec(
+                recipe,
+                vertex,
+                fragment,
+                self._stage_msl_sources(vertex, fragment),
+                Path(directory, "presentation-copy.metallib"),
+                Path(directory, "presentation-copy.json"),
+            )
 
     def test_stress_and_semantic_states_are_honest(self) -> None:
         _, programs = self._programs()

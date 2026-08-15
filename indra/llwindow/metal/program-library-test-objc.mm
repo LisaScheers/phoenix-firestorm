@@ -50,6 +50,9 @@ using firestorm::metal::MetalProgramCatalogMetadata;
 using firestorm::metal::MetalProgramDescriptor;
 using firestorm::metal::MetalProgramId;
 using firestorm::metal::MetalProgramLibrary;
+using firestorm::metal::MetalResourceAccess;
+using firestorm::metal::MetalTextureDataType;
+using firestorm::metal::MetalTextureType;
 using firestorm::metal::MetalVertexFormat;
 using firestorm::metal::MetalVertexStepFunction;
 using firestorm::metal::PixelFormat;
@@ -58,7 +61,7 @@ using firestorm::metal::declaredMetalPrograms;
 using firestorm::metal::validateMetalProgramCatalogMetadata;
 using firestorm::metal::validateMetalProgramDescriptors;
 
-constexpr std::array<std::string_view, 12> EXPECTED_IDS{
+constexpr std::array<std::string_view, 13> EXPECTED_IDS{
     "avatar_skinning",
     "deferred_diffuse",
     "depth_copy",
@@ -66,6 +69,7 @@ constexpr std::array<std::string_view, 12> EXPECTED_IDS{
     "indexed_material",
     "pbr_alpha",
     "pbr_opaque",
+    "presentation_copy",
     "reflection_probe",
     "shadow_alpha_mask",
     "shadow_alpha_receiver",
@@ -461,6 +465,63 @@ void testExactCatalog(const MetalProgramLibrary& library)
         EXPECT(deferred->colorFormats[1] == PixelFormat::rgba8_unorm);
         EXPECT(deferred->colorFormats[2] == PixelFormat::rgba16_unorm);
         EXPECT(deferred->depthFormat == PixelFormat::depth32_float);
+    }
+    const MetalProgramDescriptor* presentation =
+        library.program("presentation_copy");
+    EXPECT(presentation != nullptr);
+    if (presentation != nullptr)
+    {
+        EXPECT(presentation->family == "Depth write and copy");
+        EXPECT(presentation->vertexFunction == "presentation_copy_vertex");
+        EXPECT(presentation->fragmentFunction == "presentation_copy_fragment");
+        EXPECT(presentation->colorFormats.size() == 1);
+        if (presentation->colorFormats.size() == 1)
+        {
+            EXPECT(presentation->colorFormats[0] == PixelFormat::bgra8_unorm);
+        }
+        EXPECT(!presentation->depthFormat.has_value());
+        EXPECT(presentation->sampleCount == 1);
+        EXPECT(presentation->vertexAttributes.size() == 1);
+        EXPECT(presentation->vertexLayouts.size() == 1);
+        if (presentation->vertexAttributes.size() == 1)
+        {
+            const auto& position = presentation->vertexAttributes[0];
+            EXPECT(position.name == "position");
+            EXPECT(position.location == 0);
+            EXPECT(position.format == MetalVertexFormat::float32x3);
+            EXPECT(position.offset == 0);
+            EXPECT(position.bufferIndex == 16);
+        }
+        if (presentation->vertexLayouts.size() == 1)
+        {
+            const auto& layout = presentation->vertexLayouts[0];
+            EXPECT(layout.bufferIndex == 16);
+            EXPECT(layout.stride == 16);
+            EXPECT(layout.stepFunction == MetalVertexStepFunction::per_vertex);
+        }
+        EXPECT(presentation->vertexBindings.buffers.empty());
+        EXPECT(presentation->vertexBindings.textures.empty());
+        EXPECT(presentation->vertexBindings.samplers.empty());
+        EXPECT(presentation->fragmentBindings.buffers.empty());
+        EXPECT(presentation->fragmentBindings.textures.size() == 1);
+        EXPECT(presentation->fragmentBindings.samplers.size() == 1);
+        if (presentation->fragmentBindings.textures.size() == 1)
+        {
+            const auto& texture = presentation->fragmentBindings.textures[0];
+            EXPECT(texture.name == "diffuseMap");
+            EXPECT(texture.index == 0);
+            EXPECT(texture.access == MetalResourceAccess::read_only);
+            EXPECT(texture.type == MetalTextureType::texture_2d);
+            EXPECT(texture.dataType == MetalTextureDataType::float32);
+            EXPECT(texture.arrayLength == 1);
+            EXPECT(!texture.depth);
+        }
+        if (presentation->fragmentBindings.samplers.size() == 1)
+        {
+            const auto& sampler = presentation->fragmentBindings.samplers[0];
+            EXPECT(sampler.name == "diffuseMap");
+            EXPECT(sampler.index == 0);
+        }
     }
 }
 

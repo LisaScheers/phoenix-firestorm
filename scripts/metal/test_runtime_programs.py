@@ -113,6 +113,14 @@ class RuntimeProgramsTest(unittest.TestCase):
             },
         }
 
+    @staticmethod
+    def _presentation_spec() -> dict[str, object]:
+        spec = RuntimeProgramsTest._spec("presentation_copy")
+        spec["vertex_attributes"] = [spec["vertex_attributes"][0]]
+        spec["vertex_layouts"] = [spec["vertex_layouts"][0]]
+        spec["expected_arguments"]["vertex"] = []
+        return spec
+
     def _record(self, program_id: str = "ui_font") -> dict[str, object]:
         return runtime_programs.make_program_record(
             "UI and font glyph", self._spec(program_id), self._reflections()
@@ -142,6 +150,7 @@ class RuntimeProgramsTest(unittest.TestCase):
                 "indexed_material",
                 "pbr_alpha",
                 "pbr_opaque",
+                "presentation_copy",
                 "reflection_probe",
                 "shadow_alpha_mask",
                 "shadow_alpha_receiver",
@@ -150,6 +159,7 @@ class RuntimeProgramsTest(unittest.TestCase):
             ],
             sorted(item["id"] for item in runtime),
         )
+        self.assertEqual(13, len(runtime))
         self.assertEqual(10, len({item["family"] for item in runtime}))
         self.assertTrue(
             all("runtime_id" not in item for item in self.manifest["programs"])
@@ -175,6 +185,78 @@ class RuntimeProgramsTest(unittest.TestCase):
         self.assertEqual(
             "depth32float", by_id["deferred_diffuse"]["pipeline"]["depth_format"]
         )
+        self.assertEqual(
+            {
+                "color_formats": ["bgra8unorm"],
+                "depth_format": None,
+                "sample_count": 1,
+                "source_evidence": [
+                    {
+                        "contains": "return MTLPixelFormatBGRA8Unorm;",
+                        "path": "indra/llwindow/metal/llmetalbootstrap-objc.mm",
+                    }
+                ],
+                "vertex_contract": "position_only",
+            },
+            by_id["presentation_copy"]["pipeline"],
+        )
+
+    def test_presentation_copy_record_needs_no_uniform_packer(self) -> None:
+        spec = self._presentation_spec()
+        record = runtime_programs.make_program_record(
+            "Depth write and copy", spec, self._reflections()
+        )
+        self.assertEqual("presentation_copy", record["id"])
+        self.assertEqual("Depth write and copy", record["family"])
+        self.assertEqual(["bgra8unorm"], record["color_formats"])
+        self.assertIsNone(record["depth_format"])
+        self.assertEqual(1, record["sample_count"])
+        self.assertEqual(
+            [
+                {
+                    "buffer_index": 16,
+                    "format": "float3",
+                    "location": 0,
+                    "name": "position",
+                    "offset": 0,
+                }
+            ],
+            record["vertex_attributes"],
+        )
+        self.assertEqual(
+            [{"buffer_index": 16, "step_function": "per_vertex", "stride": 16}],
+            record["vertex_layouts"],
+        )
+        self.assertEqual([], record["stage_bindings"]["vertex"])
+        self.assertEqual(
+            [("sampler", "diffuseMap", 0), ("texture", "diffuseMap", 0)],
+            [
+                (binding["kind"], binding["name"], binding["index"])
+                for binding in record["stage_bindings"]["fragment"]
+            ],
+        )
+        self.assertFalse(
+            any(
+                binding["kind"] == "buffer"
+                for stage in ("vertex", "fragment")
+                for binding in record["stage_bindings"][stage]
+            )
+        )
+
+    def test_presentation_copy_rejects_unpaired_diffuse_map(self) -> None:
+        spec = self._presentation_spec()
+        spec["expected_arguments"]["fragment"] = [
+            argument
+            for argument in spec["expected_arguments"]["fragment"]
+            if argument["kind"] != "sampler"
+        ]
+        with self.assertRaisesRegex(
+            runtime_programs.RuntimeProgramError,
+            "texture and sampler bindings do not pair",
+        ):
+            runtime_programs.make_program_record(
+                "Depth write and copy", spec, self._reflections()
+            )
 
     def test_cmake_tracks_every_captured_non_shader_source_contract(self) -> None:
         cmake = (self.repository / "indra/llwindow/metal/CMakeLists.txt").read_text(

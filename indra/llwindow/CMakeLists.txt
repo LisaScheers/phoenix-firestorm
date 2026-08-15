@@ -215,7 +215,6 @@ if (DARWIN)
       COMPILE_FLAGS "-fobjc-arc"
       SKIP_PRECOMPILE_HEADERS TRUE
       )
-    add_dependencies(llwindow firestorm_metal_bootstrap_shader_library)
     target_include_directories(llwindow PUBLIC
       "${CMAKE_CURRENT_SOURCE_DIR}/metal"
       )
@@ -228,13 +227,14 @@ if (DARWIN)
           "${FIRESTORM_METAL_BOOTSTRAP_MIN_MACOS}"
       )
     target_link_libraries(llwindow
+      firestorm_metal_artifact_runtime
       "${FIRESTORM_APPKIT_FRAMEWORK}"
       "${FIRESTORM_METAL_FRAMEWORK}"
       "${FIRESTORM_QUARTZCORE_FRAMEWORK}"
       )
 
     # Make the generated resource available to the later newview target.
-    set(FIRESTORM_ACTIVE_METAL_LIBRARY "${FIRESTORM_METAL_LIBRARY}"
+    set(FIRESTORM_ACTIVE_METAL_LIBRARY "${FIRESTORM_METAL_PROGRAM_LIBRARY}"
         PARENT_SCOPE)
     set(FIRESTORM_ACTIVE_METAL_MIN_MACOS
         "${FIRESTORM_METAL_BOOTSTRAP_MIN_MACOS}" PARENT_SCOPE)

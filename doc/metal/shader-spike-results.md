@@ -3,17 +3,17 @@
 Translation feasibility: **accepted on the pinned baseline**. Mandatory family
 semantic parity: **not run**.
 
-All 14 recipes pass the complete build-time path: compiler-linked GLSL objects,
+All 15 recipes pass the complete build-time path: compiler-linked GLSL objects,
 SPIR-V validation and reflection, cross-stage interface validation,
 SPIRV-Cross, Apple's Metal compiler, per-program `.metallib` linking, and real
 `MTLRenderPipelineState` creation under Metal API validation. The set contains
-12 representative runtime contracts, a depth-writing FXAA capability probe,
+13 representative runtime contracts, a depth-writing FXAA capability probe,
 and a separate 16-channel indexed-texture stress case, covering all ten
-required families. The 12 runtime AIR pairs also link in lexical ID then
+required families. The 13 runtime AIR pairs also link in lexical ID then
 vertex/fragment order into one path-free
 `firestorm-declared-programs.metallib`; every runtime PSO is recreated from
 that same library under Metal API validation. A second build root reproduced
-all 102 checked artifacts byte for byte: the prior 98 per-program artifacts
+all 109 checked artifacts byte for byte: the prior 105 per-program artifacts
 plus the combined metallib and path-free JSON/C++ catalog.
 
 | Program | Required family | Recipe | Metal PSO | Metal warnings |
@@ -29,6 +29,7 @@ plus the combined metallib and path-free JSON/C++ catalog.
 | `shadow_alpha_mask` | Shadow alpha mask | runtime | pass | 0 |
 | `shadow_alpha_receiver` | Shadow alpha mask | runtime, 4 channels | pass | 2 |
 | `reflection_probe` | Reflection probe | runtime | pass | 0 |
+| `presentation_copy` | Depth write and copy | runtime | pass | 0 |
 | `depth_copy` | Depth write and copy | runtime | pass | 0 |
 | `fxaa` | SMAA or FXAA | runtime, depthless | pass | 1 |
 | `fxaa_depth_write` | SMAA or FXAA | capability | pass | 1 |
@@ -65,6 +66,11 @@ the remaining warnings accepted renderer behavior.
 - Metal defines `FXAA_NO_DEPTH_WRITE` for the real depthless post target. The
   source-controlled default depth-writing form remains covered by the separate
   capability recipe; it is not presented as a runtime Metal path.
+- The `presentation_copy` runtime recipe uses the real `gCopyProgram` sources
+  with one BGRA8Unorm color target, the position-only vertex contract, and the
+  paired `diffuseMap` texture and sampler. Both stages expose no uniform
+  buffers, so the first artifact-driven presentation draw does not depend on a
+  recursive CPU uniform packer. Its semantic parity remains `not_run`.
 - Every resulting library is tested by constructing the declared Metal render
   pipeline, not merely by packaging AIR into a metallib. Pipeline reflection
   must exactly match stage bindings, buffer sizes and recursive member layouts,
@@ -74,7 +80,7 @@ the remaining warnings accepted renderer behavior.
   validation reject other shapes, strides, or major orders, while native
   reflection proves the remaining matrix data type.
 - Entry-point names are stable program ID plus stage names.
-- The runtime-only artifact has exactly the combined library's 24 expected
+- The runtime-only artifact has exactly the combined library's 26 expected
   entry points. Its immutable C++17 descriptors use the existing renderer
   `PixelFormat`, typed vertex layouts and stage buffer/texture/sampler
   summaries, per-buffer layout digests, and full per-stage reflection digests.
@@ -99,7 +105,7 @@ become canonical.
 ## Scope and remaining gates
 
 This result proves that the selected translation architecture can build and
-link 12 representative Firestorm runtime recipes into structurally valid Metal
+link 13 representative Firestorm runtime recipes into structurally valid Metal
 pipelines. It is not the complete viewer shader inventory and does not prove
 selection integration or rendering equivalence. The mandatory family pass
 conditions still need deterministic draws and readback for orientation,

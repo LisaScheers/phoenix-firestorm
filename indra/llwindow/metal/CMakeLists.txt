@@ -29,6 +29,11 @@ set(FIRESTORM_METAL_BOOTSTRAP_METAL_STANDARD "2.3")
 option(FIRESTORM_BUILD_METAL_PROGRAM_ARTIFACTS
        "Build the representative declared Metal program artifact and focused test"
        OFF)
+if (FIRESTORM_BUILD_ACTIVE_METAL_VIEWER)
+  # A normal variable makes the implication local to this configure. It does
+  # not leave the independent artifact option enabled in the cache later.
+  set(FIRESTORM_BUILD_METAL_PROGRAM_ARTIFACTS ON)
+endif ()
 
 # Nix's SDK compatibility shim is also named xcrun, but it cannot discover
 # Xcode's separately installed Metal toolchain. The system launcher respects
@@ -104,6 +109,12 @@ set_source_files_properties(
 set(FIRESTORM_METAL_BOOTSTRAP_SOURCES
   llmetalbootstrap.h
   llmetalbootstrap-objc.mm
+  llmetalframecontext.h
+  llmetalframecontext-objc.mm
+  llmetalframeslots.cpp
+  llmetalframeslots.h
+  llmetaltransientarena.cpp
+  llmetaltransientarena.h
   main-objc.mm
   "${FIRESTORM_METAL_LIBRARY}"
   )
@@ -816,6 +827,80 @@ if (FIRESTORM_BUILD_METAL_PROGRAM_ARTIFACTS)
     PROPERTIES GENERATED TRUE
     )
 
+  add_library(firestorm_metal_artifact_runtime STATIC EXCLUDE_FROM_ALL
+    llmetalformat.cpp
+    llmetalformat.h
+    llmetalframecontext-objc.mm
+    llmetalframecontext.h
+    llmetalframeslots.cpp
+    llmetalframeslots.h
+    llmetalgeometry.h
+    llmetalgeometry-objc.mm
+    llmetalpipeline.cpp
+    llmetalpipeline.h
+    llmetalpipeline-objc.mm
+    llmetalprogram.cpp
+    llmetalprogram.h
+    llmetalprogram-objc.mm
+    llmetalresource.h
+    llmetalresource-objc.mm
+    llmetalsampler.cpp
+    llmetalsampler.h
+    llmetalsampler-objc.mm
+    llmetalstate.h
+    llmetaltransfer.h
+    llmetaltransfer-objc.mm
+    llmetaltransientarena.cpp
+    llmetaltransientarena.h
+    llmetalvertexlayout.cpp
+    llmetalvertexlayout.h
+    "${FIRESTORM_METAL_PROGRAM_HEADER}"
+    "${FIRESTORM_METAL_PROGRAM_SOURCE}"
+    )
+  add_dependencies(firestorm_metal_artifact_runtime
+                   firestorm_metal_declared_programs)
+  target_include_directories(firestorm_metal_artifact_runtime PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${FIRESTORM_METAL_PROGRAM_CATALOG_DIR}"
+    )
+  target_compile_features(firestorm_metal_artifact_runtime PUBLIC cxx_std_17)
+  target_compile_options(firestorm_metal_artifact_runtime PRIVATE
+    "$<$<COMPILE_LANGUAGE:CXX,OBJCXX>:-Wall>"
+    "$<$<COMPILE_LANGUAGE:CXX,OBJCXX>:-Wextra>"
+    "$<$<COMPILE_LANGUAGE:CXX,OBJCXX>:-Wpedantic>"
+    "$<$<COMPILE_LANGUAGE:CXX,OBJCXX>:-Werror>"
+    "$<$<COMPILE_LANGUAGE:CXX,OBJCXX>:-Wconversion>"
+    "$<$<COMPILE_LANGUAGE:CXX,OBJCXX>:-Wsign-conversion>"
+    "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
+    "$<$<COMPILE_LANGUAGE:CXX,OBJCXX>:-mmacosx-version-min=${FIRESTORM_METAL_BOOTSTRAP_MIN_MACOS}>"
+    )
+  if (NOT FIRESTORM_METAL_BOOTSTRAP_IS_STANDALONE)
+    target_compile_options(firestorm_metal_artifact_runtime PRIVATE
+      -Wno-overriding-option
+      )
+  endif ()
+  target_link_options(firestorm_metal_artifact_runtime INTERFACE
+    "-mmacosx-version-min=${FIRESTORM_METAL_BOOTSTRAP_MIN_MACOS}"
+    )
+  target_link_libraries(firestorm_metal_artifact_runtime PUBLIC
+    "${FIRESTORM_FOUNDATION_FRAMEWORK}"
+    "${FIRESTORM_METAL_FRAMEWORK}"
+    )
+  set_target_properties(firestorm_metal_artifact_runtime PROPERTIES
+    CXX_EXTENSIONS OFF
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
+    OSX_ARCHITECTURES "arm64"
+    XCODE_ATTRIBUTE_CLANG_ENABLE_OBJC_ARC YES
+    XCODE_ATTRIBUTE_MACOSX_DEPLOYMENT_TARGET
+        "${FIRESTORM_METAL_BOOTSTRAP_MIN_MACOS}"
+    )
+
+  if (NOT FIRESTORM_METAL_BOOTSTRAP_IS_STANDALONE)
+    set(FIRESTORM_METAL_PROGRAM_LIBRARY
+        "${FIRESTORM_METAL_PROGRAM_LIBRARY}" PARENT_SCOPE)
+  endif ()
+
   add_executable(firestorm_metal_program_library_test
     ${FIRESTORM_METAL_CPU_TEST_EXCLUDE_FROM_ALL}
     llmetalformat.h
@@ -1083,6 +1168,47 @@ if (FIRESTORM_METAL_BOOTSTRAP_IS_STANDALONE)
         PROPERTIES
           LABELS "metal;gpu;shader-artifact"
           TIMEOUT 120
+        )
+      add_test(
+        NAME firestorm_metal_program_library_digest_rejection
+        COMMAND "${Python3_EXECUTABLE}" -c [=[
+import pathlib
+import subprocess
+import sys
+
+executable = pathlib.Path(sys.argv[1])
+source = pathlib.Path(sys.argv[2])
+corrupted = pathlib.Path(sys.argv[3])
+data = bytearray(source.read_bytes())
+if not data:
+    raise SystemExit("generated metallib is empty")
+data[len(data) // 2] ^= 1
+corrupted.write_bytes(data)
+try:
+    result = subprocess.run(
+        [str(executable), "--metallib", str(corrupted)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode == 0:
+        raise SystemExit("bit-flipped metallib was accepted")
+    if "SHA-256 does not match" not in result.stderr:
+        sys.stderr.write(result.stdout)
+        sys.stderr.write(result.stderr)
+        raise SystemExit("bit-flipped metallib did not fail at digest verification")
+finally:
+    corrupted.unlink(missing_ok=True)
+]=]
+                "$<TARGET_FILE:firestorm_metal_program_library_test>"
+                "${FIRESTORM_METAL_PROGRAM_LIBRARY}"
+                "${CMAKE_CURRENT_BINARY_DIR}/bit-flipped-declared-programs.metallib"
+        )
+      set_tests_properties(
+        firestorm_metal_program_library_digest_rejection
+        PROPERTIES
+          LABELS "metal;shader-artifact;negative"
+          TIMEOUT 30
         )
       add_test(
         NAME firestorm_metal_artifact_vertex_index

@@ -77,6 +77,7 @@ namespace
     LLWindowMacOSX* gMetalBootstrapWindow = nullptr;
     bool gMetalBootstrapQuit = false;
     bool gMetalBootstrapSelfTest = false;
+    bool gMetalBootstrapTerminalFailure = false;
     int gMetalBootstrapExitStatus = EXIT_FAILURE;
     std::chrono::steady_clock::time_point gMetalBootstrapStart;
     enum class MetalBootstrapSelfTestPhase
@@ -143,6 +144,25 @@ namespace
 #endif
 }
 
+#if defined(LL_ACTIVE_METAL_VIEWER)
+extern "C" void reportActiveMetalBootstrapTerminalFailure(const char* message)
+{
+    if (gMetalBootstrapTerminalFailure)
+    {
+        return;
+    }
+
+    gMetalBootstrapTerminalFailure = true;
+    gMetalBootstrapExitStatus = EXIT_FAILURE;
+    gMetalBootstrapQuit = true;
+    std::cerr << "Active Metal viewer terminal failure: "
+              << (message && *message
+                  ? message
+                  : "unknown terminal Metal bootstrap failure")
+              << '\n';
+}
+#endif
+
 void constructViewer()
 {
 #if defined(LL_ACTIVE_METAL_VIEWER)
@@ -199,7 +219,11 @@ bool initViewer()
         std::string error;
         const auto submission =
             gMetalBootstrapWindow->submitMetalBootstrapFrame(error);
-        if (submission != firestorm::metal::FrameSubmission::submitted)
+        if (submission == firestorm::metal::FrameSubmission::renderer_busy)
+        {
+            gMetalBootstrapWindow->requestMetalBootstrapFrame();
+        }
+        else if (submission != firestorm::metal::FrameSubmission::submitted)
         {
             std::cerr << "Initial Metal self-test frame was "
                       << firestorm::metal::toString(submission);
@@ -249,7 +273,9 @@ void handleQuit()
 #if defined(LL_ACTIVE_METAL_VIEWER)
 bool metalBootstrapSelfTestRequested()
 {
-    return gMetalBootstrapSelfTest;
+    // Terminal renderer failures use the self-test's explicit cleanup and
+    // process-status path even in the otherwise interactive bootstrap.
+    return gMetalBootstrapSelfTest || gMetalBootstrapTerminalFailure;
 }
 
 int metalBootstrapSelfTestExitStatus()
@@ -279,6 +305,31 @@ bool pumpMainLoop()
         gMetalBootstrapWindow->getMetalBootstrapSubmittedFrameCount();
     const U64 presented =
         gMetalBootstrapWindow->getMetalBootstrapPresentedFrameCount();
+
+    if (gMetalBootstrapSelfTestPhase ==
+            MetalBootstrapSelfTestPhase::initial_present &&
+        submitted == 0)
+    {
+        std::string error;
+        const auto preparation =
+            gMetalBootstrapWindow->submitMetalBootstrapFrame(error);
+        if (preparation == firestorm::metal::FrameSubmission::failed)
+        {
+            std::cerr << "Initial Metal artifact preparation failed";
+            if (!error.empty())
+            {
+                std::cerr << ": " << error;
+            }
+            std::cerr << '\n';
+            gMetalBootstrapExitStatus = EXIT_FAILURE;
+            gMetalBootstrapQuit = true;
+            return true;
+        }
+        if (preparation != firestorm::metal::FrameSubmission::submitted)
+        {
+            gMetalBootstrapWindow->requestMetalBootstrapFrame();
+        }
+    }
 
     if (gMetalBootstrapSelfTestPhase ==
             MetalBootstrapSelfTestPhase::initial_present &&
@@ -402,6 +453,9 @@ bool pumpMainLoop()
         U32 drawable_height = 0;
         gMetalBootstrapWindow->getMetalBootstrapDrawableSize(
             drawable_width, drawable_height);
+        std::string frame_error;
+        gMetalBootstrapWindow->waitForMetalBootstrapFrame(
+            std::chrono::milliseconds(0), frame_error);
         std::cerr << "Active Metal viewer self-test timed out during "
                   << phase << "; submitted="
                   << gMetalBootstrapWindow->getMetalBootstrapSubmittedFrameCount()
@@ -413,7 +467,15 @@ bool pumpMainLoop()
                   << gMetalDeferredPresented << ", drawable="
                   << gMetalDrawableWidthBeforeResize << "x"
                   << gMetalDrawableHeightBeforeResize << "->"
-                  << drawable_width << "x" << drawable_height << '\n';
+                  << drawable_width << "x" << drawable_height;
+        if (!frame_error.empty())
+        {
+            std::cerr << "; Metal status: " << frame_error;
+        }
+        std::cerr << '\n'
+                  << "Current Metal capability/preparation state:\n"
+                  << gMetalBootstrapWindow->getMetalBootstrapCapabilityReport()
+                  << '\n';
         gMetalBootstrapExitStatus = EXIT_FAILURE;
         gMetalBootstrapQuit = true;
         return true;
@@ -596,7 +658,9 @@ int main( int argc, char **argv )
 #endif
     const int app_status = createNSApp(argc, (const char**)argv);
 #if defined(LL_ACTIVE_METAL_VIEWER)
-    return gMetalBootstrapSelfTest ? gMetalBootstrapExitStatus : app_status;
+    return gMetalBootstrapSelfTest || gMetalBootstrapTerminalFailure
+        ? gMetalBootstrapExitStatus
+        : app_status;
 #else
     return app_status;
 #endif

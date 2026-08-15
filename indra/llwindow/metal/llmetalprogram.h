@@ -135,6 +135,9 @@ bool validateMetalProgramCatalogMetadata(const MetalProgramCatalogMetadata& meta
 bool validateMetalProgramDescriptors(MetalArrayView<MetalProgramDescriptor> programs,
                                      std::string* error = nullptr);
 
+/** Returns the generated catalog that owns the bundled library identity. */
+const MetalProgramCatalogMetadata& metalProgramCatalog() noexcept;
+
 using MetalProgramLibraryHandle = void*;
 
 /**

@@ -16,11 +16,17 @@
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
 
+#include <CommonCrypto/CommonDigest.h>
+
 #include "firestorm-declared-programs.h"
 #include "llmetalprogram.h"
 
+#include <cstdlib>
+#include <cstring>
+#include <limits>
 #include <memory>
 #include <set>
+#include <sstream>
 #include <string>
 
 namespace firestorm::metal
@@ -45,6 +51,31 @@ NSString* toNSString(std::string_view value)
                                  encoding:NSUTF8StringEncoding];
 }
 
+std::string sha256(const void* bytes, std::size_t size)
+{
+    if (bytes == nullptr || size == 0 ||
+        size > std::numeric_limits<CC_LONG>::max())
+    {
+        return {};
+    }
+
+    unsigned char digest[CC_SHA256_DIGEST_LENGTH]{};
+    if (CC_SHA256(bytes, static_cast<CC_LONG>(size), digest) == nullptr)
+    {
+        return {};
+    }
+
+    std::ostringstream result;
+    result << std::hex;
+    for (unsigned char byte : digest)
+    {
+        result.width(2);
+        result.fill('0');
+        result << static_cast<unsigned>(byte);
+    }
+    return result.str();
+}
+
 } // namespace
 
 struct MetalProgramLibrary::Impl
@@ -54,6 +85,11 @@ struct MetalProgramLibrary::Impl
     NSMutableArray<id<MTLFunction>>*      functions = nil;
     std::string                           error;
 };
+
+const MetalProgramCatalogMetadata& metalProgramCatalog() noexcept
+{
+    return declaredMetalProgramCatalog();
+}
 
 MetalProgramLibrary::MetalProgramLibrary(MetalDeviceHandle device,
                                          const std::string& metallib_path)
@@ -82,11 +118,56 @@ MetalProgramLibrary::MetalProgramLibrary(MetalDeviceHandle device,
         return;
     }
 
+    NSError* read_error = nil;
+    NSData* library_bytes = [NSData dataWithContentsOfFile:native_path
+                                                   options:NSDataReadingUncached
+                                                     error:&read_error];
+    if (library_bytes == nil)
+    {
+        mImpl->error = "cannot read declared program metallib for verification: " +
+                       toString(read_error.localizedDescription);
+        return;
+    }
+    if (library_bytes.length == 0)
+    {
+        mImpl->error = "declared program metallib is empty";
+        return;
+    }
+
+    void* exact_bytes = std::malloc(library_bytes.length);
+    if (exact_bytes == nullptr)
+    {
+        mImpl->error = "cannot allocate verified declared program metallib bytes";
+        return;
+    }
+    std::memcpy(exact_bytes, library_bytes.bytes, library_bytes.length);
+
+    const std::string actual_sha256 = sha256(exact_bytes, library_bytes.length);
+    const std::string expected_sha256(declaredMetalProgramCatalog().metallibSha256);
+    if (actual_sha256.empty() || actual_sha256 != expected_sha256)
+    {
+        std::free(exact_bytes);
+        mImpl->error = "declared program metallib SHA-256 does not match the generated catalog";
+        return;
+    }
+
     id<MTLDevice> native_device = (__bridge id<MTLDevice>)device;
+    dispatch_data_t verified_data = dispatch_data_create(
+        exact_bytes,
+        library_bytes.length,
+        dispatch_get_global_queue(QOS_CLASS_UTILITY, 0),
+        ^{
+            std::free(exact_bytes);
+        });
+    if (verified_data == nil)
+    {
+        std::free(exact_bytes);
+        mImpl->error = "cannot create immutable verified metallib data";
+        return;
+    }
     NSError* load_error = nil;
-    id<MTLLibrary> library = [native_device
-        newLibraryWithURL:[NSURL fileURLWithPath:native_path]
-                    error:&load_error];
+    id<MTLLibrary> library = [native_device newLibraryWithData:verified_data
+                                                        error:&load_error];
     if (library == nil)
     {
         mImpl->error = "cannot load declared program metallib: " +

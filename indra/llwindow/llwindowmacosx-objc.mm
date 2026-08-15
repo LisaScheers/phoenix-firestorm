@@ -33,6 +33,9 @@
 #include "llopenglview-objc.h"
 #include "llwindowmacosx-objc.h"
 #include "llappdelegate-objc.h"
+#if defined(LL_ACTIVE_METAL_VIEWER)
+#include "llmetalprogram.h"
+#endif
 
 /*
  * These functions are broken out into a separate file because the
@@ -290,9 +293,22 @@ bool resizeCocoaMetalWindow(
 
 std::string getBundledMetalLibraryPath()
 {
-    NSURL *url = [[NSBundle mainBundle] URLForResource:@"bootstrap"
-                                         withExtension:@"metallib"];
-    if (!url.fileSystemRepresentation)
+    const std::string_view resource =
+        firestorm::metal::metalProgramCatalog().libraryResource;
+    NSString *filename = [[NSString alloc]
+        initWithBytes:resource.data()
+               length:resource.size()
+             encoding:NSUTF8StringEncoding];
+    if (!filename)
+    {
+        return {};
+    }
+
+    NSString *extension = filename.pathExtension;
+    NSString *basename = filename.stringByDeletingPathExtension;
+    NSURL *url = [[NSBundle mainBundle] URLForResource:basename
+                                         withExtension:extension];
+    if (!url.isFileURL || !url.fileSystemRepresentation)
     {
         return {};
     }
