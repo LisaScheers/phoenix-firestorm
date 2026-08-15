@@ -937,6 +937,14 @@ else (OPENSIM)
         )
 endif (OPENSIM)
 
+if (ENABLE_OPENGL_ORACLE_CAPTURE)
+  # This source is compiled independently by the viewer and LoginPage tests.
+  set_property(SOURCE llviewernetwork.cpp APPEND PROPERTY
+    COMPILE_DEFINITIONS LL_OPENGL_ORACLE_CAPTURE=1)
+  set_property(SOURCE tests/llviewernetwork_test.cpp APPEND PROPERTY
+    COMPILE_DEFINITIONS LL_VIEWERNETWORK_ORACLE_CAPTURE_ENABLED=1)
+endif ()
+
 set(VIEWER_BINARY_NAME "firestorm-bin" CACHE STRING
     "The name of the viewer executable to create.")
 
@@ -3205,5 +3213,71 @@ if (LL_TESTS)
 
 
 endif (LL_TESTS)
+
+option(FIRESTORM_BUILD_OPENGL_ORACLE_LOGIN_TEST
+  "Build the developer-only OpenGL oracle LoginPage routing test" OFF)
+
+if (FIRESTORM_BUILD_OPENGL_ORACLE_LOGIN_TEST AND NOT LL_TESTS)
+  include(LLAddBuildTest)
+
+  add_executable(INTEGRATION_TEST_llviewernetwork_oracle_capture EXCLUDE_FROM_ALL
+    tests/llviewernetwork_test.cpp
+    ${CMAKE_SOURCE_DIR}/test/test.cpp
+    ${CMAKE_SOURCE_DIR}/test/lltut.cpp
+    llviewernetwork.cpp
+    )
+  set_target_properties(INTEGRATION_TEST_llviewernetwork_oracle_capture
+    PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${EXE_STAGING_DIR}"
+    COMPILE_DEFINITIONS "LL_TEST=llviewernetwork;LL_TEST_llviewernetwork"
+    )
+  set_property(TARGET INTEGRATION_TEST_llviewernetwork_oracle_capture
+    PROPERTY LL_VIEWERNETWORK_ORACLE_CAPTURE_TEST TRUE)
+  set_property(SOURCE tests/llviewernetwork_test.cpp APPEND PROPERTY
+    COMPILE_DEFINITIONS
+    "$<$<BOOL:$<TARGET_PROPERTY:LL_VIEWERNETWORK_ORACLE_CAPTURE_TEST>>:LL_VIEWERNETWORK_ORACLE_CAPTURE_TEST=1>")
+  target_include_directories(INTEGRATION_TEST_llviewernetwork_oracle_capture PRIVATE
+    ${CMAKE_CURRENT_BINARY_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/test
+    ${CMAKE_SOURCE_DIR}/llui
+    ${LIBS_OPEN_DIR}/test
+    )
+  target_link_libraries(INTEGRATION_TEST_llviewernetwork_oracle_capture
+    llfilesystem
+    llmath
+    llcommon
+    llmessage
+    llcorehttp
+    llxml
+    llplugin
+    llappearance
+    lllogin
+    llprimitive
+    )
+
+  if (DARWIN)
+    set_target_properties(INTEGRATION_TEST_llviewernetwork_oracle_capture
+      PROPERTIES
+      XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY "-"
+      BUILD_WITH_INSTALL_RPATH 1
+      INSTALL_RPATH "@executable_path/Resources"
+      )
+  endif ()
+
+  SET_TEST_PATH(OPENGL_ORACLE_LOGIN_TEST_PATH)
+  LL_TEST_COMMAND(OPENGL_ORACLE_LOGIN_TEST_COMMAND
+    "${OPENGL_ORACLE_LOGIN_TEST_PATH}"
+    "$<TARGET_FILE:INTEGRATION_TEST_llviewernetwork_oracle_capture>"
+    "--group=LLViewerNetworkLoginPageCapture"
+    "--sourcedir=${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+  add_custom_target(llviewernetwork_oracle_capture_tests
+    COMMAND ${OPENGL_ORACLE_LOGIN_TEST_COMMAND}
+    DEPENDS INTEGRATION_TEST_llviewernetwork_oracle_capture
+    WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    VERBATIM
+    )
+endif ()
 
 check_message_template(${VIEWER_BINARY_NAME})

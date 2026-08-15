@@ -51,6 +51,17 @@ set(CMAKE_XCODE_GENERATE_TOP_LEVEL_PROJECT_ONLY ON)
 include(Variables)
 include(BuildVersion)
 
+option(ENABLE_OPENGL_ORACLE_CAPTURE
+    "Enable the developer-only LoginPage route used by the OpenGL oracle (macOS arm64 runtime only)" OFF)
+if (ENABLE_OPENGL_ORACLE_CAPTURE)
+  if (NOT DARWIN)
+    message(FATAL_ERROR "OpenGL oracle capture is supported only in macOS builds")
+  endif ()
+  if (NOT "arm64" IN_LIST CMAKE_OSX_ARCHITECTURES)
+    message(FATAL_ERROR "OpenGL oracle capture requires an arm64 macOS build slice")
+  endif ()
+endif ()
+
 if (NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release CACHE STRING
       "Build type.  One of: Release RelWithDebInfo" FORCE)

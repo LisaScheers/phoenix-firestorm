@@ -46,6 +46,9 @@ class LLTrans
 {
 public:
     static std::string getString(std::string_view xml_desc, const LLStringUtil::format_map_t& args, bool def_string = false);
+#ifdef LL_VIEWERNETWORK_ORACLE_CAPTURE_TEST
+    static void setDefaultArg(const std::string& name, const std::string& value);
+#endif
 };
 
 std::string LLTrans::getString(std::string_view xml_desc, const LLStringUtil::format_map_t& args, bool def_string)
@@ -62,6 +65,12 @@ std::string LLTrans::getString(std::string_view xml_desc, const LLStringUtil::fo
 
     return grid_label;
 }
+
+#ifdef LL_VIEWERNETWORK_ORACLE_CAPTURE_TEST
+void LLTrans::setDefaultArg(const std::string&, const std::string&)
+{
+}
+#endif
 
 //----------------------------------------------------------------------------
 // Mock objects for the dependencies of the code we're testing
@@ -193,6 +202,15 @@ namespace tut
     typedef viewerNetworkTestFactory::object viewerNetworkTestObject;
     tut::viewerNetworkTestFactory tut_test("LLViewerNetwork");
 
+    struct viewerNetworkLoginPageCaptureTest : viewerNetworkTest
+    {
+    };
+
+    typedef test_group<viewerNetworkLoginPageCaptureTest> viewerNetworkLoginPageCaptureTestFactory;
+    typedef viewerNetworkLoginPageCaptureTestFactory::object viewerNetworkLoginPageCaptureTestObject;
+    tut::viewerNetworkLoginPageCaptureTestFactory login_page_capture_test(
+        "LLViewerNetworkLoginPageCapture");
+
     // ---------------------------------------------------------------------------------------
     // Test functions
     // ---------------------------------------------------------------------------------------
@@ -236,7 +254,7 @@ namespace tut
                       std::string("https://secondlife.com/helpers/"));
         ensure_equals("Agni login page",
                       LLGridManager::getInstance()->getLoginPage("util.agni.lindenlab.com"),
-                      std::string("https://viewer-splash-v2.secondlife.com/"));
+                      std::string("https://phoenixviewer.com/app/loginV3/"));
         ensure("Agni is a system grid",
                LLGridManager::getInstance()->isSystemGrid("util.agni.lindenlab.com"));
 
@@ -261,7 +279,7 @@ namespace tut
                       std::string("https://secondlife.aditi.lindenlab.com/helpers/"));
         ensure_equals("Aditi login page",
                       LLGridManager::getInstance()->getLoginPage("util.aditi.lindenlab.com"),
-                      std::string("https://viewer-splash-v2.secondlife.com/"));
+                      std::string("https://phoenixviewer.com/app/loginV3/"));
         ensure("Aditi is a system grid",
                LLGridManager::getInstance()->isSystemGrid("util.aditi.lindenlab.com"));
     }
@@ -309,7 +327,7 @@ namespace tut
                       std::string("https://secondlife.com/helpers/"));
         ensure_equals("Agni login page",
                       LLGridManager::getInstance()->getLoginPage("util.agni.lindenlab.com"),
-                      std::string("https://viewer-splash-v2.secondlife.com/"));
+                      std::string("https://phoenixviewer.com/app/loginV3/"));
         ensure("Agni is a system grid",
                LLGridManager::getInstance()->isSystemGrid("util.agni.lindenlab.com"));
 
@@ -333,7 +351,7 @@ namespace tut
                       std::string("https://secondlife.aditi.lindenlab.com/helpers/"));
         ensure_equals("Aditi login page",
                       LLGridManager::getInstance()->getLoginPage("util.aditi.lindenlab.com"),
-                      std::string("https://viewer-splash-v2.secondlife.com/"));
+                      std::string("https://phoenixviewer.com/app/loginV3/"));
         ensure("Aditi is a system grid",
                LLGridManager::getInstance()->isSystemGrid("util.aditi.lindenlab.com"));
 
@@ -422,11 +440,11 @@ namespace tut
                       std::string("https://secondlife.com/helpers/"));
         ensure_equals("getLoginPage",
                       LLGridManager::getInstance()->getLoginPage(),
-                      std::string("https://viewer-splash-v2.secondlife.com/"));
+                      std::string("https://phoenixviewer.com/app/loginV3/"));
         ensure_equals("update url base for Agni", // relies on agni being the default
                       std::string("https://update.secondlife.com/update"),
                       LLGridManager::getInstance()->getUpdateServiceURL());
-        ensure("Is Agni a production grid", LLGridManager::getInstance()->isInProductionGrid());
+        ensure("Is Agni a production grid", LLGridManager::getInstance()->isInSLMain());
         std::vector<std::string> uris;
         LLGridManager::getInstance()->getLoginURIs(uris);
         ensure_equals("getLoginURIs size", 1, uris.size());
@@ -444,7 +462,44 @@ namespace tut
         ensure("alternative grid is not a system grid",
                !LLGridManager::getInstance()->isSystemGrid());
         ensure("alternative grid is not a production grid",
-               !LLGridManager::getInstance()->isInProductionGrid());
+               !LLGridManager::getInstance()->isInSLMain());
+    }
+
+    template<> template<>
+    void viewerNetworkLoginPageCaptureTestObject::test<1>()
+    {
+        LLGridManager *manager = LLGridManager::getInstance();
+        manager->initialize(TEST_FILENAME);
+        manager->setGridChoice("util.agni.lindenlab.com");
+
+        const std::string grid_login_page =
+            manager->getLoginPage("util.agni.lindenlab.com");
+        ensure("grid login page is available", !grid_login_page.empty());
+        ensure_equals("empty LoginPage falls back to the grid page",
+                      manager->getLoginPage(), grid_login_page);
+    }
+
+    template<> template<>
+    void viewerNetworkLoginPageCaptureTestObject::test<2>()
+    {
+        LLGridManager *manager = LLGridManager::getInstance();
+        manager->initialize(TEST_FILENAME);
+        manager->setGridChoice("util.agni.lindenlab.com");
+
+        const std::string grid_login_page =
+            manager->getLoginPage("util.agni.lindenlab.com");
+        gLoginPage = "file:///tmp/firestorm-open-gl-oracle-login.html";
+
+        ensure_equals("named getter keeps the grid login page",
+                      manager->getLoginPage("util.agni.lindenlab.com"),
+                      grid_login_page);
+#ifdef LL_VIEWERNETWORK_ORACLE_CAPTURE_ENABLED
+        ensure_equals("OpenGL oracle capture uses LoginPage",
+                      manager->getLoginPage(), gLoginPage);
+#else
+        ensure_equals("normal builds ignore LoginPage",
+                      manager->getLoginPage(), grid_login_page);
+#endif
     }
 
 }
