@@ -283,6 +283,39 @@ nix shell nixpkgs#cmake -c \
     --output-on-failure
 ```
 
+### Opt-in FXAA semantic oracle
+
+The standalone artifact build can also register
+`firestorm_metal_fxaa_semantic`. Supply
+`-DFIRESTORM_METAL_OPENGL_ORACLE_WORKTREE=/absolute/path/to/metal-opengl-oracle`
+with `-DBUILD_TESTING=ON` and `-DFIRESTORM_BUILD_METAL_PROGRAM_ARTIFACTS=ON`.
+The worktree must be clean, detached, and exactly at
+`1e8fd5491bde91fe6daca7d78f217a4d46084a5b`; it is an OpenGL oracle only and
+is never linked into the application. Build and run the opt-in target with:
+
+```sh
+cmake --build .build/metal-programs --target firestorm_metal_fxaa_semantic_test
+ctest --test-dir .build/metal-programs \
+  -R '^firestorm_metal_fxaa_semantic$' --output-on-failure
+```
+
+The test loads the four declared FXAA variants from the one combined metallib:
+presets 12, 23, 28, and 39. It compiles the pinned CGL source path against the
+same 128x64 asymmetric RGBL atlas and uses the source renderer's GL texture
+rows for both API uploads. CGL's bottom-up readback is row-canonicalized;
+Metal readback stays raw and has no output flip. It checks each CGL result for
+eight exact repeats, allows no more than one absolute code value per channel
+between CGL and Metal, and currently records bit-exact output. It also records
+the direct cull contract: source CCW/back-cull is Metal CCW/back-cull.
+SPIRV-Cross receives `--fixup-clipspace` for vertices only and no
+`--flip-vert-y` transform.
+
+This is an offscreen FXAA shader-level proof only. It is not a production
+texture-origin ABI or chained render-target policy, and it leaves SMAA,
+viewer/login, and full semantic parity `not_run`. It does not alter the frozen
+artifact inventory: 30 recipes, 28 bundled programs, 56 entry points, and 214
+comparison artifacts.
+
 The program-library test validates the ordinary C++ catalog, exact IDs and key
 vertex contracts, explicit-path strong ownership, lookup, and creation of all
 28 declared PSOs from the same combined metallib under Metal API validation.

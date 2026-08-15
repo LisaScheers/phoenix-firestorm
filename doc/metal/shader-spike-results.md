@@ -1,7 +1,8 @@
 # Shader spike result
 
-Translation feasibility: **accepted on the pinned baseline**. Mandatory family
-semantic parity: **not run**.
+Translation feasibility: **accepted on the pinned baseline**. The narrow,
+source-pinned offscreen FXAA semantic gate: **accepted**. Mandatory family,
+viewer/login, and full renderer semantic parity: **not run**.
 
 All 30 recipes pass the complete build-time path: compiler-linked GLSL objects,
 SPIR-V validation and reflection, cross-stage interface validation,
@@ -16,6 +17,40 @@ link in lexical ID then vertex/fragment order into one path-free
 that same library under Metal API validation. A second build root reproduced
 all 214 checked artifacts byte for byte: the 210 per-program artifacts plus the
 combined metallib and path-free JSON/C++ catalog.
+
+## Narrow FXAA source-pinned semantic gate
+
+The opt-in `firestorm_metal_fxaa_semantic` CTest is a source-backed CGL versus
+combined-Metal comparison. It requires a clean detached OpenGL oracle worktree
+at `1e8fd5491bde91fe6daca7d78f217a4d46084a5b`, verifies the generated objects
+against that baseline, and renders the four `gFXAAProgram` selections:
+`fxaa_low` preset 12, `fxaa_medium` preset 23, `fxaa_high` preset 28, and
+`fxaa` preset 39. Metal executes the same declared functions from the combined
+`firestorm-declared-programs.metallib`, under Metal API and GPU validation.
+
+The fixture is a deterministic asymmetric 128x64 RGBL atlas with distinct
+corner colors, high- and low-contrast horizontal, vertical, diagonal,
+staircase, and checker edges. Its L channel follows the viewer's source RGBL
+luma contract. The test derives GL-source texture rows once and uploads the
+same color bytes to CGL and Metal; CGL also receives the source-backed depth
+input. CGL readback is bottom-up and is row-canonicalized for the comparison;
+Metal readback remains raw and receives no output flip. The source CCW
+full-screen triangle with back-face culling maps to
+`MTLWindingCounterClockwise` with back-face culling in Metal. Vertex translation
+uses `--fixup-clipspace` only, with no `--flip-vert-y` transform.
+
+Each CGL result is repeated eight times with exact self-variance checking. The
+cross-API comparator permits an absolute difference of at most one per
+channel, while the currently recorded four-variant run was bit exact. Every
+variant changed 2,714 designed pixels and the four quality outputs had distinct
+digests. This provides an executable semantic check for that one offscreen FXAA
+path; it does not change the existing feasibility totals of 30 recipes, 28
+bundled runtime programs, 56 combined-library entry points, or 214
+reproducibility comparison artifacts.
+
+This test deliberately does not establish a production texture-origin ABI or
+chained render-target policy. It does not prove SMAA, a full viewer or login
+flow, or full semantic parity; those remain `not_run`.
 
 | Program | Required family | Recipe | Metal PSO | Metal warnings |
 | --- | --- | --- | ---: | ---: |
@@ -140,18 +175,20 @@ This result proves that the selected translation architecture can build and
 link 28 representative Firestorm runtime recipes and variants into
 structurally valid Metal pipelines. It also proves exact typed catalog lookup
 for the four source-backed FXAA quality indices and all 12 source-backed SMAA
-pass/quality selections. It is not the complete viewer
-shader inventory and does not prove renderer selection integration or
-rendering equivalence. The mandatory family pass
-conditions still need deterministic draws and readback for orientation,
-blending, G-buffer channels, terrain, shadows, probe faces and mips, depth
-reconstruction, and final gamma. Avatar CPU/runtime layout parity is also still
-open; Metal-side reflection alone does not close it.
+pass/quality selections, plus the narrow offscreen FXAA comparison described
+above. It is not the complete viewer shader inventory and does not prove
+renderer selection integration or rendering equivalence. SMAA and the other
+mandatory family pass conditions still need deterministic draws and readback
+for orientation, blending, G-buffer channels, terrain, shadows, probe faces
+and mips, depth reconstruction, and final gamma. Viewer and login flows remain
+`not_run`. Avatar CPU/runtime layout parity is also still open; Metal-side
+reflection alone does not close it.
 
-The pinned OpenGL oracle corpus remains intentionally incomplete until its
-fixtures, test identity, capture instrumentation, repeated screenshots,
-timings, memory measurements, and self-variance are available. No visual or
-performance parity claim is made here.
+The separate source-pinned FXAA CTest exists while the pinned OpenGL oracle
+corpus itself remains intentionally incomplete. Further fixtures, test
+identity, capture instrumentation, repeated screenshots, timings, memory
+measurements, and self-variance are still needed. No visual or performance
+parity claim is made here beyond the narrow FXAA check.
 
 ## Reproduction record
 

@@ -29,6 +29,8 @@ set(FIRESTORM_METAL_BOOTSTRAP_METAL_STANDARD "2.3")
 option(FIRESTORM_BUILD_METAL_PROGRAM_ARTIFACTS
        "Build the representative declared Metal program artifact and focused test"
        OFF)
+set(FIRESTORM_METAL_OPENGL_ORACLE_WORKTREE "" CACHE PATH
+    "Pinned detached Firestorm worktree used only by the opt-in OpenGL semantic oracle")
 if (FIRESTORM_BUILD_ACTIVE_METAL_VIEWER)
   # A normal variable makes the implication local to this configure. It does
   # not leave the independent artifact option enabled in the cache later.
@@ -244,6 +246,7 @@ set_target_properties(firestorm_metal_bootstrap PROPERTIES
   MACOSX_BUNDLE_SHORT_VERSION_STRING "1.0.0"
   OUTPUT_NAME "firestorm-metal-bootstrap"
   OSX_ARCHITECTURES "arm64"
+  XCODE_ATTRIBUTE_CLANG_ENABLE_OBJC_ARC YES
   XCODE_ATTRIBUTE_MACOSX_DEPLOYMENT_TARGET
       "${FIRESTORM_METAL_BOOTSTRAP_MIN_MACOS}"
   XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER
@@ -1224,6 +1227,180 @@ finally:
           LABELS "metal;gpu;shader-artifact"
           TIMEOUT 120
         )
+      if (NOT FIRESTORM_METAL_OPENGL_ORACLE_WORKTREE STREQUAL "")
+        if (NOT IS_DIRECTORY "${FIRESTORM_METAL_OPENGL_ORACLE_WORKTREE}")
+          message(FATAL_ERROR
+                  "FIRESTORM_METAL_OPENGL_ORACLE_WORKTREE is not a directory: ${FIRESTORM_METAL_OPENGL_ORACLE_WORKTREE}")
+        endif ()
+
+        get_filename_component(FIRESTORM_METAL_OPENGL_ORACLE_WORKTREE_REALPATH
+                               "${FIRESTORM_METAL_OPENGL_ORACLE_WORKTREE}"
+                               REALPATH
+                               BASE_DIR "${CMAKE_CURRENT_BINARY_DIR}")
+        set(FIRESTORM_METAL_OPENGL_ORACLE_WORKTREE
+            "${FIRESTORM_METAL_OPENGL_ORACLE_WORKTREE_REALPATH}"
+            CACHE PATH
+            "Pinned detached Firestorm worktree used only by the opt-in OpenGL semantic oracle"
+            FORCE)
+
+        find_package(Git REQUIRED)
+        string(REPLACE "\\" "\\\\" FIRESTORM_METAL_ORACLE_GIT_EXECUTABLE_ESCAPED
+                       "${GIT_EXECUTABLE}")
+        string(REPLACE "\"" "\\\"" FIRESTORM_METAL_ORACLE_GIT_EXECUTABLE_ESCAPED
+                       "${FIRESTORM_METAL_ORACLE_GIT_EXECUTABLE_ESCAPED}")
+        set(FIRESTORM_METAL_FXAA_SEMANTIC_CONFIG_DIR
+            "${CMAKE_CURRENT_BINARY_DIR}/fxaa-semantic-config")
+        set(FIRESTORM_METAL_FXAA_SEMANTIC_CONFIG_HEADER
+            "${FIRESTORM_METAL_FXAA_SEMANTIC_CONFIG_DIR}/firestorm_metal_fxaa_semantic_config.h")
+        file(MAKE_DIRECTORY "${FIRESTORM_METAL_FXAA_SEMANTIC_CONFIG_DIR}")
+        file(GENERATE
+          OUTPUT "${FIRESTORM_METAL_FXAA_SEMANTIC_CONFIG_HEADER}"
+          CONTENT
+            "#pragma once\n\n#define FIRESTORM_METAL_ORACLE_GIT_EXECUTABLE \"${FIRESTORM_METAL_ORACLE_GIT_EXECUTABLE_ESCAPED}\"\n"
+          )
+        execute_process(
+          COMMAND "${GIT_EXECUTABLE}" --no-optional-locks -C
+                  "${FIRESTORM_METAL_OPENGL_ORACLE_WORKTREE}"
+                  rev-parse --show-toplevel
+          RESULT_VARIABLE FIRESTORM_METAL_OPENGL_ORACLE_ROOT_RESULT
+          OUTPUT_VARIABLE FIRESTORM_METAL_OPENGL_ORACLE_ROOT
+          ERROR_VARIABLE FIRESTORM_METAL_OPENGL_ORACLE_ROOT_ERROR
+          OUTPUT_STRIP_TRAILING_WHITESPACE
+          )
+        if (NOT FIRESTORM_METAL_OPENGL_ORACLE_ROOT_RESULT EQUAL 0)
+          message(FATAL_ERROR
+                  "FIRESTORM_METAL_OPENGL_ORACLE_WORKTREE is not a Git worktree: ${FIRESTORM_METAL_OPENGL_ORACLE_ROOT_ERROR}")
+        endif ()
+        get_filename_component(FIRESTORM_METAL_OPENGL_ORACLE_ROOT_REALPATH
+                               "${FIRESTORM_METAL_OPENGL_ORACLE_ROOT}"
+                               REALPATH)
+        if (NOT FIRESTORM_METAL_OPENGL_ORACLE_ROOT_REALPATH STREQUAL
+            FIRESTORM_METAL_OPENGL_ORACLE_WORKTREE)
+          message(FATAL_ERROR
+                  "FIRESTORM_METAL_OPENGL_ORACLE_WORKTREE must name the worktree root: ${FIRESTORM_METAL_OPENGL_ORACLE_ROOT_REALPATH}")
+        endif ()
+
+        execute_process(
+          COMMAND "${GIT_EXECUTABLE}" --no-optional-locks -C
+                  "${FIRESTORM_METAL_OPENGL_ORACLE_WORKTREE}"
+                  rev-parse --verify "HEAD^{commit}"
+          RESULT_VARIABLE FIRESTORM_METAL_OPENGL_ORACLE_HEAD_RESULT
+          OUTPUT_VARIABLE FIRESTORM_METAL_OPENGL_ORACLE_HEAD
+          ERROR_VARIABLE FIRESTORM_METAL_OPENGL_ORACLE_HEAD_ERROR
+          OUTPUT_STRIP_TRAILING_WHITESPACE
+          )
+        if (NOT FIRESTORM_METAL_OPENGL_ORACLE_HEAD_RESULT EQUAL 0)
+          message(FATAL_ERROR
+                  "Could not read FIRESTORM_METAL_OPENGL_ORACLE_WORKTREE HEAD: ${FIRESTORM_METAL_OPENGL_ORACLE_HEAD_ERROR}")
+        endif ()
+        if (NOT FIRESTORM_METAL_OPENGL_ORACLE_HEAD STREQUAL
+            "1e8fd5491bde91fe6daca7d78f217a4d46084a5b")
+          message(FATAL_ERROR
+                  "FIRESTORM_METAL_OPENGL_ORACLE_WORKTREE must be at 1e8fd5491bde91fe6daca7d78f217a4d46084a5b, found ${FIRESTORM_METAL_OPENGL_ORACLE_HEAD}")
+        endif ()
+
+        execute_process(
+          COMMAND "${GIT_EXECUTABLE}" --no-optional-locks -C
+                  "${FIRESTORM_METAL_OPENGL_ORACLE_WORKTREE}"
+                  symbolic-ref --quiet HEAD
+          RESULT_VARIABLE FIRESTORM_METAL_OPENGL_ORACLE_SYMBOLIC_HEAD_RESULT
+          OUTPUT_QUIET
+          ERROR_QUIET
+          )
+        if (FIRESTORM_METAL_OPENGL_ORACLE_SYMBOLIC_HEAD_RESULT EQUAL 0)
+          message(FATAL_ERROR
+                  "FIRESTORM_METAL_OPENGL_ORACLE_WORKTREE must have a detached HEAD")
+        elseif (NOT FIRESTORM_METAL_OPENGL_ORACLE_SYMBOLIC_HEAD_RESULT EQUAL 1)
+          message(FATAL_ERROR
+                  "Could not verify detached HEAD in FIRESTORM_METAL_OPENGL_ORACLE_WORKTREE")
+        endif ()
+
+        execute_process(
+          COMMAND "${GIT_EXECUTABLE}" --no-optional-locks -C
+                  "${FIRESTORM_METAL_OPENGL_ORACLE_WORKTREE}"
+                  status --porcelain=v1
+          RESULT_VARIABLE FIRESTORM_METAL_OPENGL_ORACLE_STATUS_RESULT
+          OUTPUT_VARIABLE FIRESTORM_METAL_OPENGL_ORACLE_STATUS
+          ERROR_VARIABLE FIRESTORM_METAL_OPENGL_ORACLE_STATUS_ERROR
+          OUTPUT_STRIP_TRAILING_WHITESPACE
+          )
+        if (NOT FIRESTORM_METAL_OPENGL_ORACLE_STATUS_RESULT EQUAL 0)
+          message(FATAL_ERROR
+                  "Could not inspect FIRESTORM_METAL_OPENGL_ORACLE_WORKTREE: ${FIRESTORM_METAL_OPENGL_ORACLE_STATUS_ERROR}")
+        endif ()
+        if (NOT FIRESTORM_METAL_OPENGL_ORACLE_STATUS STREQUAL "")
+          message(FATAL_ERROR
+                  "FIRESTORM_METAL_OPENGL_ORACLE_WORKTREE has changes:\n${FIRESTORM_METAL_OPENGL_ORACLE_STATUS}")
+        endif ()
+
+        find_library(FIRESTORM_OPENGL_FRAMEWORK OpenGL)
+        if (NOT FIRESTORM_OPENGL_FRAMEWORK)
+          message(FATAL_ERROR
+                  "The opt-in FXAA semantic oracle requires OpenGL.framework")
+        endif ()
+
+        set_source_files_properties(
+          fxaa-semantic-test-objc.mm
+          PROPERTIES SKIP_PRECOMPILE_HEADERS TRUE
+          )
+        add_executable(firestorm_metal_fxaa_semantic_test
+          fxaa-semantic-test-objc.mm
+          )
+        target_compile_features(firestorm_metal_fxaa_semantic_test PRIVATE
+                                cxx_std_17)
+        target_compile_options(firestorm_metal_fxaa_semantic_test PRIVATE
+          "$<$<COMPILE_LANGUAGE:OBJCXX>:-Wall>"
+          "$<$<COMPILE_LANGUAGE:OBJCXX>:-Wextra>"
+          "$<$<COMPILE_LANGUAGE:OBJCXX>:-Wpedantic>"
+          "$<$<COMPILE_LANGUAGE:OBJCXX>:-Werror>"
+          "$<$<COMPILE_LANGUAGE:OBJCXX>:-Wconversion>"
+          "$<$<COMPILE_LANGUAGE:OBJCXX>:-Wsign-conversion>"
+          "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
+          "$<$<COMPILE_LANGUAGE:OBJCXX>:-mmacosx-version-min=${FIRESTORM_METAL_BOOTSTRAP_MIN_MACOS}>"
+          )
+        target_compile_definitions(firestorm_metal_fxaa_semantic_test PRIVATE
+          GL_SILENCE_DEPRECATION
+          )
+        target_include_directories(firestorm_metal_fxaa_semantic_test PRIVATE
+          "${FIRESTORM_METAL_FXAA_SEMANTIC_CONFIG_DIR}"
+          )
+        target_link_options(firestorm_metal_fxaa_semantic_test PRIVATE
+          "-mmacosx-version-min=${FIRESTORM_METAL_BOOTSTRAP_MIN_MACOS}"
+          )
+        target_link_libraries(firestorm_metal_fxaa_semantic_test PRIVATE
+          firestorm_metal_artifact_runtime
+          "${FIRESTORM_FOUNDATION_FRAMEWORK}"
+          "${FIRESTORM_METAL_FRAMEWORK}"
+          "${FIRESTORM_OPENGL_FRAMEWORK}"
+          )
+        set_target_properties(firestorm_metal_fxaa_semantic_test PROPERTIES
+          CXX_EXTENSIONS OFF
+          CXX_STANDARD 17
+          CXX_STANDARD_REQUIRED ON
+          OSX_ARCHITECTURES "arm64"
+          XCODE_ATTRIBUTE_CLANG_ENABLE_OBJC_ARC YES
+          XCODE_ATTRIBUTE_MACOSX_DEPLOYMENT_TARGET
+              "${FIRESTORM_METAL_BOOTSTRAP_MIN_MACOS}"
+          )
+
+        add_test(
+          NAME firestorm_metal_fxaa_semantic
+          COMMAND "${CMAKE_COMMAND}" -E env
+                  MTL_DEBUG_LAYER=1
+                  MTL_SHADER_VALIDATION=1
+                  "$<TARGET_FILE:firestorm_metal_fxaa_semantic_test>"
+                  --metallib "${FIRESTORM_METAL_PROGRAM_LIBRARY}"
+                  --artifact-root "${FIRESTORM_METAL_PROGRAM_OUTPUT_DIR}"
+                  --oracle-worktree
+                  "${FIRESTORM_METAL_OPENGL_ORACLE_WORKTREE}"
+          )
+        set_tests_properties(
+          firestorm_metal_fxaa_semantic
+          PROPERTIES
+            LABELS "metal;gpu;shader-artifact;semantic;opengl-oracle"
+            TIMEOUT 120
+          )
+      endif ()
     endif ()
   endif ()
 endif ()

@@ -73,6 +73,42 @@ Generated sources, reflection, AIR, libraries, and `report.json` are written to
 `.build/metal-shader-spike`. They are local evidence and are not checked in.
 See `shader-spike-results.md` for the reviewed result and its limits.
 
+## FXAA source-pinned semantic gate
+
+The opt-in `firestorm_metal_fxaa_semantic` CTest adds one deliberately narrow
+visual-semantic check to the feasibility evidence. It uses a clean, detached
+OpenGL oracle worktree pinned to
+`1e8fd5491bde91fe6daca7d78f217a4d46084a5b`, compiles that source-backed FXAA
+path in an offscreen CGL context, and compares it with the corresponding
+functions from the combined `firestorm-declared-programs.metallib`.
+
+The gate covers the four `gFXAAProgram` selections: `fxaa_low` preset 12,
+`fxaa_medium` preset 23, `fxaa_high` preset 28, and `fxaa` preset 39. It draws
+an asymmetric 128x64 RGBL atlas, including distinct corner anchors and
+horizontal, vertical, diagonal, staircase, checker, and contrast edges. The
+L channel follows the source RGBL preparation contract. The chart is converted
+once into the source renderer's GL texture-row order; those exact color rows
+are then supplied to both CGL and Metal. The CGL source path also receives its
+source-backed depth input. CGL readback is bottom-up, so only its output is
+row-canonicalized before comparison. Metal readback is deliberately raw: it
+receives no output flip.
+
+The current validated execution repeated each CGL draw eight times with no
+self-variance, changed 2,714 designed pixels for every quality selection, and
+produced four distinct quality outputs. The check permits an absolute
+per-channel difference of at most one; the recorded CGL and Metal outputs were
+bit exact. It also characterizes the direct front-face boundary: the source
+full-screen triangle is CCW with back-face culling in CGL and is CCW with
+back-face culling in Metal. Vertex translation uses
+`--fixup-clipspace` only; it deliberately does not use `--flip-vert-y`.
+
+This is a test-only source-row input boundary, not a production
+texture-origin ABI or chained render-target policy. It proves only this
+offscreen, source-pinned FXAA shader-level path. SMAA, viewer and login paths,
+and full renderer semantic parity remain `not_run`. The gate does not change
+the feasibility inventory: 30 recipes, 28 bundled runtime programs, 56 library
+entry points, and 214 reproducibility comparison artifacts.
+
 The path-free runtime JSON records the frozen manifest schema and SHA-256,
 baseline commit, explicit metallib resource basename, ordered attachment and
 vertex contracts, typed stage bindings, recursive members including matrix

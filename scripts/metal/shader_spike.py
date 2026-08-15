@@ -2521,6 +2521,30 @@ def build_pipeline_validator(output_root: Path, inputs: InputSnapshot) -> Path:
     return binary
 
 
+def _spirv_cross_msl_command(
+    program_id: str,
+    stage: str,
+    spirv_path: Path,
+    msl_path: Path,
+) -> list[str]:
+    command = [
+        "spirv-cross",
+        spirv_path.name,
+        "--msl",
+        "--msl-version",
+        "23000",
+        "--msl-decoration-binding",
+        "--rename-entry-point",
+        "main",
+        f"{program_id}_{stage}",
+        SPIRV_CROSS_STAGE[stage],
+    ]
+    if stage == "vertex":
+        command.append("--fixup-clipspace")
+    command.extend(["--output", msl_path.name])
+    return command
+
+
 def translate_program(
     source_root: Path,
     recipe: ProgramRecipe,
@@ -2707,21 +2731,9 @@ def translate_program(
                     ],
                     cwd=program_root,
                 )
-                cross_command = [
-                    "spirv-cross",
-                    spirv_path.name,
-                    "--msl",
-                    "--msl-version",
-                    "23000",
-                    "--msl-decoration-binding",
-                    "--rename-entry-point",
-                    "main",
-                    f"{recipe.program_id}_{stage}",
-                    SPIRV_CROSS_STAGE[stage],
-                ]
-                if stage == "vertex":
-                    cross_command.append("--fixup-clipspace")
-                cross_command.extend(["--output", msl_path.name])
+                cross_command = _spirv_cross_msl_command(
+                    recipe.program_id, stage, spirv_path, msl_path
+                )
                 cross_result = _run(cross_command, cwd=program_root)
 
                 stage_result = stage_results[stage]

@@ -741,6 +741,50 @@ class ShaderSpikeTest(unittest.TestCase):
         self.assertLess(assembled.index("GL_EXT_one"), assembled.index("GL_EXT_two"))
         self.assertTrue(assembled.startswith("#version 400 core\n"))
 
+    def test_msl_translation_commands_fix_vertex_clipspace_only(self) -> None:
+        common = [
+            "spirv-cross",
+            "example.spv",
+            "--msl",
+            "--msl-version",
+            "23000",
+            "--msl-decoration-binding",
+            "--rename-entry-point",
+            "main",
+        ]
+        vertex = shader_spike._spirv_cross_msl_command(
+            "example", "vertex", Path("example.spv"), Path("example.metal")
+        )
+        fragment = shader_spike._spirv_cross_msl_command(
+            "example", "fragment", Path("example.spv"), Path("example.metal")
+        )
+
+        self.assertEqual(
+            [
+                *common,
+                "example_vertex",
+                "vert",
+                "--fixup-clipspace",
+                "--output",
+                "example.metal",
+            ],
+            vertex,
+        )
+        self.assertEqual(
+            [
+                *common,
+                "example_fragment",
+                "frag",
+                "--output",
+                "example.metal",
+            ],
+            fragment,
+        )
+        self.assertEqual(1, vertex.count("--fixup-clipspace"))
+        self.assertNotIn("--flip-vert-y", vertex)
+        self.assertNotIn("--fixup-clipspace", fragment)
+        self.assertNotIn("--flip-vert-y", fragment)
+
     def test_source_without_marker_injects_immediately_after_version(self) -> None:
         assembled = shader_spike.assemble_shader_source(
             "#extension GL_EXT_one : enable\nvoid main() {}\n",
