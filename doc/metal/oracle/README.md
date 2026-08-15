@@ -93,9 +93,17 @@ The `login_ui` slot uses
 `ForceLoginURL`. That route exists only in PR #25's explicit developer build:
 configure the viewer with `-DENABLE_OPENGL_ORACLE_CAPTURE=ON`. The default
 build keeps normal login-page behavior, and `ForceLoginURL` must remain empty
-to avoid its force-login modal. Enabling the route does not make the login
-definition ready; it remains blocked until the real local fixture and its
-hashed manifest are added.
+to avoid its force-login modal. The checked-in fixture and its manifest make
+the login definition ready, but its machine contract remains blocked until a
+deterministic driver can prove the loaded page and capture state. Start the
+fixture server before the viewer:
+
+```sh
+python3 scripts/metal/oracle_login_fixture.py
+```
+
+It serves only the validated snapshot on `127.0.0.1:19472`; this repository
+does not yet include the driver or capture hook.
 
 For a slot whose definition and machine contract are both ready:
 
@@ -180,12 +188,11 @@ Verify the complete corpus with:
 python3 scripts/metal/oracle.py verify
 ```
 
-Verification is expected to fail today. All thirteen definitions are explicitly
-blocked on a static login page, unpublished fixtures, fixed environment assets,
-an offline test identity and region, or capture instrumentation. All thirteen
-machine contracts are also explicitly blocked until their deterministic capture
-paths exist. Those definition and machine dependencies must be supplied before
-captures can become admissible.
+Verification is expected to fail today. Twelve definitions remain blocked on
+unpublished fixtures, fixed environment assets, an offline test identity and
+region, or capture instrumentation. All thirteen machine contracts remain
+blocked until their deterministic capture paths exist. Those definition and
+machine dependencies must be supplied before captures can become admissible.
 
 Run the harness tests with:
 

@@ -97,10 +97,35 @@ class OracleCorpusTest(unittest.TestCase):
         cls.manifest_path = oracle.repository_root() / "doc/metal/oracle-corpus.json"
         cls.manifest = oracle.load_manifest(cls.manifest_path)
 
+    @staticmethod
+    def _copy_available_fixtures(
+        manifest: dict[str, object], fixture_root: Path, excluded_slot_id: str
+    ) -> None:
+        for slot in manifest["slots"]:
+            content = slot["conditions"]["content"]
+            if slot["id"] == excluded_slot_id or content["availability"] != "available":
+                continue
+            source_manifest = oracle.repository_root() / content["asset_manifest_path"]
+            fixture = json.loads(source_manifest.read_text(encoding="utf-8"))
+            destination_directory = fixture_root / slot["id"]
+            destination_directory.mkdir(parents=True, exist_ok=True)
+            destination_manifest = destination_directory / "manifest.json"
+            destination_manifest.write_bytes(source_manifest.read_bytes())
+            for asset in fixture["assets"]:
+                source_asset = source_manifest.parent / asset["path"]
+                destination_asset = destination_directory / asset["path"]
+                destination_asset.parent.mkdir(parents=True, exist_ok=True)
+                destination_asset.write_bytes(source_asset.read_bytes())
+            content["asset_manifest_path"] = (
+                Path(slot["id"]) / "manifest.json"
+            ).as_posix()
+
     def _ready_manifest(
         self, directory: Path, slot_id: str = "login_ui"
     ) -> tuple[dict[str, object], Path]:
         manifest = copy.deepcopy(self.manifest)
+        fixture_root = directory / "fixtures"
+        self._copy_available_fixtures(manifest, fixture_root, slot_id)
         slot = next(value for value in manifest["slots"] if value["id"] == slot_id)
         slot["definition_status"] = "ready"
         slot["definition_blockers"] = []
@@ -117,7 +142,6 @@ class OracleCorpusTest(unittest.TestCase):
                 contract["row_pitch_bytes"] = 16
                 contract["bytes"] = 48
 
-        fixture_root = directory / "fixtures"
         fixture_directory = fixture_root / slot_id
         fixture_directory.mkdir(parents=True)
         asset = b"canonical-fixture-" + slot_id.encode("ascii")
@@ -275,6 +299,10 @@ class OracleCorpusTest(unittest.TestCase):
             all(slot["machine_contract_status"] == "blocked" for slot in slots)
         )
         self.assertTrue(all(slot["machine_contract_blockers"] for slot in slots))
+        login = next(slot for slot in slots if slot["id"] == "login_ui")
+        self.assertEqual(login["definition_status"], "ready")
+        self.assertEqual(login["definition_blockers"], [])
+        self.assertEqual(login["conditions"]["content"]["availability"], "available")
         for slot in slots:
             if slot["conditions"]["camera"]["mode"] != "not_applicable":
                 settings = slot["conditions"]["settings"]
@@ -702,8 +730,11 @@ class OracleCorpusTest(unittest.TestCase):
 
         manifest = copy.deepcopy(self.manifest)
         login = next(slot for slot in manifest["slots"] if slot["id"] == "login_ui")
-        login["definition_status"] = "ready"
-        login["definition_blockers"] = []
+        content = login["conditions"]["content"]
+        content["availability"] = "missing"
+        content["asset_manifest_path"] = None
+        content["asset_manifest_bytes"] = None
+        content["asset_manifest_sha256"] = None
         with self.assertRaisesRegex(oracle.OracleError, "availability is missing"):
             oracle.validate_manifest(manifest)
 

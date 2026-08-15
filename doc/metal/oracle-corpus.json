@@ -34,10 +34,8 @@
       "features": ["login", "ui", "font"],
       "required_supporting_artifacts": {},
       "description": "Logged-out login panel, menus, icons, text, and font atlas composition.",
-      "definition_status": "blocked",
-      "definition_blockers": [
-        "A static local LoginPage fixture has not been added and hashed."
-      ],
+      "definition_status": "ready",
+      "definition_blockers": [],
       "machine_contract_status": "blocked",
       "machine_contract_blockers": [
         "A deterministic machine capture path has not been implemented and verified for this slot."
@@ -61,13 +59,14 @@
         "content": {
           "fixture_id": "firestorm_metal_oracle_login",
           "fixture_revision": "v1-static-page",
-          "availability": "missing",
-          "asset_manifest_path": null,
-          "asset_manifest_bytes": null,
-          "asset_manifest_sha256": null,
+          "availability": "available",
+          "asset_manifest_path": "doc/metal/oracle/fixtures/login_ui/manifest.json",
+          "asset_manifest_bytes": 268,
+          "asset_manifest_sha256": "32eb6af446d0dae619562cbae6bd686f6b7cf0b716caa362875bf2a0cdc87467",
           "requirements": [
             "Fresh settings directory with no saved credentials",
             "Default English login layout with LoginPage set to the static local page and ForceLoginURL empty",
+            "Fixture server bound to 127.0.0.1:19472 before the viewer starts",
             "No modal dialog or transient notification"
           ]
         },

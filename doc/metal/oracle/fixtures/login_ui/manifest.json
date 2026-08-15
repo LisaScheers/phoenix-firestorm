@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "fixture_id": "firestorm_metal_oracle_login",
+  "fixture_revision": "v1-static-page",
+  "assets": [
+    {
+      "path": "index.html",
+      "bytes": 570,
+      "sha256": "3f8580090d434153ea696b239a90d3746ed3e0ba735291d461afe4124df34917"
+    }
+  ]
+}
