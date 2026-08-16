@@ -103,7 +103,18 @@ python3 scripts/metal/oracle_login_fixture.py
 ```
 
 It serves only the validated snapshot on `127.0.0.1:19472`; this repository
-does not yet include the driver or capture hook.
+does not yet include a deterministic driver or capture hook. In the same
+developer build, an optional preflight receipt can be requested with:
+
+```sh
+--set OpenGLOracleLoginNavigationReceipt /private/tmp/login-navigation.json
+```
+
+The viewer writes that receipt only if its first observed navigation completion
+matches the pinned endpoint and returns `200`; an earlier nonmatching
+completion produces no receipt. It is explicitly `inadmissible`: it proves
+neither the response body or hash nor a painted frame or pixel capture, and
+does not change the blocked `login_ui` machine contract.
 
 For a slot whose definition and machine contract are both ready:
 

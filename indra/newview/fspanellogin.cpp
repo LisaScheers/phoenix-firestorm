@@ -67,6 +67,10 @@
 #include "llmediactrl.h"
 #include "llrootview.h"
 
+#ifdef LL_OPENGL_ORACLE_CAPTURE
+#include "lloracleloginnavigation.h"
+#endif
+
 #include "llfloatertos.h"
 #include "lltrans.h"
 #include "llglheaders.h"
@@ -212,6 +216,21 @@ FSPanelLogin::FSPanelLogin(const LLRect &rect,
     {
         buildFromFile( "panel_fs_login.xml");
     }
+
+#ifdef LL_OPENGL_ORACLE_CAPTURE
+    const std::string receipt_path =
+        gSavedSettings.getString("OpenGLOracleLoginNavigationReceipt");
+    if (!receipt_path.empty() &&
+        LLOpenGLOracleLoginNavigation::hasExpectedLoginSettings(
+            gSavedSettings.getString("LoginPage"),
+            gSavedSettings.getString("ForceLoginURL")))
+    {
+        if (LLMediaCtrl* web_browser = findChild<LLMediaCtrl>("login_html"))
+        {
+            web_browser->addObserver(this);
+        }
+    }
+#endif
 
     reshape(rect.getWidth(), rect.getHeight());
 
@@ -966,8 +985,25 @@ void FSPanelLogin::loadLoginPage()
     }
 }
 
-void FSPanelLogin::handleMediaEvent(LLPluginClassMedia* /*self*/, EMediaEvent event)
+void FSPanelLogin::handleMediaEvent(LLPluginClassMedia* self, EMediaEvent event)
 {
+#ifdef LL_OPENGL_ORACLE_CAPTURE
+    if (event != MEDIA_EVENT_NAVIGATE_COMPLETE || !self)
+    {
+        return;
+    }
+
+    LLOpenGLOracleLoginNavigation::Completion completion{
+        gSavedSettings.getString("LoginPage"),
+        gSavedSettings.getString("ForceLoginURL"),
+        self->getNavigateURI(),
+        self->getNavigateResultCode(),
+        gSavedSettings.getString("OpenGLOracleLoginNavigationReceipt")};
+    LLOpenGLOracleLoginNavigation::observeNavigationCompletion(completion);
+#else
+    (void)self;
+    (void)event;
+#endif
 }
 
 //---------------------------------------------------------------------------
