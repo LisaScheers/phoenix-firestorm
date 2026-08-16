@@ -944,10 +944,17 @@ if (ENABLE_OPENGL_ORACLE_CAPTURE)
   set_property(SOURCE tests/llviewernetwork_test.cpp APPEND PROPERTY
     COMPILE_DEFINITIONS LL_VIEWERNETWORK_ORACLE_CAPTURE_ENABLED=1)
   if (DARWIN)
-    # The navigation observer uses macOS descriptor-relative clone APIs.
-    list(APPEND viewer_SOURCE_FILES lloracleloginnavigation.cpp)
+    # These developer-only receipts use macOS descriptor-relative clone APIs.
+    list(APPEND viewer_SOURCE_FILES
+      lloracleloginnavigation.cpp
+      lloraclereceiptpublisher.cpp)
     set_property(SOURCE fspanellogin.cpp APPEND PROPERTY
       COMPILE_DEFINITIONS LL_OPENGL_ORACLE_CAPTURE=1)
+    if (NOT OPENSIM)
+      list(APPEND viewer_SOURCE_FILES lloracleloginvisualprofile.cpp)
+      set_property(SOURCE fspanellogin.cpp APPEND PROPERTY
+        COMPILE_DEFINITIONS LL_OPENGL_ORACLE_LOGIN_VISUAL_PROFILE=1)
+    endif ()
   endif ()
 endif ()
 
@@ -1788,7 +1795,12 @@ set(viewer_HEADER_FILES
     )
 
 if (DARWIN AND ENABLE_OPENGL_ORACLE_CAPTURE)
-  list(APPEND viewer_HEADER_FILES lloracleloginnavigation.h)
+  list(APPEND viewer_HEADER_FILES
+    lloracleloginnavigation.h
+    lloraclereceiptpublisher.h)
+  if (NOT OPENSIM)
+    list(APPEND viewer_HEADER_FILES lloracleloginvisualprofile.h)
+  endif ()
 endif ()
 
   list(APPEND viewer_SOURCE_FILES llperfstats.cpp)
@@ -3301,6 +3313,7 @@ if (DARWIN AND FIRESTORM_BUILD_OPENGL_ORACLE_LOGIN_NAVIGATION_TEST AND NOT LL_TE
     ${CMAKE_SOURCE_DIR}/test/test.cpp
     ${CMAKE_SOURCE_DIR}/test/lltut.cpp
     lloracleloginnavigation.cpp
+    lloraclereceiptpublisher.cpp
     )
   set_target_properties(INTEGRATION_TEST_lloracleloginnavigation
     PROPERTIES
@@ -3338,6 +3351,60 @@ if (DARWIN AND FIRESTORM_BUILD_OPENGL_ORACLE_LOGIN_NAVIGATION_TEST AND NOT LL_TE
   add_custom_target(lloracleloginnavigation_tests
     COMMAND ${OPENGL_ORACLE_LOGIN_NAVIGATION_TEST_COMMAND}
     DEPENDS INTEGRATION_TEST_lloracleloginnavigation
+    WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    VERBATIM
+    )
+endif ()
+
+option(FIRESTORM_BUILD_OPENGL_ORACLE_LOGIN_VISUAL_PROFILE_TEST
+  "Build the macOS developer-only OpenGL oracle login visual-profile preflight test" OFF)
+
+if (DARWIN AND FIRESTORM_BUILD_OPENGL_ORACLE_LOGIN_VISUAL_PROFILE_TEST AND NOT LL_TESTS)
+  include(LLAddBuildTest)
+
+  add_executable(INTEGRATION_TEST_lloracleloginvisualprofile EXCLUDE_FROM_ALL
+    tests/lloracleloginvisualprofile_test.cpp
+    ${CMAKE_SOURCE_DIR}/test/test.cpp
+    ${CMAKE_SOURCE_DIR}/test/lltut.cpp
+    lloracleloginvisualprofile.cpp
+    lloraclereceiptpublisher.cpp
+    )
+  set_target_properties(INTEGRATION_TEST_lloracleloginvisualprofile
+    PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${EXE_STAGING_DIR}"
+    COMPILE_DEFINITIONS "LL_TEST=lloracleloginvisualprofile;LL_TEST_lloracleloginvisualprofile"
+    )
+  target_include_directories(INTEGRATION_TEST_lloracleloginvisualprofile PRIVATE
+    ${CMAKE_CURRENT_BINARY_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/test
+    ${CMAKE_SOURCE_DIR}/llui
+    ${LIBS_OPEN_DIR}/test
+    )
+  target_link_libraries(INTEGRATION_TEST_lloracleloginvisualprofile
+    llmath
+    llcommon
+    )
+
+  if (DARWIN)
+    set_target_properties(INTEGRATION_TEST_lloracleloginvisualprofile
+      PROPERTIES
+      XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY "-"
+      BUILD_WITH_INSTALL_RPATH 1
+      INSTALL_RPATH "@executable_path/Resources"
+      )
+  endif ()
+
+  SET_TEST_PATH(OPENGL_ORACLE_LOGIN_VISUAL_PROFILE_TEST_PATH)
+  LL_TEST_COMMAND(OPENGL_ORACLE_LOGIN_VISUAL_PROFILE_TEST_COMMAND
+    "${OPENGL_ORACLE_LOGIN_VISUAL_PROFILE_TEST_PATH}"
+    "$<TARGET_FILE:INTEGRATION_TEST_lloracleloginvisualprofile>"
+    "--group=LLOpenGLOracleLoginVisualProfile"
+    "--sourcedir=${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+  add_custom_target(lloracleloginvisualprofile_tests
+    COMMAND ${OPENGL_ORACLE_LOGIN_VISUAL_PROFILE_TEST_COMMAND}
+    DEPENDS INTEGRATION_TEST_lloracleloginvisualprofile
     WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
     VERBATIM
     )

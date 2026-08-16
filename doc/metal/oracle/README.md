@@ -146,6 +146,23 @@ blocker, not something this declaration can establish. It is neither runtime
 proof nor capture permission; the navigation receipt remains inadmissible and
 the `login_ui` machine contract remains blocked.
 
+On macOS, the non-OpenSim developer capture build can optionally write a
+runtime layout preflight receipt:
+
+```sh
+--set OpenGLOracleLoginVisualProfileReceipt /private/tmp/login-visual-profile.json
+```
+
+The viewer takes one snapshot after two idle passes following `FSPanelLogin`
+construction. It writes a receipt only when the live configuration, selected
+new login XUI, empty login state, visible controls, applied font metrics, and
+observable window geometry all match the pinned preflight conditions. The
+receipt is explicitly `inadmissible` and is a preflight only: it is not proof
+of the isolated visual profile, CEF response body or hash, selected font
+fallback, sRGB or lack of OS occlusion, a painted or presented frame, capture
+readiness, pixels, or capture output. It does not change the blocked
+`login_ui` machine contract.
+
 For a slot whose definition and machine contract are both ready:
 
 1. Apply every condition from its request before the warmup interval.

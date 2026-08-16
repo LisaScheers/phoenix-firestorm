@@ -28,6 +28,10 @@
 #include <mutex>
 #include <string>
 
+#if defined(LL_TEST_lloracleloginnavigation)
+#include "lloraclereceiptpublisher.h"
+#endif
+
 namespace LLOpenGLOracleLoginNavigation
 {
 
@@ -56,7 +60,7 @@ const std::string& receiptDocument();
 #if defined(LL_TEST_lloracleloginnavigation)
 // Allows the standalone helper test to inspect the descriptor-anchored
 // publication before its final clone. This is absent from viewer builds.
-using PublicationTestHook = void (*)();
+using PublicationTestHook = LLOpenGLOracleReceiptPublisher::PublicationTestHook;
 void setPublicationTestHook(PublicationTestHook hook);
 #endif
 
