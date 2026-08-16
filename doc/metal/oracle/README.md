@@ -116,6 +116,36 @@ completion produces no receipt. It is explicitly `inadmissible`: it proves
 neither the response body or hash nor a painted frame or pixel capture, and
 does not change the blocked `login_ui` machine contract.
 
+### Login visual profile
+
+The `login_ui` conditions pin a declarative visual profile. Start from an
+isolated seeded OS user-app root, not merely `--settings`. It must contain no
+user settings or session overrides, `fsdata_defaults.*`, credentials,
+`stored_favorites.xml`, browser profile or plugin cookies, or user overrides
+under `skins/default/firestorm`. Launch without a command-line credential,
+grid, location, or noninteractive override. Use a non-OpenSim developer build
+configured with `-DENABLE_OPENGL_ORACLE_CAPTURE=ON` and keep the fixture server
+running before the viewer starts.
+
+The expected result is a blank/new layout: no stored accounts or favorites,
+last-location selected, the grid selector hidden, and no modal dialog or
+transient notification, including the whitelist reminder. After window
+creation, verify that the realized raw drawable and capture are exactly
+1920x1080 pixels at backing scale 2.0 in sRGB
+`windowed_no_occlusion` mode.
+
+The canonical settings map fixes the English Firestorm skin and theme, font
+settings, UI scale, DPI, HiDPI behavior, login location, grid visibility,
+credential remembrance, proxy, headless/noninteractive behavior, and the UI
+anti-aliasing settings.
+
+This profile is declarative only. Corpus validation confirms the exact
+configuration record, not that a running viewer applied it, loaded the page,
+or painted a frame. CEF/macOS sans-serif fallback remains an unverified visual
+blocker, not something this declaration can establish. It is neither runtime
+proof nor capture permission; the navigation receipt remains inadmissible and
+the `login_ui` machine contract remains blocked.
+
 For a slot whose definition and machine contract are both ready:
 
 1. Apply every condition from its request before the warmup interval.

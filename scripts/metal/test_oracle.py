@@ -131,9 +131,10 @@ class OracleCorpusTest(unittest.TestCase):
         slot["definition_blockers"] = []
         slot["machine_contract_status"] = "ready"
         slot["machine_contract_blockers"] = []
-        display = slot["conditions"]["display"]
-        display["width_px"] = 4
-        display["height_px"] = 3
+        if slot_id != "login_ui":
+            display = slot["conditions"]["display"]
+            display["width_px"] = 4
+            display["height_px"] = 3
         for contract in slot["required_supporting_artifacts"].values():
             if contract["kind"] in {"png", "raw"}:
                 contract["width_px"] = 4
@@ -238,12 +239,15 @@ class OracleCorpusTest(unittest.TestCase):
         self,
         directory: Path,
         pixels: tuple[tuple[int, int, int, int], ...] | None = None,
+        *,
+        width: int = 4,
+        height: int = 3,
     ) -> list[Path]:
         pixels = pixels or ((0, 0, 0, 255),) * 3
         captures: list[Path] = []
         for index, pixel in enumerate(pixels):
             capture = directory / f"capture-{index}.png"
-            _write_png(capture, pixel=pixel)
+            _write_png(capture, width, height, pixel)
             captures.append(capture)
         return captures
 
@@ -387,19 +391,123 @@ class OracleCorpusTest(unittest.TestCase):
                 with self.assertRaisesRegex(oracle.OracleError, expected):
                     oracle.validate_manifest(manifest)
 
-    def test_login_ui_route_conditions_are_exact(self) -> None:
-        cases = (
-            ("LoginPage", "http://127.0.0.1:19472/other.html", "LoginPage must equal"),
-            ("ForceLoginURL", "http://127.0.0.1:19472/login_ui/index.html", "ForceLoginURL must be empty"),
+    def test_login_ui_visual_profile_is_exact(self) -> None:
+        expected_settings = {
+            "LoginPage": "http://127.0.0.1:19472/login_ui/index.html",
+            "ForceLoginURL": "",
+            "Language": "en",
+            "SessionSettingsFile": "settings_firestorm.xml",
+            "SkinCurrent": "firestorm",
+            "SkinCurrentTheme": "grey",
+            "FSUseLegacyLoginPanel": False,
+            "FSFontSettingsFile": "fonts.xml",
+            "FSFontSizeAdjustment": 0.0,
+            "FSFontLineSpacingAdjustment": 0,
+            "FontScreenDPI": 96.0,
+            "UIScaleFactor": 1.0,
+            "ResetUIScaleOnFirstRun": False,
+            "RenderHiDPI": True,
+            "RenderPerformanceTest": False,
+            "FirstLoginThisInstall": False,
+            "FSShowWhitelistReminder": False,
+            "UpdaterShowReleaseNotes": 0,
+            "WindowMaximized": False,
+            "ShowStartLocation": True,
+            "LoginLocation": "last",
+            "NextLoginLocation": "last",
+            "ForceShowGrid": False,
+            "FSOpenSimAlwaysForceShowGrid": False,
+            "FSRememberUsername": True,
+            "BrowserProxyEnabled": False,
+            "NonInteractive": False,
+            "HeadlessClient": False,
+            "RenderFSAASamples": 0,
+            "RenderFSAAType": 0,
+            "RenderUIBuffer": False,
+        }
+        expected_display = {
+            "width_px": 1920,
+            "height_px": 1080,
+            "scale_factor": 2.0,
+            "color_space": "sRGB",
+            "window_mode": "windowed_no_occlusion",
+        }
+        self.assertEqual(oracle.LOGIN_UI_VISUAL_SETTINGS, expected_settings)
+        self.assertEqual(oracle.LOGIN_UI_DISPLAY, expected_display)
+
+        def wrong_value(value: object) -> object:
+            if isinstance(value, bool):
+                return not value
+            if type(value) is int:
+                return value + 1
+            if type(value) is float:
+                return value + 0.5
+            if type(value) is str:
+                return f"{value}-unexpected" if value else "unexpected"
+            self.fail(f"missing wrong-value case for {value!r}")
+
+        profile_cases = (
+            ("settings", expected_settings),
+            ("display", expected_display),
         )
-        for setting, value, expected in cases:
-            with self.subTest(setting=setting):
+        for name, expected in profile_cases:
+            for key, value in expected.items():
+                for mutation, pattern in (
+                    ("missing", "must have exactly the canonical login_ui"),
+                    ("wrong_type", "must have exact JSON type"),
+                    ("wrong_value", "must equal its canonical login_ui value"),
+                ):
+                    with self.subTest(profile=name, key=key, mutation=mutation):
+                        manifest = copy.deepcopy(self.manifest)
+                        login = next(
+                            slot
+                            for slot in manifest["slots"]
+                            if slot["id"] == "login_ui"
+                        )
+                        profile = login["conditions"][name]
+                        if mutation == "missing":
+                            del profile[key]
+                        elif mutation == "wrong_type":
+                            profile[key] = None
+                        else:
+                            profile[key] = wrong_value(value)
+                        with self.assertRaisesRegex(oracle.OracleError, pattern):
+                            oracle.validate_manifest(manifest)
+
+            with self.subTest(profile=name, mutation="extra"):
                 manifest = copy.deepcopy(self.manifest)
                 login = next(
                     slot for slot in manifest["slots"] if slot["id"] == "login_ui"
                 )
-                login["conditions"]["settings"][setting] = value
-                with self.assertRaisesRegex(oracle.OracleError, expected):
+                login["conditions"][name]["UnexpectedLoginProfileSetting"] = None
+                with self.assertRaisesRegex(
+                    oracle.OracleError, "must have exactly the canonical login_ui"
+                ):
+                    oracle.validate_manifest(manifest)
+
+        equality_collision_cases = (
+            ("settings", "FSUseLegacyLoginPanel", 0),
+            ("settings", "RenderHiDPI", 1),
+            ("settings", "RenderFSAASamples", False),
+            ("settings", "FSFontLineSpacingAdjustment", 0.0),
+            ("settings", "FSFontSizeAdjustment", 0),
+            ("display", "width_px", 1920.0),
+            ("display", "scale_factor", 2),
+        )
+        expected_profiles = dict(profile_cases)
+        for name, key, colliding_value in equality_collision_cases:
+            with self.subTest(profile=name, key=key, mutation="equality_collision"):
+                expected_value = expected_profiles[name][key]
+                self.assertEqual(expected_value, colliding_value)
+                self.assertIsNot(type(expected_value), type(colliding_value))
+                manifest = copy.deepcopy(self.manifest)
+                login = next(
+                    slot for slot in manifest["slots"] if slot["id"] == "login_ui"
+                )
+                login["conditions"][name][key] = colliding_value
+                with self.assertRaisesRegex(
+                    oracle.OracleError, "must have exact JSON type"
+                ):
                     oracle.validate_manifest(manifest)
 
     def test_machine_blocked_login_cannot_record_before_reading_captures(self) -> None:
@@ -489,6 +597,8 @@ class OracleCorpusTest(unittest.TestCase):
             captures = self._captures(
                 directory,
                 ((0, 0, 0, 255), (255, 0, 0, 255), (0, 255, 0, 255)),
+                width=1920,
+                height=1080,
             )
             self._record(manifest, fixture_root, session_path, "login_ui", captures)
             session = json.loads(session_path.read_text(encoding="utf-8"))
@@ -764,7 +874,7 @@ class OracleCorpusTest(unittest.TestCase):
                 fixture_root,
                 session_path,
                 "login_ui",
-                self._captures(directory),
+                self._captures(directory, width=1920, height=1080),
             )
             asset = fixture_root / "login_ui/asset.bin"
             asset.write_bytes(b"Y" * len(asset.read_bytes()))
@@ -846,7 +956,9 @@ class OracleCorpusTest(unittest.TestCase):
 
         manifest = copy.deepcopy(self.manifest)
         manifest["slots"][0]["conditions"]["display"]["color_space"] = "Display-P3"
-        with self.assertRaisesRegex(oracle.OracleError, "color_space must be sRGB"):
+        with self.assertRaisesRegex(
+            oracle.OracleError, "must equal its canonical login_ui value"
+        ):
             oracle.validate_manifest(manifest)
 
     def test_mutable_session_cannot_relax_definition_or_contract(self) -> None:
@@ -987,8 +1099,19 @@ class OracleCorpusTest(unittest.TestCase):
             measurements = json.loads(measurement_path.read_text(encoding="utf-8"))
             session = json.loads(session_path.read_text(encoding="utf-8"))
             login = next(slot for slot in session["slots"] if slot["id"] == "login_ui")
-            rgba = bytes((0, 0, 0, 255)) * 12
-            measurements["self_variance"] = oracle._self_variance([rgba] * 3)
+            comparison_count = 3
+            pixel_sample_count = 1920 * 1080 * comparison_count
+            measurements["self_variance"] = {
+                "method": "linear_srgb_rgba8_all_pairs_v1",
+                "units": "normalized_linear_0_1",
+                "comparison_count": comparison_count,
+                "channel_sample_count": pixel_sample_count * 4,
+                "pixel_sample_count": pixel_sample_count,
+                "mean_absolute_error": 0.0,
+                "rmse": 0.0,
+                "max_absolute_error": 0.0,
+                "identical_pixel_fraction": 1.0,
+            }
             fractional_schema = copy.deepcopy(measurements)
             fractional_schema["self_variance"]["comparison_count"] = 3.0
             with self.assertRaisesRegex(oracle.OracleError, "must be an integer"):

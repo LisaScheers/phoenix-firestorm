@@ -61,6 +61,46 @@ REQUIRED_FEATURES: Final = {
 HASH_PATTERN: Final = re.compile(r"[0-9a-f]{64}")
 COMMIT_PATTERN: Final = re.compile(r"[0-9a-f]{40}")
 LOGIN_UI_PAGE_URL: Final = "http://127.0.0.1:19472/login_ui/index.html"
+LOGIN_UI_VISUAL_SETTINGS: Final[dict[str, object]] = {
+    "LoginPage": LOGIN_UI_PAGE_URL,
+    "ForceLoginURL": "",
+    "Language": "en",
+    "SessionSettingsFile": "settings_firestorm.xml",
+    "SkinCurrent": "firestorm",
+    "SkinCurrentTheme": "grey",
+    "FSUseLegacyLoginPanel": False,
+    "FSFontSettingsFile": "fonts.xml",
+    "FSFontSizeAdjustment": 0.0,
+    "FSFontLineSpacingAdjustment": 0,
+    "FontScreenDPI": 96.0,
+    "UIScaleFactor": 1.0,
+    "ResetUIScaleOnFirstRun": False,
+    "RenderHiDPI": True,
+    "RenderPerformanceTest": False,
+    "FirstLoginThisInstall": False,
+    "FSShowWhitelistReminder": False,
+    "UpdaterShowReleaseNotes": 0,
+    "WindowMaximized": False,
+    "ShowStartLocation": True,
+    "LoginLocation": "last",
+    "NextLoginLocation": "last",
+    "ForceShowGrid": False,
+    "FSOpenSimAlwaysForceShowGrid": False,
+    "FSRememberUsername": True,
+    "BrowserProxyEnabled": False,
+    "NonInteractive": False,
+    "HeadlessClient": False,
+    "RenderFSAASamples": 0,
+    "RenderFSAAType": 0,
+    "RenderUIBuffer": False,
+}
+LOGIN_UI_DISPLAY: Final[dict[str, object]] = {
+    "width_px": 1920,
+    "height_px": 1080,
+    "scale_factor": 2.0,
+    "color_space": "sRGB",
+    "window_mode": "windowed_no_occlusion",
+}
 MAX_PNG_BYTES: Final = 256 * 1024 * 1024
 MAX_JSON_BYTES: Final = 16 * 1024 * 1024
 MAX_BLOB_BYTES: Final = 256 * 1024 * 1024
@@ -933,6 +973,51 @@ def _validate_tools_readback_consistency(
             )
 
 
+def _validate_exact_login_ui_mapping(
+    value: object, expected: dict[str, object], field: str, name: str
+) -> None:
+    actual = _require_object(value, field)
+    if not all(isinstance(key, str) for key in actual):
+        raise OracleError(f"{field} must have only string keys")
+    missing = sorted(set(expected) - set(actual))
+    unexpected = sorted(set(actual) - set(expected))
+    if missing or unexpected:
+        details = []
+        if missing:
+            details.append(f"missing {', '.join(missing)}")
+        if unexpected:
+            details.append(f"unexpected {', '.join(unexpected)}")
+        raise OracleError(
+            f"{field} must have exactly the canonical login_ui {name} keys "
+            f"({'; '.join(details)})"
+        )
+    for key, expected_value in expected.items():
+        actual_value = actual[key]
+        if type(actual_value) is not type(expected_value):
+            raise OracleError(
+                f"{field}.{key} must have exact JSON type "
+                f"{type(expected_value).__name__}"
+            )
+        if actual_value != expected_value:
+            raise OracleError(f"{field}.{key} must equal its canonical login_ui value")
+
+
+def _validate_login_ui_visual_profile(conditions: object, field: str) -> None:
+    condition_values = _require_object(conditions, field)
+    _validate_exact_login_ui_mapping(
+        condition_values.get("settings"),
+        LOGIN_UI_VISUAL_SETTINGS,
+        f"{field}.settings",
+        "settings",
+    )
+    _validate_exact_login_ui_mapping(
+        condition_values.get("display"),
+        LOGIN_UI_DISPLAY,
+        f"{field}.display",
+        "display",
+    )
+
+
 def _validate_conditions(value: object, field: str, fixture_root: Path) -> None:
     conditions = _require_object(value, field)
     required = {"settings", "camera", "content", "environment", "display"}
@@ -1103,20 +1188,13 @@ def validate_manifest(
             raise OracleError(f"{field}.features must contain stable feature names")
         features.update(feature_values)
         _require_string(slot.get("description"), f"{field}.description")
+        if slot_id == "login_ui":
+            _validate_login_ui_visual_profile(
+                slot.get("conditions"), f"{field}.conditions"
+            )
         _validate_conditions(
             slot.get("conditions"), f"{field}.conditions", fixture_root
         )
-        if slot_id == "login_ui":
-            settings = slot["conditions"]["settings"]
-            if settings.get("LoginPage") != LOGIN_UI_PAGE_URL:
-                raise OracleError(
-                    f"{field}.conditions.settings.LoginPage must equal "
-                    f"{LOGIN_UI_PAGE_URL}"
-                )
-            if settings.get("ForceLoginURL") != "":
-                raise OracleError(
-                    f"{field}.conditions.settings.ForceLoginURL must be empty"
-                )
         supporting_contracts = _validate_supporting_contracts(
             slot.get("required_supporting_artifacts"),
             slot["conditions"]["display"],

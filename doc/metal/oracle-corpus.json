@@ -45,10 +45,34 @@
           "LoginPage": "http://127.0.0.1:19472/login_ui/index.html",
           "ForceLoginURL": "",
           "Language": "en",
+          "SessionSettingsFile": "settings_firestorm.xml",
+          "SkinCurrent": "firestorm",
+          "SkinCurrentTheme": "grey",
+          "FSUseLegacyLoginPanel": false,
+          "FSFontSettingsFile": "fonts.xml",
+          "FSFontSizeAdjustment": 0.0,
+          "FSFontLineSpacingAdjustment": 0,
+          "FontScreenDPI": 96.0,
+          "UIScaleFactor": 1.0,
+          "ResetUIScaleOnFirstRun": false,
+          "RenderHiDPI": true,
+          "RenderPerformanceTest": false,
+          "FirstLoginThisInstall": false,
+          "FSShowWhitelistReminder": false,
+          "UpdaterShowReleaseNotes": 0,
+          "WindowMaximized": false,
+          "ShowStartLocation": true,
+          "LoginLocation": "last",
+          "NextLoginLocation": "last",
+          "ForceShowGrid": false,
+          "FSOpenSimAlwaysForceShowGrid": false,
+          "FSRememberUsername": true,
+          "BrowserProxyEnabled": false,
+          "NonInteractive": false,
+          "HeadlessClient": false,
           "RenderFSAASamples": 0,
           "RenderFSAAType": 0,
-          "RenderUIBuffer": false,
-          "UIScaleFactor": 1.0
+          "RenderUIBuffer": false
         },
         "camera": {
           "mode": "not_applicable",
@@ -64,10 +88,14 @@
           "asset_manifest_bytes": 268,
           "asset_manifest_sha256": "32eb6af446d0dae619562cbae6bd686f6b7cf0b716caa362875bf2a0cdc87467",
           "requirements": [
-            "Fresh settings directory with no saved credentials",
+            "Isolated seeded OS user-app root, not merely --settings, with no user settings or session overrides, fsdata_defaults.*, credentials, stored_favorites.xml, browser profile or plugin cookies, or user overrides under skins/default/firestorm",
             "Default English login layout with LoginPage set to the static local page and ForceLoginURL empty",
+            "No command-line credential, grid, location, or noninteractive override",
+            "Non-OpenSim developer build configured with ENABLE_OPENGL_ORACLE_CAPTURE=ON",
             "Fixture server bound to 127.0.0.1:19472 before the viewer starts",
-            "No modal dialog or transient notification"
+            "Blank/new-layout outcome: no stored accounts or favorites, last-location selected, grid selector hidden, and no modal dialog or transient notification, including the whitelist reminder",
+            "After window creation, the realized raw drawable and capture are 1920x1080 pixels at backing scale 2.0 in sRGB windowed_no_occlusion mode",
+            "CEF/macOS sans-serif fallback remains an unverified visual blocker; this declarative profile does not prove its runtime result"
           ]
         },
         "environment": {
