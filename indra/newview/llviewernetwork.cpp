@@ -561,6 +561,14 @@ std::string LLGridManager::getLoginPage(const std::string& grid)
 
 std::string LLGridManager::getLoginPage()
 {
+#ifdef LL_OPENGL_ORACLE_CAPTURE
+    std::string capture_login_page = gSavedSettings.getString("LoginPage");
+    if (!capture_login_page.empty())
+    {
+        return capture_login_page;
+    }
+#endif
+
     std::string login_page = mGridList[mGrid][GRID_LOGIN_PAGE_VALUE].asString();
     LL_DEBUGS("GridManager")<<"returning "<<login_page<<LL_ENDL;
     return login_page;

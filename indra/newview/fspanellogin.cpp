@@ -67,6 +67,17 @@
 #include "llmediactrl.h"
 #include "llrootview.h"
 
+#ifdef LL_OPENGL_ORACLE_CAPTURE
+#include "lloracleloginnavigation.h"
+#endif
+
+#ifdef LL_OPENGL_ORACLE_LOGIN_VISUAL_PROFILE
+#include "llcallbacklist.h"
+#include "llmodaldialog.h"
+#include "lloracleloginvisualprofile.h"
+#include "llwindow.h"
+#endif
+
 #include "llfloatertos.h"
 #include "lltrans.h"
 #include "llglheaders.h"
@@ -92,6 +103,204 @@ std::string FSPanelLogin::sPendingNewGridURI{};
 // Helper for converting a user name into the canonical "Firstname Lastname" form.
 // For new accounts without a last name "Resident" is added as a last name.
 static std::string canonicalize_username(const std::string& name);
+
+#ifdef LL_OPENGL_ORACLE_LOGIN_VISUAL_PROFILE
+namespace
+{
+
+LLOpenGLOracleLoginVisualProfile::Rect makeOracleRect(const LLRect& rect)
+{
+    LLOpenGLOracleLoginVisualProfile::Rect result;
+    result.left = rect.mLeft;
+    result.bottom = rect.mBottom;
+    result.right = rect.mRight;
+    result.top = rect.mTop;
+    return result;
+}
+
+LLOpenGLOracleLoginVisualProfile::Rect makeOracleRawRect(
+    const LLRect& rect,
+    const LLVector2& display_scale)
+{
+    LLOpenGLOracleLoginVisualProfile::Rect result;
+    result.left = ll_round(rect.mLeft * display_scale.mV[VX]);
+    result.bottom = ll_round(rect.mBottom * display_scale.mV[VY]);
+    result.right = ll_round(rect.mRight * display_scale.mV[VX]);
+    result.top = ll_round(rect.mTop * display_scale.mV[VY]);
+    return result;
+}
+
+LLOpenGLOracleLoginVisualProfile::ViewGeometry makeOracleViewGeometry(
+    const LLView* view,
+    const LLVector2& display_scale)
+{
+    LLOpenGLOracleLoginVisualProfile::ViewGeometry result;
+    if (!view)
+    {
+        return result;
+    }
+
+    result.local_ui = makeOracleRect(view->getRect());
+    result.viewer_screen_ui = makeOracleRect(view->calcScreenRect());
+    result.viewer_screen_raw_px_derived =
+        makeOracleRawRect(view->calcScreenRect(), display_scale);
+    return result;
+}
+
+LLOpenGLOracleLoginVisualProfile::SelectorState makeOracleSelectorState(
+    const LLLayoutPanel* panel)
+{
+    LLOpenGLOracleLoginVisualProfile::SelectorState result;
+    if (!panel)
+    {
+        return result;
+    }
+
+    result.direct_visible = panel->getVisible();
+    result.visible_chain = panel->isInVisibleChain();
+    result.visible_amount = panel->getVisibleAmount();
+    return result;
+}
+
+LLOpenGLOracleLoginVisualProfile::Snapshot makeOracleVisualProfileSnapshot(
+    FSPanelLogin& panel,
+    const bool favorites_present,
+    const std::string& receipt_path)
+{
+    using namespace LLOpenGLOracleLoginVisualProfile;
+
+    Snapshot snapshot;
+    snapshot.receipt_path = receipt_path;
+
+    snapshot.configured_login.login_page = gSavedSettings.getString("LoginPage");
+    snapshot.configured_login.force_login_url = gSavedSettings.getString("ForceLoginURL");
+    snapshot.configured_login.session_settings_file =
+        gSavedSettings.getString("SessionSettingsFile");
+
+    ProfileControls& controls = snapshot.profile_controls;
+    controls.language = gSavedSettings.getString("Language");
+    controls.skin = gSavedSettings.getString("SkinCurrent");
+    controls.skin_theme = gSavedSettings.getString("SkinCurrentTheme");
+    controls.use_legacy_login_panel = gSavedSettings.getBOOL("FSUseLegacyLoginPanel");
+    controls.font_settings_file = gSavedSettings.getString("FSFontSettingsFile");
+    controls.font_size_adjustment = gSavedSettings.getF32("FSFontSizeAdjustment");
+    controls.font_line_spacing_adjustment =
+        gSavedSettings.getS32("FSFontLineSpacingAdjustment");
+    controls.font_screen_dpi = gSavedSettings.getF32("FontScreenDPI");
+    controls.ui_scale_factor = gSavedSettings.getF32("UIScaleFactor");
+    controls.reset_ui_scale_on_first_run = gSavedSettings.getBOOL("ResetUIScaleOnFirstRun");
+    controls.render_hidpi = gSavedSettings.getBOOL("RenderHiDPI");
+    controls.render_performance_test = gSavedSettings.getBOOL("RenderPerformanceTest");
+    controls.first_login_this_install = gSavedSettings.getBOOL("FirstLoginThisInstall");
+    controls.show_whitelist_reminder = gSavedSettings.getBOOL("FSShowWhitelistReminder");
+    controls.updater_show_release_notes = gSavedSettings.getS32("UpdaterShowReleaseNotes");
+    controls.window_maximized = gSavedSettings.getBOOL("WindowMaximized");
+    controls.show_start_location = gSavedSettings.getBOOL("ShowStartLocation");
+    controls.login_location = gSavedSettings.getString("LoginLocation");
+    controls.next_login_location = gSavedSettings.getString("NextLoginLocation");
+    controls.force_show_grid = gSavedSettings.getBOOL("ForceShowGrid");
+    controls.opensim_always_force_show_grid =
+        gSavedSettings.getBOOL("FSOpenSimAlwaysForceShowGrid");
+    controls.remember_username = gSavedSettings.getBOOL("FSRememberUsername");
+    controls.browser_proxy_enabled = gSavedSettings.getBOOL("BrowserProxyEnabled");
+    controls.noninteractive_setting = gSavedSettings.getBOOL("NonInteractive");
+    controls.headless_setting = gSavedSettings.getBOOL("HeadlessClient");
+    controls.render_fsaa_samples = static_cast<int>(gSavedSettings.getU32("RenderFSAASamples"));
+    controls.render_fsaa_type = static_cast<int>(gSavedSettings.getU32("RenderFSAAType"));
+    controls.render_ui_buffer = gSavedSettings.getBOOL("RenderUIBuffer");
+
+    LLMediaCtrl* login_html = panel.findChild<LLMediaCtrl>("login_html");
+    LLComboBox* username_combo = panel.findChild<LLComboBox>("username_combo");
+    LLLineEditor* password_edit = panel.findChild<LLLineEditor>("password_edit");
+    LLComboBox* start_location_combo = panel.findChild<LLComboBox>("start_location_combo");
+    LLComboBox* server_combo = panel.findChild<LLComboBox>("server_combo");
+    LLUICtrl* mode_combo = panel.findChild<LLUICtrl>("mode_combo");
+    LLLayoutPanel* start_location_panel =
+        panel.findChild<LLLayoutPanel>("start_location_panel");
+    LLLayoutPanel* grid_panel = panel.findChild<LLLayoutPanel>("grid_panel");
+
+    EffectiveUI& effective_ui = snapshot.effective_ui;
+    effective_ui.language = LLUI::getLanguage();
+    if (gDirUtilp)
+    {
+        effective_ui.skin = gDirUtilp->getSkinFolder();
+        effective_ui.skin_theme = gDirUtilp->getSkinThemeFolder();
+        effective_ui.skin_language = gDirUtilp->getLanguage();
+    }
+    effective_ui.selected_xui = panel.getXMLFilename();
+    effective_ui.required_controls.login_html = login_html != nullptr;
+    effective_ui.required_controls.username_combo = username_combo != nullptr;
+    effective_ui.required_controls.password_edit = password_edit != nullptr;
+    effective_ui.required_controls.start_location_combo = start_location_combo != nullptr;
+    effective_ui.required_controls.server_combo = server_combo != nullptr;
+    effective_ui.required_controls.mode_combo = mode_combo != nullptr;
+    effective_ui.required_controls.start_location_panel = start_location_panel != nullptr;
+    effective_ui.required_controls.grid_panel = grid_panel != nullptr;
+
+    snapshot.font_metrics.applied_horizontal_dpi = LLFontGL::sHorizDPI;
+    snapshot.font_metrics.applied_vertical_dpi = LLFontGL::sVertDPI;
+    snapshot.font_metrics.applied_scale_x = LLFontGL::sScaleX;
+    snapshot.font_metrics.applied_scale_y = LLFontGL::sScaleY;
+
+    LoginState& login_state = snapshot.login_state;
+    login_state.credential_store_count = gSecAPIHandler
+        ? static_cast<int>(gSecAPIHandler->listCredentials().size())
+        : -1;
+    login_state.username_combo_item_count = username_combo
+        ? username_combo->getItemCount()
+        : -1;
+    login_state.username_entry_empty = username_combo &&
+        username_combo->getValue().asString().empty();
+    login_state.password_entry_empty = password_edit &&
+        password_edit->getValue().asString().empty();
+    login_state.favorites_present = favorites_present;
+    if (start_location_combo)
+    {
+        login_state.selected_location = start_location_combo->getValue().asString();
+    }
+    login_state.start_location_selector = makeOracleSelectorState(start_location_panel);
+    login_state.grid_selector = makeOracleSelectorState(grid_panel);
+
+    UIState& ui_state = snapshot.ui_state;
+    ui_state.noninteractive_runtime = gNonInteractive;
+    ui_state.headless_runtime = gHeadlessClient;
+    ui_state.modal_dialog_count = LLModalDialog::activeCount();
+    const LLNotificationChannelPtr visible_notifications =
+        LLNotifications::instance().getChannel("Visible");
+    ui_state.visible_notification_count = visible_notifications
+        ? visible_notifications->size()
+        : -1;
+    ui_state.top_control_present = gFocusMgr.getTopCtrl() != nullptr;
+
+    if (gViewerWindow)
+    {
+        const LLVector2& display_scale = gViewerWindow->getDisplayScale();
+        DisplayState& display = snapshot.display;
+        display.ui_scale_factor = gSavedSettings.getF32("UIScaleFactor");
+        display.display_scale_x = display_scale.mV[VX];
+        display.display_scale_y = display_scale.mV[VY];
+        display.window_raw_px = makeOracleRect(gViewerWindow->getWindowRectRaw());
+        display.window_scaled_ui = makeOracleRect(gViewerWindow->getWindowRectScaled());
+        display.login_holder = makeOracleViewGeometry(
+            gViewerWindow->getLoginPanelHolder(), display_scale);
+        display.login_panel = makeOracleViewGeometry(&panel, display_scale);
+
+        if (LLWindow* window = gViewerWindow->getWindow())
+        {
+            display.backing_scale = window->getSystemUISize();
+            display.pixel_aspect_ratio = window->getPixelAspectRatio();
+            ui_state.window_visible = window->getVisible();
+            ui_state.window_minimized = window->getMinimized();
+            ui_state.window_maximized = window->getMaximized();
+            ui_state.window_fullscreen = window->getFullscreen();
+        }
+    }
+
+    return snapshot;
+}
+
+} // anonymous namespace
+#endif
 
 class LLLoginLocationAutoHandler : public LLCommandHandler
 {
@@ -213,6 +422,21 @@ FSPanelLogin::FSPanelLogin(const LLRect &rect,
         buildFromFile( "panel_fs_login.xml");
     }
 
+#ifdef LL_OPENGL_ORACLE_CAPTURE
+    const std::string receipt_path =
+        gSavedSettings.getString("OpenGLOracleLoginNavigationReceipt");
+    if (!receipt_path.empty() &&
+        LLOpenGLOracleLoginNavigation::hasExpectedLoginSettings(
+            gSavedSettings.getString("LoginPage"),
+            gSavedSettings.getString("ForceLoginURL")))
+    {
+        if (LLMediaCtrl* web_browser = findChild<LLMediaCtrl>("login_html"))
+        {
+            web_browser->addObserver(this);
+        }
+    }
+#endif
+
     reshape(rect.getWidth(), rect.getHeight());
 
     LLUICtrl& mode_combo = getChildRef<LLUICtrl>("mode_combo");
@@ -325,6 +549,36 @@ FSPanelLogin::FSPanelLogin(const LLRect &rect,
     syncShowHidePasswordButton();
 
     mInitialized = true;
+
+#ifdef LL_OPENGL_ORACLE_LOGIN_VISUAL_PROFILE
+    const std::string visual_profile_receipt_path =
+        gSavedSettings.getString("OpenGLOracleLoginVisualProfileReceipt");
+    if (!visual_profile_receipt_path.empty())
+    {
+        const LLHandle<LLPanel> login_panel_handle = getHandle();
+        doOnIdleRepeating([
+            login_panel_handle,
+            visual_profile_receipt_path,
+            idle_passes = 0u]() mutable
+        {
+            if (++idle_passes < 2u)
+            {
+                return false;
+            }
+
+            if (FSPanelLogin* login_panel =
+                    dynamic_cast<FSPanelLogin*>(login_panel_handle.get()))
+            {
+                LLOpenGLOracleLoginVisualProfile::observeVisualProfile(
+                    makeOracleVisualProfileSnapshot(
+                        *login_panel,
+                        login_panel->mShowFavorites,
+                        visual_profile_receipt_path));
+            }
+            return true;
+        });
+    }
+#endif
 }
 
 void FSPanelLogin::addFavoritesToStartLocation()
@@ -966,8 +1220,25 @@ void FSPanelLogin::loadLoginPage()
     }
 }
 
-void FSPanelLogin::handleMediaEvent(LLPluginClassMedia* /*self*/, EMediaEvent event)
+void FSPanelLogin::handleMediaEvent(LLPluginClassMedia* self, EMediaEvent event)
 {
+#ifdef LL_OPENGL_ORACLE_CAPTURE
+    if (event != MEDIA_EVENT_NAVIGATE_COMPLETE || !self)
+    {
+        return;
+    }
+
+    LLOpenGLOracleLoginNavigation::Completion completion{
+        gSavedSettings.getString("LoginPage"),
+        gSavedSettings.getString("ForceLoginURL"),
+        self->getNavigateURI(),
+        self->getNavigateResultCode(),
+        gSavedSettings.getString("OpenGLOracleLoginNavigationReceipt")};
+    LLOpenGLOracleLoginNavigation::observeNavigationCompletion(completion);
+#else
+    (void)self;
+    (void)event;
+#endif
 }
 
 //---------------------------------------------------------------------------

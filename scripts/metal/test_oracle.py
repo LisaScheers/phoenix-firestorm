@@ -84,7 +84,7 @@ def _write_png(
 
 def _git(repository: Path, *arguments: str) -> str:
     return subprocess.run(
-        ["git", "-C", str(repository), *arguments],
+        ["git", "-C", str(repository), "-c", "commit.gpgsign=false", *arguments],
         check=True,
         capture_output=True,
         text=True,
@@ -97,16 +97,44 @@ class OracleCorpusTest(unittest.TestCase):
         cls.manifest_path = oracle.repository_root() / "doc/metal/oracle-corpus.json"
         cls.manifest = oracle.load_manifest(cls.manifest_path)
 
+    @staticmethod
+    def _copy_available_fixtures(
+        manifest: dict[str, object], fixture_root: Path, excluded_slot_id: str
+    ) -> None:
+        for slot in manifest["slots"]:
+            content = slot["conditions"]["content"]
+            if slot["id"] == excluded_slot_id or content["availability"] != "available":
+                continue
+            source_manifest = oracle.repository_root() / content["asset_manifest_path"]
+            fixture = json.loads(source_manifest.read_text(encoding="utf-8"))
+            destination_directory = fixture_root / slot["id"]
+            destination_directory.mkdir(parents=True, exist_ok=True)
+            destination_manifest = destination_directory / "manifest.json"
+            destination_manifest.write_bytes(source_manifest.read_bytes())
+            for asset in fixture["assets"]:
+                source_asset = source_manifest.parent / asset["path"]
+                destination_asset = destination_directory / asset["path"]
+                destination_asset.parent.mkdir(parents=True, exist_ok=True)
+                destination_asset.write_bytes(source_asset.read_bytes())
+            content["asset_manifest_path"] = (
+                Path(slot["id"]) / "manifest.json"
+            ).as_posix()
+
     def _ready_manifest(
         self, directory: Path, slot_id: str = "login_ui"
     ) -> tuple[dict[str, object], Path]:
         manifest = copy.deepcopy(self.manifest)
+        fixture_root = directory / "fixtures"
+        self._copy_available_fixtures(manifest, fixture_root, slot_id)
         slot = next(value for value in manifest["slots"] if value["id"] == slot_id)
         slot["definition_status"] = "ready"
         slot["definition_blockers"] = []
-        display = slot["conditions"]["display"]
-        display["width_px"] = 4
-        display["height_px"] = 3
+        slot["machine_contract_status"] = "ready"
+        slot["machine_contract_blockers"] = []
+        if slot_id != "login_ui":
+            display = slot["conditions"]["display"]
+            display["width_px"] = 4
+            display["height_px"] = 3
         for contract in slot["required_supporting_artifacts"].values():
             if contract["kind"] in {"png", "raw"}:
                 contract["width_px"] = 4
@@ -115,7 +143,6 @@ class OracleCorpusTest(unittest.TestCase):
                 contract["row_pitch_bytes"] = 16
                 contract["bytes"] = 48
 
-        fixture_root = directory / "fixtures"
         fixture_directory = fixture_root / slot_id
         fixture_directory.mkdir(parents=True)
         asset = b"canonical-fixture-" + slot_id.encode("ascii")
@@ -212,12 +239,15 @@ class OracleCorpusTest(unittest.TestCase):
         self,
         directory: Path,
         pixels: tuple[tuple[int, int, int, int], ...] | None = None,
+        *,
+        width: int = 4,
+        height: int = 3,
     ) -> list[Path]:
         pixels = pixels or ((0, 0, 0, 255),) * 3
         captures: list[Path] = []
         for index, pixel in enumerate(pixels):
             capture = directory / f"capture-{index}.png"
-            _write_png(capture, pixel=pixel)
+            _write_png(capture, width, height, pixel)
             captures.append(capture)
         return captures
 
@@ -242,6 +272,7 @@ class OracleCorpusTest(unittest.TestCase):
             )
 
     def test_manifest_pins_baseline_contract_and_required_coverage(self) -> None:
+        self.assertEqual(self.manifest["schema"], 2)
         self.assertEqual(
             self.manifest["baseline"]["commit"],
             "1e8fd5491bde91fe6daca7d78f217a4d46084a5b",
@@ -268,6 +299,14 @@ class OracleCorpusTest(unittest.TestCase):
         self.assertTrue(oracle.REQUIRED_GROUPS <= groups)
         self.assertTrue(oracle.REQUIRED_FEATURES <= features)
         self.assertTrue(all(slot["evidence"]["status"] == "missing" for slot in slots))
+        self.assertTrue(
+            all(slot["machine_contract_status"] == "blocked" for slot in slots)
+        )
+        self.assertTrue(all(slot["machine_contract_blockers"] for slot in slots))
+        login = next(slot for slot in slots if slot["id"] == "login_ui")
+        self.assertEqual(login["definition_status"], "ready")
+        self.assertEqual(login["definition_blockers"], [])
+        self.assertEqual(login["conditions"]["content"]["availability"], "available")
         for slot in slots:
             if slot["conditions"]["camera"]["mode"] != "not_applicable":
                 settings = slot["conditions"]["settings"]
@@ -283,6 +322,7 @@ class OracleCorpusTest(unittest.TestCase):
                     slot["evidence"]["status"] == "missing" for slot in session["slots"]
                 )
             )
+            self.assertEqual(session["schema"], 2)
             self.assertTrue((session_path.parent / "requests/login_ui.json").is_file())
             errors = oracle.verify_session(self.manifest, session_path, check_git=False)
             self.assertTrue(
@@ -293,6 +333,214 @@ class OracleCorpusTest(unittest.TestCase):
             )
             self.assertTrue(
                 any("opaque_region: definition is blocked" in error for error in errors)
+            )
+            self.assertTrue(
+                any("login_ui: machine contract is blocked" in error for error in errors)
+            )
+            request = json.loads(
+                (session_path.parent / "requests/login_ui.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            login = next(
+                slot for slot in self.manifest["slots"] if slot["id"] == "login_ui"
+            )
+            session_login = next(
+                slot for slot in session["slots"] if slot["id"] == "login_ui"
+            )
+            self.assertEqual(request["schema"], 2)
+            self.assertEqual(
+                request["definition_status"],
+                login["definition_status"],
+            )
+            self.assertEqual(
+                request["definition_blockers"],
+                login["definition_blockers"],
+            )
+            self.assertEqual(
+                session_login["machine_contract_status"],
+                login["machine_contract_status"],
+            )
+            self.assertEqual(
+                session_login["machine_contract_blockers"],
+                login["machine_contract_blockers"],
+            )
+            self.assertEqual(
+                request["machine_contract_status"],
+                login["machine_contract_status"],
+            )
+            self.assertEqual(
+                request["machine_contract_blockers"],
+                login["machine_contract_blockers"],
+            )
+
+    def test_machine_contract_status_requires_matching_blockers(self) -> None:
+        cases = (
+            ("blocked", [], "must explain a blocked slot"),
+            ("ready", ["still blocked"], "must be empty for a ready slot"),
+            ("unknown", [], "must be ready or blocked"),
+        )
+        for status, blockers, expected in cases:
+            with self.subTest(status=status):
+                manifest = copy.deepcopy(self.manifest)
+                login = next(
+                    slot for slot in manifest["slots"] if slot["id"] == "login_ui"
+                )
+                login["machine_contract_status"] = status
+                login["machine_contract_blockers"] = blockers
+                with self.assertRaisesRegex(oracle.OracleError, expected):
+                    oracle.validate_manifest(manifest)
+
+    def test_login_ui_visual_profile_is_exact(self) -> None:
+        expected_settings = {
+            "LoginPage": "http://127.0.0.1:19472/login_ui/index.html",
+            "ForceLoginURL": "",
+            "Language": "en",
+            "SessionSettingsFile": "settings_firestorm.xml",
+            "SkinCurrent": "firestorm",
+            "SkinCurrentTheme": "grey",
+            "FSUseLegacyLoginPanel": False,
+            "FSFontSettingsFile": "fonts.xml",
+            "FSFontSizeAdjustment": 0.0,
+            "FSFontLineSpacingAdjustment": 0,
+            "FontScreenDPI": 96.0,
+            "UIScaleFactor": 1.0,
+            "ResetUIScaleOnFirstRun": False,
+            "RenderHiDPI": True,
+            "RenderPerformanceTest": False,
+            "FirstLoginThisInstall": False,
+            "FSShowWhitelistReminder": False,
+            "UpdaterShowReleaseNotes": 0,
+            "WindowMaximized": False,
+            "ShowStartLocation": True,
+            "LoginLocation": "last",
+            "NextLoginLocation": "last",
+            "ForceShowGrid": False,
+            "FSOpenSimAlwaysForceShowGrid": False,
+            "FSRememberUsername": True,
+            "BrowserProxyEnabled": False,
+            "NonInteractive": False,
+            "HeadlessClient": False,
+            "RenderFSAASamples": 0,
+            "RenderFSAAType": 0,
+            "RenderUIBuffer": False,
+        }
+        expected_display = {
+            "width_px": 1920,
+            "height_px": 1080,
+            "scale_factor": 2.0,
+            "color_space": "sRGB",
+            "window_mode": "windowed_no_occlusion",
+        }
+        self.assertEqual(oracle.LOGIN_UI_VISUAL_SETTINGS, expected_settings)
+        self.assertEqual(oracle.LOGIN_UI_DISPLAY, expected_display)
+
+        def wrong_value(value: object) -> object:
+            if isinstance(value, bool):
+                return not value
+            if type(value) is int:
+                return value + 1
+            if type(value) is float:
+                return value + 0.5
+            if type(value) is str:
+                return f"{value}-unexpected" if value else "unexpected"
+            self.fail(f"missing wrong-value case for {value!r}")
+
+        profile_cases = (
+            ("settings", expected_settings),
+            ("display", expected_display),
+        )
+        for name, expected in profile_cases:
+            for key, value in expected.items():
+                for mutation, pattern in (
+                    ("missing", "must have exactly the canonical login_ui"),
+                    ("wrong_type", "must have exact JSON type"),
+                    ("wrong_value", "must equal its canonical login_ui value"),
+                ):
+                    with self.subTest(profile=name, key=key, mutation=mutation):
+                        manifest = copy.deepcopy(self.manifest)
+                        login = next(
+                            slot
+                            for slot in manifest["slots"]
+                            if slot["id"] == "login_ui"
+                        )
+                        profile = login["conditions"][name]
+                        if mutation == "missing":
+                            del profile[key]
+                        elif mutation == "wrong_type":
+                            profile[key] = None
+                        else:
+                            profile[key] = wrong_value(value)
+                        with self.assertRaisesRegex(oracle.OracleError, pattern):
+                            oracle.validate_manifest(manifest)
+
+            with self.subTest(profile=name, mutation="extra"):
+                manifest = copy.deepcopy(self.manifest)
+                login = next(
+                    slot for slot in manifest["slots"] if slot["id"] == "login_ui"
+                )
+                login["conditions"][name]["UnexpectedLoginProfileSetting"] = None
+                with self.assertRaisesRegex(
+                    oracle.OracleError, "must have exactly the canonical login_ui"
+                ):
+                    oracle.validate_manifest(manifest)
+
+        equality_collision_cases = (
+            ("settings", "FSUseLegacyLoginPanel", 0),
+            ("settings", "RenderHiDPI", 1),
+            ("settings", "RenderFSAASamples", False),
+            ("settings", "FSFontLineSpacingAdjustment", 0.0),
+            ("settings", "FSFontSizeAdjustment", 0),
+            ("display", "width_px", 1920.0),
+            ("display", "scale_factor", 2),
+        )
+        expected_profiles = dict(profile_cases)
+        for name, key, colliding_value in equality_collision_cases:
+            with self.subTest(profile=name, key=key, mutation="equality_collision"):
+                expected_value = expected_profiles[name][key]
+                self.assertEqual(expected_value, colliding_value)
+                self.assertIsNot(type(expected_value), type(colliding_value))
+                manifest = copy.deepcopy(self.manifest)
+                login = next(
+                    slot for slot in manifest["slots"] if slot["id"] == "login_ui"
+                )
+                login["conditions"][name][key] = colliding_value
+                with self.assertRaisesRegex(
+                    oracle.OracleError, "must have exact JSON type"
+                ):
+                    oracle.validate_manifest(manifest)
+
+    def test_machine_blocked_login_cannot_record_before_reading_captures(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            manifest, fixture_root = self._ready_manifest(directory)
+            login = next(slot for slot in manifest["slots"] if slot["id"] == "login_ui")
+            login["machine_contract_status"] = "blocked"
+            login["machine_contract_blockers"] = [
+                "The test capture driver is not implemented."
+            ]
+            oracle.validate_manifest(manifest, fixture_root)
+            session_path = self._initialize(directory, manifest, fixture_root)
+
+            with self.assertRaisesRegex(
+                oracle.OracleError, "blocked by its machine capture contract"
+            ):
+                oracle.record_slot(
+                    manifest,
+                    session_path,
+                    "login_ui",
+                    [directory / "capture-must-not-be-read.png"],
+                    directory / "measurements-must-not-be-read.json",
+                    fixture_root=fixture_root,
+                )
+
+            errors = oracle.verify_session(
+                manifest, session_path, check_git=False, fixture_root=fixture_root
+            )
+            self.assertIn(
+                "login_ui: machine contract is blocked "
+                "(The test capture driver is not implemented.)",
+                errors,
             )
 
     def test_record_rejects_session_slot_without_evidence_cleanly(self) -> None:
@@ -349,6 +597,8 @@ class OracleCorpusTest(unittest.TestCase):
             captures = self._captures(
                 directory,
                 ((0, 0, 0, 255), (255, 0, 0, 255), (0, 255, 0, 255)),
+                width=1920,
+                height=1080,
             )
             self._record(manifest, fixture_root, session_path, "login_ui", captures)
             session = json.loads(session_path.read_text(encoding="utf-8"))
@@ -590,8 +840,11 @@ class OracleCorpusTest(unittest.TestCase):
 
         manifest = copy.deepcopy(self.manifest)
         login = next(slot for slot in manifest["slots"] if slot["id"] == "login_ui")
-        login["definition_status"] = "ready"
-        login["definition_blockers"] = []
+        content = login["conditions"]["content"]
+        content["availability"] = "missing"
+        content["asset_manifest_path"] = None
+        content["asset_manifest_bytes"] = None
+        content["asset_manifest_sha256"] = None
         with self.assertRaisesRegex(oracle.OracleError, "availability is missing"):
             oracle.validate_manifest(manifest)
 
@@ -621,7 +874,7 @@ class OracleCorpusTest(unittest.TestCase):
                 fixture_root,
                 session_path,
                 "login_ui",
-                self._captures(directory),
+                self._captures(directory, width=1920, height=1080),
             )
             asset = fixture_root / "login_ui/asset.bin"
             asset.write_bytes(b"Y" * len(asset.read_bytes()))
@@ -703,7 +956,9 @@ class OracleCorpusTest(unittest.TestCase):
 
         manifest = copy.deepcopy(self.manifest)
         manifest["slots"][0]["conditions"]["display"]["color_space"] = "Display-P3"
-        with self.assertRaisesRegex(oracle.OracleError, "color_space must be sRGB"):
+        with self.assertRaisesRegex(
+            oracle.OracleError, "must equal its canonical login_ui value"
+        ):
             oracle.validate_manifest(manifest)
 
     def test_mutable_session_cannot_relax_definition_or_contract(self) -> None:
@@ -714,6 +969,8 @@ class OracleCorpusTest(unittest.TestCase):
             login = next(slot for slot in session["slots"] if slot["id"] == "login_ui")
             login["definition_status"] = "ready"
             login["definition_blockers"] = []
+            login["machine_contract_status"] = "ready"
+            login["machine_contract_blockers"] = []
             session["capture_contract"]["repetitions"] = 1
             session_path.write_text(json.dumps(session), encoding="utf-8")
             errors = oracle.verify_session(self.manifest, session_path, check_git=False)
@@ -806,6 +1063,18 @@ class OracleCorpusTest(unittest.TestCase):
                 ),
             )
 
+            session["schema"] = 1
+            session_path.write_text(json.dumps(session), encoding="utf-8")
+            self.assertIn(
+                "session schema or kind is invalid",
+                oracle.verify_session(
+                    manifest,
+                    session_path,
+                    check_git=False,
+                    fixture_root=fixture_root,
+                ),
+            )
+
             measurements = json.loads(
                 self._measurements(session_path, "login_ui").read_text(encoding="utf-8")
             )
@@ -830,8 +1099,19 @@ class OracleCorpusTest(unittest.TestCase):
             measurements = json.loads(measurement_path.read_text(encoding="utf-8"))
             session = json.loads(session_path.read_text(encoding="utf-8"))
             login = next(slot for slot in session["slots"] if slot["id"] == "login_ui")
-            rgba = bytes((0, 0, 0, 255)) * 12
-            measurements["self_variance"] = oracle._self_variance([rgba] * 3)
+            comparison_count = 3
+            pixel_sample_count = 1920 * 1080 * comparison_count
+            measurements["self_variance"] = {
+                "method": "linear_srgb_rgba8_all_pairs_v1",
+                "units": "normalized_linear_0_1",
+                "comparison_count": comparison_count,
+                "channel_sample_count": pixel_sample_count * 4,
+                "pixel_sample_count": pixel_sample_count,
+                "mean_absolute_error": 0.0,
+                "rmse": 0.0,
+                "max_absolute_error": 0.0,
+                "identical_pixel_fraction": 1.0,
+            }
             fractional_schema = copy.deepcopy(measurements)
             fractional_schema["self_variance"]["comparison_count"] = 3.0
             with self.assertRaisesRegex(oracle.OracleError, "must be an integer"):
